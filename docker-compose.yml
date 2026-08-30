@@ -1,0 +1,59 @@
+services:
+  app:
+    build: .
+    container_name: brain_fast_app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: mediscan_note
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "1234"
+      DATABASE_URL: postgresql+psycopg://postgres:1234@db:5432/mediscan_note
+      HF_TOKEN: ${HF_TOKEN:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - brain_fast
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  db:
+    build:
+      context: ./docker/postgres
+    image: postgres:16
+    container_name: brain_fast_db
+    hostname: db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mediscan_note
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: "1234"
+    ports:
+      - "5433:5432"
+    volumes:
+      - mediscan_note_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      brain_fast:
+        aliases:
+          - db
+          - brain_fast_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mediscan_note"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mediscan_note_data:
+
+networks:
+  brain_fast:
+    name: brain_fast_net
+    driver: bridge

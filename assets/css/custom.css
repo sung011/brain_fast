@@ -1,0 +1,72 @@
+/* public/css/custom.css (또는 관련 CSS 파일) */
+
+/* 활성 탭 버튼의 배경색 및 글자색 */
+#myTab .nav-link.active {
+    /*background-color: #007bff; !* 파란색 *!
+    color: white; !* 흰색 글자 *!
+    border-color: #007bff; !* 테두리색 *!*/
+    border-top: 3px solid #007bff;
+    color: #000000;
+}
+
+/* 비활성 탭 버튼의 글자색 및 호버 효과 */
+#myTab .nav-link:not(.active) {
+    color: #495057; /* 어두운 회색 글자 */
+    background-color: #f8f9fa; /* 아주 연한 회색 배경 */
+}
+
+#myTab .nav-link:not(.active):hover {
+    background-color: #e9ecef; /* 호버 시 약간 더 어두운 회색 */
+    color: #212529;
+}
+
+/* 탭 닫기 버튼 색상 (활성 탭) */
+#myTab .nav-link.active .btn-close {
+    /*filter: invert(1) grayscale(100%) brightness(200%);*/ /* 흰색으로 보이도록 반전 */
+    opacity: 0.7; /* 약간 투명하게 */
+}
+
+#myTab .nav-link.active .btn-close:hover {
+    opacity: 1; /* 호버 시 불투명하게 */
+}
+
+/* 탭 닫기 버튼 색상 (비활성 탭) */
+#myTab .nav-link:not(.active) .btn-close {
+    filter: none; /* 기본 검은색 */
+    opacity: 0.5;
+}
+
+#myTab .nav-link:not(.active) .btn-close:hover {
+    opacity: 0.8;
+}
+
+/* 탭 버튼 자체의 패딩 조절 */
+#myTab .nav-link {
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
+    padding-right: 2.5rem; /* 닫기 버튼 공간 확보 */
+    padding-left: 1rem;
+    position: relative; /* 닫기 버튼 위치 조절을 위해 */
+}
+
+/* 닫기 버튼을 탭 버튼 안에 정확히 배치 */
+#myTab .nav-link .btn-close {
+    position: absolute;
+    right: 0.5rem; /* 오른쪽에서 0.5rem 간격 */
+    top: 50%;
+    transform: translateY(-50%); /* 세로 중앙 정렬 */
+}
+
+/* 탭 컨테이너의 상단에 약간의 마진 주기 */
+#myTab {
+    margin-top: 1rem; /* 상단 여백 */
+    border-bottom: 2px solid #dee2e6; /* 탭 하단 선 */
+}
+
+/* 탭이 열렸을 때만 보이는 콘텐츠 영역 */
+#myTabContent {
+    background-color: transparent;
+    box-shadow: none;
+    margin-bottom: 1rem;
+}
+

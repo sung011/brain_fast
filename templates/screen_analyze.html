@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <!-- 모바일에서도 레이아웃이 깨지지 않게 화면 너비에 맞춤 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>화면 공유 분석 프로토타입</title>
+  <style>
+    /*
+      =========================================================
+      [이 파일의 목표]
+      의사(사용자)가 파일을 업로드하지 않고,
+      1) 화면 공유 → 2) 네모 박스(ROI)로 영역 지정 → 3) 그 부분만 분석
+      하는 "가능 여부 확인용" 프로토타입입니다.
+
+      [예전에 생긴 문제]
+      화면이 커서 스크롤을 내리면, 아래쪽에서는 네모 박스가 안 그려졌습니다.
+      이유: 보이는 영역만 클릭판(overlay)이 덮고 있었기 때문입니다.
+
+      [고친 핵심 아이디어]
+      - 스크롤은 .stage-wrap 상자 안에서 하게 하고
+      - 클릭판(overlay)은 영상(video) "전체 높이"만큼 크게 맞춤
+      → 스크롤을 내려도 영상 위 어디에든 박스를 그릴 수 있게 됨
+      =========================================================
+    */
+
+    /* 자주 쓰는 색을 변수로 모아두면, 나중에 디자인 바꾸기 쉽습니다 */
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --line: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #2ec4b6;
+      --accent-dim: #1a9e93;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    /* * = 모든 요소. border/padding을 너비 계산에 포함시켜 레이아웃이 덜 깨지게 함 */
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      background: radial-gradient(1200px 600px at 10% -10%, #1e3a5f 0%, var(--bg) 55%);
+      color: var(--text);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    html {
+      height: 100%;
+    }
+
+    /* 위쪽 고정 헤더: 스크롤해도 버튼 안내가 보이도록 sticky 사용 */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(8px);
+      flex-shrink: 0;
+      z-index: 10;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+    header p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .badge {
+      font-size: 12px;
+      color: #062a28;
+      background: var(--accent);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    /* 왼쪽(캡처) : 오른쪽(결과) 2칸 배치 — 각 패널 독립 스크롤 */
+    main {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 2.4fr 0.9fr;
+      gap: 18px;
+      padding: 18px 24px;
+      overflow: hidden;
+    }
+    @media (max-width: 960px) {
+      body {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+      }
+      main {
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+      .panel {
+        min-height: 55vh;
+        max-height: 55vh;
+      }
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .panel-head {
+      flex-shrink: 0;
+    }
+    .panel-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      margin-top: 4px;
+      padding-right: 6px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent-dim) #0b1220;
+    }
+    .panel-scroll--capture {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* 커스텀 스크롤바 (패널 + 영상 영역) */
+    .panel-scroll::-webkit-scrollbar,
+    .stage-wrap::-webkit-scrollbar {
+      width: 9px;
+      height: 9px;
+    }
+    .panel-scroll::-webkit-scrollbar-track,
+    .stage-wrap::-webkit-scrollbar-track {
+      background: rgba(2, 6, 23, 0.85);
+      border-radius: 999px;
+      margin: 4px 0;
+    }
+    .panel-scroll::-webkit-scrollbar-thumb,
+    .stage-wrap::-webkit-scrollbar-thumb {
+      background: linear-gradient(180deg, var(--accent-dim), var(--accent));
+      border-radius: 999px;
+      border: 2px solid rgba(2, 6, 23, 0.9);
+      min-height: 40px;
+    }
+    .panel-scroll::-webkit-scrollbar-thumb:hover,
+    .stage-wrap::-webkit-scrollbar-thumb:hover {
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(46, 196, 182, 0.45);
+    }
+    .panel-scroll::-webkit-scrollbar-corner,
+    .stage-wrap::-webkit-scrollbar-corner {
+      background: transparent;
+    }
+    .panel h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+    }
+
+    /* 진행 단계 표시(①②③). .on 클래스가 붙으면 강조색으로 바뀜 */
+    .steps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .step {
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+    }
+    .step.on {
+      color: #062a28;
+      background: var(--accent);
+      border-color: var(--accent);
+      font-weight: 700;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      color: #062a28;
+      background: var(--accent);
+    }
+    button.secondary {
+      background: #334155;
+      color: var(--text);
+    }
+    /* disabled면 "아직 못 누르는 버튼"처럼 흐리게 */
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    /*
+      [중요] 화면 공유가 나오는 상자
+      - max-height로 높이 제한 → 영상이 더 크면 반드시 스크롤 생김
+      - overflow-y: scroll 로 스크롤 가능하게 (안 되면 안 됨!)
+      - display:block 으로 단순화 (grid가 높이 계산을 꼬이게 할 수 있음)
+    */
+    .stage-wrap {
+      position: relative;
+      width: 100%;
+      background: #020617;
+      border-radius: 12px;
+      border: 1px dashed var(--line);
+      flex: 1;
+      min-height: 280px;
+      overflow-x: hidden;
+      overflow-y: scroll;
+      display: block;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+      scrollbar-color: var(--accent-dim) #020617;
+    }
+
+    /* 공유 시작 전 안내 문구 */
+    .placeholder {
+      color: var(--muted);
+      text-align: center;
+      padding: 80px 24px;
+      font-size: 14px;
+      line-height: 1.6;
+      width: 100%;
+    }
+
+    /*
+      #stage = 공유 중일 때만 보이는 영역
+      #mediaStack = video + overlay를 같은 크기로 겹치는 실제 무대
+    */
+    #stage {
+      display: none;
+      width: 100%;
+    }
+    #stage.is-active {
+      display: block;
+    }
+    #mediaStack {
+      position: relative;
+      width: 100%;
+      line-height: 0;
+      /* 높이는 JS가 video 비율에 맞춰 픽셀로 지정 → 스크롤 높이 확정 */
+    }
+
+    /*
+      공유 화면
+      pointer-events:none → 클릭/드래그는 전부 overlay가 담당
+    */
+    #video {
+      display: block;
+      width: 100%;
+      height: auto;
+      pointer-events: none;
+      user-select: none;
+    }
+
+    /*
+      ROI 클릭판
+      - mediaStack 전체에 absolute로 덮음 (스크롤 아래쪽 포함)
+      - 평소 touch-action: pan-y → 손가락으로도 스크롤 가능
+      - 드래그(선택) 중에는 JS가 touch-action:none 으로 바꿔
+        스크롤과 그리기가 안 싸우게 함
+      - 마우스 휠 스크롤은 항상 stage-wrap에서 동작
+    */
+    #overlay {
+      position: absolute;
+      left: 0;
+      top: 0;
+      cursor: crosshair;
+      touch-action: pan-y;
+      z-index: 2;
+    }
+
+    .hint {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .result-card {
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      margin-top: 10px;
+    }
+    .result-card h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+    /* 확률 막대 그래프용 */
+    .bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #1e293b;
+      overflow: hidden;
+      margin: 6px 0 12px;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    }
+    .meta {
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .meta strong { color: var(--text); }
+
+    /* 잘라낸 ROI 미리보기 (분석 후에만 보여줌) */
+    #cropPreview {
+      width: 100%;
+      max-height: 180px;
+      object-fit: contain;
+      background: #020617;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      display: none;
+    }
+    #overlayPreview {
+      width: 100%;
+      max-height: 180px;
+      object-fit: contain;
+      background: #020617;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      display: none;
+      margin-top: 8px;
+    }
+
+    .disclaimer {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fde68a;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .status {
+      font-size: 12px;
+      color: var(--accent);
+      min-height: 18px;
+      margin-bottom: 8px;
+    }
+
+    /* MedGemma 한국어 판독문 */
+    .report-wrap {
+      margin-top: 4px;
+      display: grid;
+      gap: 10px;
+    }
+    .report-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent);
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    .report-section {
+      background: #0b1220;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .report-section.hl {
+      border-color: rgba(46, 196, 182, 0.45);
+      background: rgba(46, 196, 182, 0.06);
+    }
+    .report-section.warn {
+      border-color: rgba(245, 158, 11, 0.45);
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .report-head {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
+    }
+    .report-body {
+      font-size: 13px;
+      line-height: 1.65;
+      color: var(--text);
+    }
+    .report-body ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+    .report-body li {
+      margin: 4px 0;
+    }
+    .report-body .note {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 6px;
+    }
+
+    /* AI 해설 로딩 */
+    .explain-loading {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 28px 16px;
+      text-align: center;
+      border-radius: 10px;
+      background: rgba(46, 196, 182, 0.06);
+      border: 1px dashed rgba(46, 196, 182, 0.35);
+    }
+    .explain-loading.is-active {
+      display: flex;
+    }
+    .explain-loading p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .explain-loading .sub {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(46, 196, 182, 0.2);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.85s linear infinite;
+    }
+    .loading-dots::after {
+      content: "";
+      animation: dots 1.4s steps(4, end) infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes dots {
+      0%   { content: ""; }
+      25%  { content: "."; }
+      50%  { content: ".."; }
+      75%  { content: "..."; }
+      100% { content: ""; }
+    }
+    .status.is-busy {
+      color: #fde68a;
+    }
+    button.is-loading {
+      position: relative;
+      color: transparent !important;
+      pointer-events: none;
+    }
+    button.is-loading::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      margin: auto;
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(226, 232, 240, 0.25);
+      border-top-color: #e2e8f0;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <!-- 제목 영역(필요하면 주석 해제해서 사용) -->
+      <!--<h1>화면 공유 분석</h1>
+      <p>업로드 없이 · 화면 공유 → 네모 박스(ROI) → 분석</p>-->
+    </div>
+    <div class="badge">프로토타입 · 진단 보조</div>
+  </header>
+
+  <main>
+    <!-- ========== 왼쪽: 화면 공유 + ROI 선택 ========== -->
+    <section class="panel panel-capture">
+      <div class="panel-head">
+        <h2>1. 화면 캡처 & ROI 박스</h2>
+
+        <div class="steps">
+          <span class="step" id="s1">① 화면 공유</span>
+          <span class="step" id="s2">② 네모 박스 드래그</span>
+          <span class="step" id="s3">③ 분석</span>
+        </div>
+
+        <div class="toolbar">
+          <button id="btnShare">화면 공유 시작</button>
+          <button id="btnClear" class="secondary" disabled>박스 지우기</button>
+          <button id="btnAnalyze" disabled>선택 영역 분석</button>
+          <button id="btnExplain" class="secondary" disabled>AI 해설 (MedGemma)</button>
+          <button id="btnStop" class="secondary" disabled>공유 종료</button>
+        </div>
+
+        <div class="status" id="status">Chrome/Edge에서 열어 주세요. (화면 공유 API)</div>
+      </div>
+
+      <div class="panel-scroll panel-scroll--capture">
+      <div class="stage-wrap" id="stageWrap">
+        <div class="placeholder" id="placeholder">
+          버튼을 눌러 PACS·뷰어·이미지 창을 공유하세요.<br />
+          공유 후 <strong>휠로 스크롤</strong>하고, <strong>드래그로 네모 박스</strong>를 그리세요.
+        </div>
+        <div id="stage">
+          <!-- mediaStack: video와 overlay를 같은 높이에 겹침 → 스크롤 전체에서 선택 가능 -->
+          <div id="mediaStack">
+            <video id="video" autoplay playsinline muted></video>
+            <canvas id="overlay"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <p class="hint">
+        팁: <strong>마우스 휠</strong>로 위아래 스크롤 → <strong>드래그</strong>로 영역 선택.
+        모니터 전체보다 <strong>영상 창만</strong> 공유하면 더 안정적입니다.
+      </p>
+      </div>
+    </section>
+
+    <!-- ========== 오른쪽: 분석 결과 ========== -->
+    <section class="panel panel-result">
+      <div class="panel-head">
+        <h2>2. 분석 결과</h2>
+      </div>
+
+      <div class="panel-scroll">
+      <img id="cropPreview" alt="선택한 ROI 미리보기" />
+      <img id="overlayPreview" alt="이상 부위 오버레이" />
+
+      <div class="result-card" id="resultEmpty">
+        <h3>대기 중</h3>
+        <div class="meta">화면을 공유하고 네모 박스를 그린 뒤 분석을 실행하세요.</div>
+      </div>
+
+      <!-- 분석 후에만 display:block 으로 보여줌 -->
+      <div class="result-card" id="resultBox" style="display:none">
+        <h3 id="resultTitle">의심 소견</h3>
+        <div class="meta" id="resultMeta"></div>
+        <div style="margin-top:12px" id="probList"></div>
+        <div class="result-card" id="explainBox" style="display:none;margin-top:10px;background:#0f172a">
+          <h3>한국어 판독 (MedGemma + AI참고)</h3>
+          <div id="explainLoading" class="explain-loading">
+            <div class="spinner" aria-hidden="true"></div>
+            <p>MedGemma가 한국어 판독문을 생성 중입니다<span class="loading-dots"></span></p>
+            <p class="sub">Hugging Face Inference API로 원격 생성합니다. (로컬 8GB 다운로드 없음)</p>
+          </div>
+          <div id="explainText"></div>
+        </div>
+      </div>
+
+      <div class="disclaimer">
+        ※ 본 화면은 <strong>가능성 검증용 프로토타입</strong>입니다.
+        실제 의료 진단이 아니며, 최종 판단은 의사에게 있습니다.
+        분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.
+      </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    /*
+      =========================================================
+      JavaScript 역할 한눈에 보기
+      1) 화면 공유 시작/종료
+      2) 마우스 드래그로 ROI(관심 영역) 네모 그리기
+      3) ROI만 잘라내기(crop)
+      4) 데모 분석 결과 보여주기
+         (지금은 진짜 AI가 아니라 "이렇게 연결하면 된다"는 UX 증명용)
+
+      ---------- 함수 목록 (이름 → 하는 일) ----------
+      setStep(n)           : ①②③ 단계 표시를 켜고 끔
+      setStatus(msg)       : 하단 안내 문구를 바꿈
+      syncOverlaySize()    : video/overlay 크기를 맞춰 스크롤·선택 가능하게 함
+      drawRoi()            : 네모 박스(ROI)를 canvas에 그림
+      pointerPos(e)        : 마우스 위치를 overlay 좌표로 변환
+      onPointerDown(e)     : 드래그 시작 (박스 그리기 시작)
+      onPointerMove(e)     : 드래그 중 (박스 크기 변경)
+      onPointerUp(e)       : 드래그 끝 (박스 확정)
+      stopShare()          : 화면 공유 종료 + 화면 초기화
+      cropRoiToCanvas()    : 선택 영역만 잘라 새 이미지(canvas)로 만듦
+      demoAnalyze(canvas)  : (데모) 밝기로 가짜 분석 점수를 만듦
+      =========================================================
+    */
+
+    // ----- DOM 요소 가져오기 (HTML의 id와 연결) -----
+    const video = document.getElementById("video");
+    const overlay = document.getElementById("overlay");
+    const ctx = overlay.getContext("2d"); // canvas에 그림을 그리는 붓
+    const stage = document.getElementById("stage");
+    const mediaStack = document.getElementById("mediaStack");
+    const placeholder = document.getElementById("placeholder");
+    const statusEl = document.getElementById("status");
+    const cropPreview = document.getElementById("cropPreview");
+    const overlayPreview = document.getElementById("overlayPreview");
+    const resultEmpty = document.getElementById("resultEmpty");
+    const resultBox = document.getElementById("resultBox");
+    const resultTitle = document.getElementById("resultTitle");
+    const resultMeta = document.getElementById("resultMeta");
+    const probList = document.getElementById("probList");
+    const explainBox = document.getElementById("explainBox");
+    const explainText = document.getElementById("explainText");
+    const explainLoading = document.getElementById("explainLoading");
+    const resultScroll = document.querySelector(".panel-result .panel-scroll");
+
+    const btnShare = document.getElementById("btnShare");
+    const btnClear = document.getElementById("btnClear");
+    const btnAnalyze = document.getElementById("btnAnalyze");
+    const btnExplain = document.getElementById("btnExplain");
+    const btnStop = document.getElementById("btnStop");
+    const stageWrap = document.getElementById("stageWrap");
+
+    // ----- 상태 변수 -----
+    let stream = null;          // 화면 공유 스트림 (브라우저가 보내주는 실시간 화면)
+    let drawing = false;        // true면 지금 네모를 그리는 중
+    let startX = 0, startY = 0; // 드래그를 시작한 지점
+    let roi = null;             // 선택 영역 {x, y, w, h} — overlay 픽셀 좌표
+    let activePointerId = null; // 지금 드래그 중인 포인터(마우스/손가락) id
+    let resizeObserver = null;  // 상자 크기 변화를 감시하는 관찰자
+    let lastAnalysis = null;    // 최근 API 분석 결과 (해설 요청용)
+    let lastRoiBlob = null;     // 최근 ROI 이미지 blob
+
+    /**
+     * setStep(n)
+     * 기능: 화면 위 ①②③ 단계 표시를 업데이트한다.
+     * 입력: n = 강조할 단계 개수 (예: 1이면 ①만 켜짐)
+     * 왜 있나: 사용자가 지금 어디까지 했는지 한눈에 보게 하려고
+     */
+    function setStep(n) {
+      ["s1", "s2", "s3"].forEach((id, i) => {
+        document.getElementById(id).classList.toggle("on", i < n);
+      });
+    }
+
+    /**
+     * setStatus(msg)
+     * 기능: 버튼 아래 상태 문구를 바꾼다.
+     * 입력: msg = 보여줄 안내 문장
+     * 왜 있나: "공유 중", "분석 중" 같은 현재 상태를 알려주려고
+     */
+    function setStatus(msg, busy = false) {
+      statusEl.textContent = msg;
+      statusEl.classList.toggle("is-busy", busy);
+    }
+
+    function resetAnalysisResults() {
+      resultEmpty.style.display = "block";
+      resultBox.style.display = "none";
+      explainBox.style.display = "none";
+      explainText.innerHTML = "";
+      explainLoading.classList.remove("is-active");
+      cropPreview.style.display = "none";
+      cropPreview.removeAttribute("src");
+      overlayPreview.style.display = "none";
+      overlayPreview.removeAttribute("src");
+      probList.innerHTML = "";
+      resultMeta.innerHTML = "";
+      resultTitle.textContent = "의심 소견";
+      lastAnalysis = null;
+      lastRoiBlob = null;
+      if (resultScroll) resultScroll.scrollTop = 0;
+    }
+
+    function showExplainLoading() {
+      explainBox.style.display = "block";
+      explainLoading.classList.add("is-active");
+      explainText.innerHTML = "";
+      if (resultScroll) {
+        requestAnimationFrame(() => {
+          explainBox.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        });
+      }
+    }
+
+    function hideExplainLoading() {
+      explainLoading.classList.remove("is-active");
+    }
+
+    /**
+     * syncOverlaySize()
+     * 기능: 공유 영상(video)과 클릭판(overlay) 크기를 같게 맞춘다.
+     *       원본 비율로 전체 높이를 계산해 mediaStack에 넣는다.
+     * 결과: stage-wrap에 스크롤이 생기고, 스크롤 아래쪽도 선택 가능
+     * 언제 호출: 화면 공유 시작, 창 크기 변경, 휠 스크롤 후 등
+     * 왜 있나: 크기/좌표가 안 맞으면 박스가 어긋나거나 아래쪽이 선택이 안 됨
+     */
+    function syncOverlaySize() {
+      const vw = video.videoWidth || 0;
+      const vh = video.videoHeight || 0;
+
+      const cssW = Math.max(1, Math.round(stageWrap.clientWidth));
+      let cssH;
+      if (vw > 0 && vh > 0) {
+        // 가로에 맞춘 뒤, 원본 비율로 세로 계산 → 전체 높이가 생겨 스크롤 가능
+        cssH = Math.max(1, Math.round(cssW * (vh / vw)));
+      } else {
+        cssH = Math.max(1, Math.round(video.clientHeight || video.offsetHeight || 1));
+      }
+
+      mediaStack.style.width = cssW + "px";
+      mediaStack.style.height = cssH + "px";
+      video.style.width = cssW + "px";
+      video.style.height = cssH + "px";
+
+      // canvas 내부 해상도 = CSS 크기 (1:1) → 좌표 계산이 단순해짐
+      if (overlay.width !== cssW || overlay.height !== cssH) {
+        overlay.width = cssW;
+        overlay.height = cssH;
+      }
+      overlay.style.width = cssW + "px";
+      overlay.style.height = cssH + "px";
+
+      drawRoi();
+    }
+
+    /**
+     * drawRoi()
+     * 기능: overlay를 지운 뒤, 현재 roi 네모 박스를 다시 그린다.
+     * 입력: 전역 변수 roi (없으면 화면만 비움)
+     * 왜 있나: 드래그할 때마다 박스를 실시간으로 보여주려고
+     */
+    function drawRoi() {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      if (!roi) return;
+
+      ctx.fillStyle = "rgba(46, 196, 182, 0.15)";
+      ctx.strokeStyle = "#2ec4b6";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(roi.x, roi.y, roi.w, roi.h);
+      ctx.strokeRect(roi.x, roi.y, roi.w, roi.h);
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = "#2ec4b6";
+      ctx.font = "12px sans-serif";
+      ctx.fillText("분석 영역 (ROI)", roi.x + 8, Math.max(16, roi.y - 8));
+    }
+
+    /**
+     * pointerPos(e)
+     * 기능: 화면 좌표(clientX/Y)를 overlay 안 좌표(x,y)로 바꾼다.
+     * 입력: 포인터 이벤트 e
+     * 반환: { x, y }
+     * 왜 있나: 스크롤을 내려도 "클릭한 곳 = 박스 위치"가 맞게 하려고
+     */
+    function pointerPos(e) {
+      const r = overlay.getBoundingClientRect();
+      if (!r.width || !r.height) return { x: 0, y: 0 };
+      const x = ((e.clientX - r.left) / r.width) * overlay.width;
+      const y = ((e.clientY - r.top) / r.height) * overlay.height;
+      return {
+        x: Math.max(0, Math.min(overlay.width, x)),
+        y: Math.max(0, Math.min(overlay.height, y)),
+      };
+    }
+
+    /**
+     * onPointerDown(e)
+     * 기능: 마우스/손가락을 누른 순간 — ROI 그리기를 시작한다.
+     * 하는 일: drawing=true, 시작점 저장, 빈 박스 생성, 포인터 캡처
+     * 왜 있나: 드래그 시작점이 있어야 네모 크기를 계산할 수 있음
+     */
+    function onPointerDown(e) {
+      if (!stream) return;
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+
+      drawing = true;
+      activePointerId = e.pointerId;
+      overlay.style.touchAction = "none"; // 그리는 중 터치 스크롤 방지
+      try { overlay.setPointerCapture(e.pointerId); } catch (_) {}
+
+      const p = pointerPos(e);
+      startX = p.x;
+      startY = p.y;
+      roi = { x: startX, y: startY, w: 0, h: 0 };
+      drawRoi();
+      e.preventDefault();
+    }
+
+    /**
+     * onPointerMove(e)
+     * 기능: 누른 채로 움직일 때 — 네모 박스 크기를 계속 갱신한다.
+     * 추가: 가장자리에 닿으면 stage-wrap을 자동 스크롤한다.
+     * 왜 있나: 박스가 커지는 모습을 보여주고, 아래쪽도 이어서 선택하려고
+     */
+    function onPointerMove(e) {
+      if (!drawing || (activePointerId !== null && e.pointerId !== activePointerId)) return;
+      const p = pointerPos(e);
+      roi = {
+        x: Math.min(startX, p.x),
+        y: Math.min(startY, p.y),
+        w: Math.abs(p.x - startX),
+        h: Math.abs(p.y - startY),
+      };
+      drawRoi();
+
+      const wrapRect = stageWrap.getBoundingClientRect();
+      const edge = 40;
+      if (e.clientY > wrapRect.bottom - edge) {
+        stageWrap.scrollTop += 18;
+      } else if (e.clientY < wrapRect.top + edge) {
+        stageWrap.scrollTop -= 18;
+      }
+
+      e.preventDefault();
+    }
+
+    /**
+     * onPointerUp(e)
+     * 기능: 손을 뗀 순간 — ROI 그리기를 끝내고 박스를 확정한다.
+     * 결과: 박스가 충분히 크면 분석 버튼 활성화, 너무 작으면 취소
+     * 왜 있나: 최종 선택 영역을 확정하고 다음 단계(분석)로 넘어가려고
+     */
+    function onPointerUp(e) {
+      if (!drawing) return;
+      if (activePointerId !== null && e.pointerId !== activePointerId) return;
+      drawing = false;
+      activePointerId = null;
+      overlay.style.touchAction = "pan-y";
+      try { overlay.releasePointerCapture(e.pointerId); } catch (_) {}
+
+      if (roi && roi.w > 8 && roi.h > 8) {
+        btnClear.disabled = false;
+        btnAnalyze.disabled = false;
+        setStep(2);
+        setStatus("ROI 선택 완료 · ‘선택 영역 분석’을 누르세요.");
+      } else {
+        roi = null;
+        drawRoi();
+      }
+    }
+
+    overlay.addEventListener("pointerdown", onPointerDown);
+    overlay.addEventListener("pointermove", onPointerMove);
+    overlay.addEventListener("pointerup", onPointerUp);
+    overlay.addEventListener("pointercancel", onPointerUp);
+
+    stageWrap.addEventListener("wheel", () => {
+      requestAnimationFrame(syncOverlaySize);
+    }, { passive: true });
+
+    stageWrap.addEventListener("scroll", () => {
+      drawRoi();
+    }, { passive: true });
+
+    /**
+     * [버튼 핸들러] 화면 공유 시작
+     * 기능: getDisplayMedia로 화면/창을 받아 video에 연결한다.
+     * 이후: syncOverlaySize로 크기·스크롤을 맞추고 ROI 선택 가능하게 함
+     */
+    btnShare.addEventListener("click", async () => {
+      try {
+        stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 10 },
+          audio: false,
+        });
+
+        video.srcObject = stream;
+        placeholder.style.display = "none";
+        stage.classList.add("is-active");
+        btnStop.disabled = false;
+        btnShare.disabled = true;
+        setStep(1);
+        setStatus("화면 공유 중 · 휠로 스크롤, 드래그로 영역 선택");
+
+        const ready = () => {
+          syncOverlaySize();
+          requestAnimationFrame(() => {
+            syncOverlaySize();
+            requestAnimationFrame(syncOverlaySize);
+          });
+        };
+
+        video.onloadedmetadata = ready;
+        video.onloadeddata = ready;
+        video.onresize = ready;
+        if (video.readyState >= 1) ready();
+
+        if (resizeObserver) resizeObserver.disconnect();
+        resizeObserver = new ResizeObserver(() => syncOverlaySize());
+        resizeObserver.observe(stageWrap);
+
+        stream.getVideoTracks()[0].addEventListener("ended", stopShare);
+        window.addEventListener("resize", syncOverlaySize);
+      } catch (err) {
+        setStatus("화면 공유가 취소되었거나 권한이 없습니다.");
+        console.error(err);
+      }
+    });
+
+    /**
+     * stopShare()
+     * 기능: 화면 공유를 끊고, 버튼/ROI/안내문을 처음 상태로 되돌린다.
+     * 왜 있나: 공유 종료 시 브라우저 "공유 중"도 끄고 UI도 정리해야 함
+     */
+    function stopShare() {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+        stream = null;
+      }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+        resizeObserver = null;
+      }
+      video.srcObject = null;
+      stage.classList.remove("is-active");
+      placeholder.style.display = "block";
+      mediaStack.style.height = "";
+      roi = null;
+      drawRoi();
+      btnShare.disabled = false;
+      btnStop.disabled = true;
+      btnClear.disabled = true;
+      btnAnalyze.disabled = true;
+      btnExplain.disabled = true;
+      resetAnalysisResults();
+      setStep(0);
+      setStatus("공유가 종료되었습니다.");
+    }
+
+    btnStop.addEventListener("click", stopShare);
+
+    /**
+     * [버튼 핸들러] 박스 지우기
+     * 기능: ROI만 지우고, 화면 공유는 유지한다.
+     */
+    btnClear.addEventListener("click", () => {
+      roi = null;
+      drawRoi();
+      btnClear.disabled = true;
+      btnAnalyze.disabled = true;
+      btnExplain.disabled = true;
+      resetAnalysisResults();
+      setStep(1);
+      setStatus("박스를 지웠습니다 · 다시 드래그하세요.");
+    });
+
+    /**
+     * cropRoiToCanvas()
+     * 기능: 화면에 그린 네모(ROI)에 해당하는 부분만 video에서 잘라낸다.
+     * 반환: 잘라낸 이미지가 든 새 canvas (실패 시 null)
+     * 왜 있나: 선택한 영역만 분석/AI에 보내려면 이미지로 잘라야 함
+     */
+    function cropRoiToCanvas() {
+      if (!roi || !video.videoWidth) return null;
+      syncOverlaySize();
+
+      const scaleX = video.videoWidth / overlay.width;
+      const scaleY = video.videoHeight / overlay.height;
+      const sx = Math.max(0, Math.floor(roi.x * scaleX));
+      const sy = Math.max(0, Math.floor(roi.y * scaleY));
+      const sw = Math.min(video.videoWidth - sx, Math.floor(roi.w * scaleX));
+      const sh = Math.min(video.videoHeight - sy, Math.floor(roi.h * scaleY));
+      if (sw < 4 || sh < 4) return null;
+
+      const c = document.createElement("canvas");
+      c.width = sw;
+      c.height = sh;
+      c.getContext("2d").drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+      return c;
+    }
+
+    /**
+     * analyzeViaApi(canvas)
+     * ROI 이미지를 FastAPI /api/v1/analyze/screen-roi 로 전송
+     */
+    async function analyzeViaApi(canvas) {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const form = new FormData();
+      form.append("image", blob, "roi.png");
+      form.append("modality", "screen_capture");
+      form.append("include_overlay", "true");
+
+      const res = await fetch("/api/v1/analyze/screen-roi", {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `API 오류 (${res.status})`);
+      }
+      return res.json();
+    }
+
+    async function explainViaApi(blob, analysis) {
+      const form = new FormData();
+      form.append("image", blob, "roi.png");
+      form.append("probs_json", JSON.stringify(analysis.classification.probs));
+      if (analysis.overlay_png_base64) {
+        form.append("overlay_png_base64", analysis.overlay_png_base64);
+      }
+
+      const res = await fetch("/api/v1/analyze/screen-roi/explain", {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `해설 API 오류 (${res.status})`);
+      }
+      return res.json();
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function parseReportSections(text) {
+      const sections = [];
+      const lines = String(text || "").split("\n");
+      let current = null;
+      const headRe = /^【(.+?)】\s*(.*)$/;
+
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line) continue;
+        const m = line.match(headRe);
+        if (m) {
+          if (current) sections.push(current);
+          current = { title: m[1], lines: m[2] ? [m[2]] : [] };
+        } else if (current) {
+          current.lines.push(line);
+        } else {
+          current = { title: "판독", lines: [line] };
+        }
+      }
+      if (current) sections.push(current);
+      return sections;
+    }
+
+    function formatReportBody(title, lines) {
+      if (!lines.length) return "<div class='report-body'>—</div>";
+
+      const isBullet = (l) => /^[-·*]\s/.test(l) || /^1[\.)]\s/.test(l);
+      const bodyParts = [];
+      const bullets = [];
+
+      for (const line of lines) {
+        if (line.startsWith("※")) {
+          bodyParts.push(`<div class="note">${escapeHtml(line)}</div>`);
+        } else if (isBullet(line)) {
+          bullets.push(
+            `<li>${escapeHtml(line.replace(/^[-·*]\s*/, "").replace(/^1[\.)]\s*/, ""))}</li>`
+          );
+        } else {
+          bodyParts.push(`<div>${escapeHtml(line)}</div>`);
+        }
+      }
+
+      const list = bullets.length ? `<ul>${bullets.join("")}</ul>` : "";
+      return `<div class="report-body">${bodyParts.join("")}${list}</div>`;
+    }
+
+    function renderRadiologyReport(text) {
+      const sections = parseReportSections(text);
+      if (!sections.length) {
+        explainText.innerHTML = `<div class="report-wrap"><div class="report-body">${escapeHtml(text || "판독문 없음")}</div></div>`;
+        return;
+      }
+
+      const html = sections
+        .map((sec) => {
+          let cls = "report-section";
+          if (sec.title === "AI참고") cls += " hl";
+          if (sec.title === "면책") cls += " warn";
+          return `
+            <div class="${cls}">
+              <div class="report-head">【${escapeHtml(sec.title)}】</div>
+              ${formatReportBody(sec.title, sec.lines)}
+            </div>`;
+        })
+        .join("");
+
+      explainText.innerHTML = `<div class="report-wrap">${html}</div>`;
+    }
+
+    function renderAnalysis(out) {
+      resultEmpty.style.display = "none";
+      resultBox.style.display = "block";
+      explainBox.style.display = "none";
+      explainLoading.classList.remove("is-active");
+      explainText.innerHTML = "";
+
+      const top = out.classification;
+      resultTitle.textContent = `최상위 의심: ${top.top_label_ko}`;
+      resultMeta.innerHTML = `
+        <div>ROI 크기: <strong>${out.roi.width}×${out.roi.height}</strong></div>
+        <div>밝기 평균/편차: <strong>${out.image_stats.mean}</strong> / <strong>${out.image_stats.std}</strong></div>
+        <div>추론 시간: <strong>${out.latency_ms}ms</strong></div>
+        ${out.overlay_summary ? `<div>이상 부위: <strong>${out.overlay_summary}</strong></div>` : ""}
+      `;
+
+      probList.innerHTML = out.classification.findings
+        .map(
+          (f) => `
+          <div style="font-size:13px;margin-bottom:2px">${f.label_ko}
+            <strong style="float:right">${(f.score * 100).toFixed(0)}%</strong>
+          </div>
+          <div class="bar"><span style="width:${(f.score * 100).toFixed(0)}%"></span></div>
+        `
+        )
+        .join("");
+
+      if (out.overlay_png_base64) {
+        overlayPreview.style.display = "block";
+        overlayPreview.src = "data:image/png;base64," + out.overlay_png_base64;
+      } else {
+        overlayPreview.style.display = "none";
+      }
+    }
+
+    /**
+     * [버튼 핸들러] 선택 영역 분석
+     * 기능: ROI 자르기 → (데모)분석 → 오른쪽 결과 카드에 표시
+     * 흐름: cropRoiToCanvas() → demoAnalyze() → 화면 업데이트
+     */
+    btnAnalyze.addEventListener("click", async () => {
+      const canvas = cropRoiToCanvas();
+      if (!canvas) {
+        setStatus("박스가 너무 작습니다. 다시 그려 주세요.");
+        return;
+      }
+
+      btnAnalyze.disabled = true;
+      btnExplain.disabled = true;
+      setStatus("앙상블 모델 분석 중…");
+      setStep(3);
+
+      cropPreview.style.display = "block";
+      cropPreview.src = canvas.toDataURL("image/png");
+
+      try {
+        const out = await analyzeViaApi(canvas);
+        lastAnalysis = out;
+        lastRoiBlob = await new Promise((r) => canvas.toBlob(r, "image/png"));
+        renderAnalysis(out);
+        btnExplain.disabled = false;
+        setStatus(`분석 완료 (${out.latency_ms}ms) · AI 해설을 요청할 수 있습니다.`);
+      } catch (err) {
+        setStatus("분석 실패: " + err.message);
+        console.error(err);
+      }
+
+      btnAnalyze.disabled = false;
+    });
+
+    btnExplain.addEventListener("click", async () => {
+      if (!lastAnalysis || !lastRoiBlob) return;
+      btnExplain.disabled = true;
+      btnExplain.classList.add("is-loading");
+      setStatus("MedGemma 해설 생성 중… (HF Inference API)", true);
+      showExplainLoading();
+
+      try {
+        const out = await explainViaApi(lastRoiBlob, lastAnalysis);
+        hideExplainLoading();
+        explainBox.style.display = "block";
+        renderRadiologyReport(out.explanation);
+        setStep(3);
+        setStatus(`해설 완료 (${out.latency_ms}ms)`);
+      } catch (err) {
+        hideExplainLoading();
+        explainBox.style.display = "block";
+        explainText.innerHTML = `<div class="report-body" style="color:#fca5a5">해설 생성 실패: ${escapeHtml(err.message)}</div>`;
+        setStatus("해설 실패: " + err.message);
+        console.error(err);
+      }
+
+      btnExplain.classList.remove("is-loading");
+      btnExplain.disabled = false;
+    });
+  </script>
+</body>
+</html>
