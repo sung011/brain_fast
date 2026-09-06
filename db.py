@@ -42,8 +42,14 @@ def _candidate_urls(raw: str) -> list[URL]:
     """
     Docker 안에서는 127.0.0.1 이 앱 컨테이너 자신이라 DB에 닿지 않는다.
     맥에서 돌아가는 PostgreSQL(mediscan_note)은 host.docker.internal 로 붙는다.
+
+    Supabase 등 원격 호스트는 URL 그대로만 쓴다(로컬 후보/DB명 치환 없음).
     """
     base = make_url(raw)
+    remote = bool(base.host and base.host not in {"127.0.0.1", "localhost", "db", "brain_fast_db"})
+    if remote:
+        return [base]
+
     databases = []
     for name in ("mediscan_note", base.database):
         if name and name not in databases:
@@ -62,8 +68,6 @@ def _candidate_urls(raw: str) -> list[URL]:
         )
     else:
         hosts.append(("127.0.0.1", 5432))
-        if base.host and base.host not in {"127.0.0.1", "localhost"}:
-            hosts.insert(0, (base.host, base.port or 5432))
 
     candidates: list[URL] = []
     for host, port in hosts:
