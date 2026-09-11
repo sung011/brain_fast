@@ -37,14 +37,13 @@ if HF_TOKEN:
     os.environ["HF_TOKEN"] = HF_TOKEN
     os.environ["HUGGING_FACE_HUB_TOKEN"] = HF_TOKEN
 
-HF_REPO = os.environ.get("HF_REPO", "kimsungil/brain-ich-ensemble")
+HF_REPO = os.environ.get("HF_REPO", "kimsungil/Brain_Hemorrhage")
 CKPT_FILES = [
-    "tf_efficientnet_b4_ns_jft_in1k_fold0.pt",
-    "convnext_small_fb_in22k_ft_in1k_fold0.pt",
-    "ich_resnet18.pt",
+    "best_m0_convnext_base.pt",
+    "best_m0_effv2_m.pt",
 ]
 
-IMG_SIZE = int(os.environ.get("IMG_SIZE", "380"))
+IMG_SIZE = int(os.environ.get("IMG_SIZE", "384"))
 WINDOW_MODE = os.environ.get("WINDOW_MODE", "brain_subdural")
 USE_TTA_FLIP = os.environ.get("USE_TTA_FLIP", "1") == "1"
 ANY_MODE = os.environ.get("ANY_MODE", "model")

@@ -6,18 +6,31 @@ router 의 prefix="/admin" 이므로
 """
 
 import asyncio
+import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+from config import settings
 from db import get_db
+from schemas.analyzeSchemas import NasHealthResponse, NasUploadResponse
+from schemas.studySchemas import (
+    ST_MODAL_LABELS,
+    ST_PART_LABELS,
+    StudyCreateResult,
+    StudyOut,
+    build_remote_dir,
+)
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
+from services import nasServices as nas_service_mod
+from services import studyServices as study_service
 from services import userServices as user_service
 from utils.adminAuth import admin_session_guard
 from utils.password import hash_password, verify_password
 from utils.renderHelper import render_with_layout
+from utils.study_sse import study_events
 from utils.user_sse import user_events
 
 # tags: /docs 에 묶어서 보여 줄 이름. 지금은 include_in_schema=False 라 문서에는 안 나온다.
@@ -280,3 +293,264 @@ async def user_delete(idx: int, db: Session = Depends(get_db)):
         "ok": True,
         **payload,
     }
+
+
+# ---------------------------------------------------------------------------
+# 학습(study) + NAS
+# ---------------------------------------------------------------------------
+
+
+@router.get("/study")
+def study_page(request: Request, partial: bool = False):
+    """학습 목록."""
+    data = {
+        "title": "학습 관리",
+        "part_labels": ST_PART_LABELS,
+        "modal_labels": ST_MODAL_LABELS,
+        "nas_base_path": settings.nas_base_path or "/stylesheets/assets",
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="study.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "study", data)
+
+
+@router.get("/study/create")
+def study_create_page(request: Request, partial: bool = False):
+    """학습 등록 폼 (부위·모달리티·병명·이미지·NAS 경로)."""
+    data = {
+        "title": "학습 등록",
+        "part_labels": ST_PART_LABELS,
+        "modal_labels": ST_MODAL_LABELS,
+        "nas_base_path": settings.nas_base_path or "/stylesheets/assets",
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="study_create.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "study_create", data)
+
+
+@router.get("/studies_all", response_model=list[StudyOut])
+def studies_all(db: Session = Depends(get_db)):
+    return study_service.list_studies(db)
+
+
+@router.get("/studies/stream")
+async def studies_stream(request: Request):
+    """학습 목록 변경을 실시간으로 알린다 (SSE)."""
+
+    async def event_generator():
+        queue = await study_events.subscribe()
+        try:
+            yield study_events.format_sse({"event": "connected", "data": {"ok": True}})
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield study_events.format_sse(message)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await study_events.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/nas/health", response_model=NasHealthResponse)
+async def nas_health() -> NasHealthResponse:
+    """Synology NAS 로그인 가능 여부."""
+    result = await nas_service_mod.nas_service.health()
+    return NasHealthResponse(**result)
+
+
+def _to_nas_upload_dir(remote_dir: str) -> str:
+    """
+    입력 경로 → File Station 업로드 폴더.
+    /stylesheets/assets  → /web/mu_shop/public/stylesheets/assets
+    /web/mu_shop/public/... 는 그대로 사용.
+    """
+    path = (remote_dir or "").strip().replace("\\", "/") or "/stylesheets/assets"
+    if not path.startswith("/"):
+        path = f"/{path}"
+    root = (settings.nas_public_root or "/web/mu_shop/public").rstrip("/")
+    if path.startswith(root + "/") or path == root:
+        return path.rstrip("/") or root
+    return f"{root}{path}".rstrip("/")
+
+
+def _to_public_image_path(remote_path: str) -> str:
+    """
+    NAS 전체 경로 → DB/웹용 상대 경로.
+    /web/mu_shop/public/stylesheets/assets/a.png
+      → /stylesheets/assets/a.png
+    """
+    path = (remote_path or "").replace("\\", "/")
+    root = (settings.nas_public_root or "/web/mu_shop/public").rstrip("/")
+    if path.startswith(root + "/"):
+        return path[len(root) :]
+    if path.startswith(root):
+        rest = path[len(root) :]
+        return rest if rest.startswith("/") else f"/{rest}" if rest else "/"
+    return path if path.startswith("/") else f"/{path}"
+
+
+async def _upload_and_save_study(
+    db: Session,
+    *,
+    file: UploadFile,
+    st_part: str,
+    st_modal: str,
+    st_disease: str,
+    remote_dir: str,
+) -> StudyCreateResult:
+    """이미지를 NAS에 올린 뒤 study 행을 만든다."""
+    svc = nas_service_mod.nas_service
+    if not svc.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="이미지 파일이 비어 있습니다.")
+
+    # 부위·영상 종류로 경로 자동 결정 (프론트 remote_dir 보다 우선)
+    auto_dir = build_remote_dir(st_part, st_modal)
+    dest = _to_nas_upload_dir(auto_dir)
+    safe_name = (file.filename or "study.bin").replace("\\", "/").split("/")[-1]
+    upload_name = f"{uuid.uuid4().hex[:10]}_{safe_name}"
+
+    try:
+        uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+
+    remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
+    # DB에는 /web/mu_shop/public 을 뺀 웹 경로만 저장
+    st_image = _to_public_image_path(remote_path)
+    try:
+        row = study_service.create_study(
+            db,
+            st_part=st_part,
+            st_modal=st_modal,
+            st_disease=st_disease,
+            st_image=st_image,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc)},
+        ) from exc
+
+    await study_events.publish(
+        "study_created",
+        {
+            "idx": row.idx,
+            "st_part": row.st_part,
+            "st_modal": row.st_modal,
+            "st_disease": row.st_disease,
+            "st_image": row.st_image,
+        },
+    )
+
+    return StudyCreateResult(
+        ok=True,
+        idx=row.idx,
+        st_part=row.st_part,
+        st_modal=row.st_modal,
+        st_disease=row.st_disease,
+        st_image=row.st_image,
+        remote_path=remote_path,
+    )
+
+
+@router.post("/nas/upload", response_model=NasUploadResponse)
+async def nas_upload(
+    db: Session = Depends(get_db),
+    file: UploadFile = File(...),
+    st_part: str = Form(..., description="학습 부위 — 1:뇌 2:흉부 3:복부 4:무릎"),
+    st_modal: str = Form(..., description="영상 종류 — 1:X-ray 2:CT 3:MRI"),
+    st_disease: str = Form(..., description="병명 (최대 30자)"),
+    remote_dir: str = Form(
+        default="/stylesheets/assets",
+        description="웹 상대 저장 폴더. 기본값 /stylesheets/assets (NAS에는 /web/mu_shop/public 이 앞에 붙음)",
+    ),
+) -> NasUploadResponse:
+    """
+    NAS 업로드 + study 테이블 저장.
+
+    Swagger에서 st_part / st_modal / st_disease / file 을 입력한다.
+    """
+    result = await _upload_and_save_study(
+        db,
+        file=file,
+        st_part=st_part,
+        st_modal=st_modal,
+        st_disease=st_disease,
+        remote_dir=remote_dir,
+    )
+    return NasUploadResponse(
+        ok=True,
+        remote_path=result.remote_path,
+        filename=(result.remote_path or "").rsplit("/", 1)[-1] or None,
+        bytes=None,
+        idx=result.idx,
+        st_part=result.st_part,
+        st_modal=result.st_modal,
+        st_disease=result.st_disease,
+        st_image=result.st_image,
+    )
+
+
+@router.post("/study", response_model=StudyCreateResult)
+async def study_create(
+    db: Session = Depends(get_db),
+    file: UploadFile = File(...),
+    st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
+    st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
+    st_disease: str = Form(..., description="병명"),
+    remote_dir: str = Form(
+        default="/stylesheets/assets",
+        description="웹 상대 저장 폴더. 기본값 /stylesheets/assets",
+    ),
+) -> StudyCreateResult:
+    """학습 등록: 이미지를 NAS에 올린 뒤 study 테이블에 경로·메타를 저장한다."""
+    return await _upload_and_save_study(
+        db,
+        file=file,
+        st_part=st_part,
+        st_modal=st_modal,
+        st_disease=st_disease,
+        remote_dir=remote_dir,
+    )
+
+
+@router.delete("/study/{idx}")
+async def study_delete(idx: int, db: Session = Depends(get_db)):
+    row = study_service.delete_study(db, idx)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "학습 데이터를 찾을 수 없습니다."},
+        )
+    await study_events.publish(
+        "study_deleted",
+        {"idx": row.idx, "st_image": row.st_image},
+    )
+    return {"ok": True, "idx": row.idx}

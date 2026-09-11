@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -15,15 +16,18 @@ from types import ModuleType
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from config import settings
 from schemas.analyzeSchemas import (
     ClassificationResult,
     ExplainResponse,
     FindingItem,
     HealthResponse,
     ImageStats,
+    NasUploadInfo,
     RoiInfo,
     ScreenRoiResponse,
 )
+from services import nasServices as nas_service_mod
 
 router = APIRouter()
 _brain_mod: ModuleType | None = None
@@ -100,6 +104,61 @@ def _build_classification(brain: ModuleType, probs) -> ClassificationResult:
     )
 
 
+def _overlay_b64_to_bytes(overlay_b64: str | None) -> bytes | None:
+    if not overlay_b64:
+        return None
+    raw = overlay_b64.strip()
+    if "," in raw and raw.lower().startswith("data:"):
+        raw = raw.split(",", 1)[1]
+    try:
+        return base64.b64decode(raw)
+    except Exception:
+        return None
+
+
+async def _maybe_upload_analysis(
+    *,
+    request_id: str,
+    image_bytes: bytes,
+    image_filename: str,
+    response_payload: dict,
+    overlay_b64: str | None,
+) -> NasUploadInfo | None:
+    if not settings.nas_upload_on_analyze:
+        return None
+    svc = nas_service_mod.nas_service
+    if not svc.enabled:
+        return NasUploadInfo(
+            ok=False,
+            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 NAS 계정 설정이 비어 있습니다.",
+        )
+    try:
+        # base64 overlay는 NAS에 중복 저장하지 않도록 JSON에서 제외
+        slim = {
+            k: v
+            for k, v in response_payload.items()
+            if k not in ("overlay_png_base64", "nas_upload")
+        }
+        result = await svc.upload_analysis_bundle(
+            request_id=request_id,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+            result=slim,
+            overlay_png_bytes=_overlay_b64_to_bytes(overlay_b64),
+        )
+        files = [
+            item.get("remote_path") or item.get("filename") or ""
+            for item in result.get("files") or []
+        ]
+        return NasUploadInfo(
+            ok=bool(result.get("ok")),
+            folder=result.get("folder"),
+            files=[f for f in files if f],
+        )
+    except Exception as exc:
+        return NasUploadInfo(ok=False, error=str(exc))
+
+
 @router.post("/analyze/screen-roi", response_model=ScreenRoiResponse)
 async def analyze_screen_roi(
     image: UploadFile = File(...),
@@ -139,9 +198,10 @@ async def analyze_screen_roi(
         overlay_b64 = brain.Localization.overlay_to_base64(overlay)
         overlay_summary = brain.Localization.summarize_targets(per_class, targets)
 
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
     latency_ms = int((time.perf_counter() - t0) * 1000)
-    return ScreenRoiResponse(
-        request_id=f"req_{uuid.uuid4().hex[:12]}",
+    response = ScreenRoiResponse(
+        request_id=request_id,
         roi=RoiInfo(width=w, height=h),
         image_stats=ImageStats(**stats),
         classification=classification,
@@ -152,6 +212,14 @@ async def analyze_screen_roi(
         latency_ms=latency_ms,
         models_loaded=True,
     )
+    response.nas_upload = await _maybe_upload_analysis(
+        request_id=request_id,
+        image_bytes=data,
+        image_filename=filename,
+        response_payload=response.model_dump(),
+        overlay_b64=overlay_b64,
+    )
+    return response
 
 
 @router.post("/analyze/screen-roi/explain", response_model=ExplainResponse)

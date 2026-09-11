@@ -36,6 +36,14 @@ class ClassificationResult(BaseModel):
     probs: list[float] = Field(description="CLASSES 순서의 원시 확률")
 
 
+class NasUploadInfo(BaseModel):
+    """NAS 업로드 결과 요약."""
+    ok: bool
+    folder: str | None = None
+    files: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class ScreenRoiResponse(BaseModel):
     """POST /analyze/screen-roi 응답."""
     request_id: str
@@ -48,6 +56,7 @@ class ScreenRoiResponse(BaseModel):
     disclaimer: str
     latency_ms: int
     models_loaded: bool
+    nas_upload: NasUploadInfo | None = None
 
 
 class ExplainResponse(BaseModel):
@@ -57,6 +66,30 @@ class ExplainResponse(BaseModel):
     model: str
     latency_ms: int
     disclaimer: str
+
+
+class NasHealthResponse(BaseModel):
+    """GET /api/v1/nas/health — Synology 연결 상태."""
+    ok: bool
+    configured: bool
+    url: str | None = None
+    base_path: str | None = None
+    error: str | None = None
+
+
+class NasUploadResponse(BaseModel):
+    """POST /admin/nas/upload 응답 — NAS 업로드 + study 저장."""
+    ok: bool
+    remote_path: str | None = None
+    filename: str | None = None
+    bytes: int | None = None
+    error: str | None = None
+    # study 테이블 저장 결과
+    idx: int | None = None
+    st_part: str | None = None
+    st_modal: str | None = None
+    st_disease: str | None = None
+    st_image: str | None = None
 
 
 class HealthResponse(BaseModel):

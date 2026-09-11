@@ -1,10 +1,10 @@
 """
 ICH 앙상블 분류 서비스.
 
-EfficientNet-B4 + ConvNeXt-Small + ResNet18 세 모델의 sigmoid 출력을
+ConvNeXt-Base + EfficientNetV2-M 두 모델의 sigmoid 출력을
 평균하여 6클래스(5종 출혈 + any) 확률을 반환한다.
 
-가중치: HuggingFace kimsungil/brain-ich-ensemble
+가중치: HuggingFace kimsungil/Brain_Hemorrhage
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ _infer_transforms = A.Compose(
 
 
 class EnsembleService:
-    """3모델 앙상블 로드·추론."""
+    """ConvNeXt-Base + EfficientNetV2-M 앙상블 로드·추론."""
 
     def __init__(self) -> None:
         self.device = self._get_device()
@@ -85,22 +85,24 @@ class EnsembleService:
         stem = path.stem.lower()
         if "resnet18" in stem or "ich_resnet" in stem:
             return "resnet18"
-        if "convnext" in stem:
-            return "convnext_small.fb_in22k_ft_in1k"
+        if "convnext_base" in stem or "convnext" in stem:
+            return "convnext_base.fb_in22k_ft_in1k_384"
+        if "effv2" in stem or "efficientnetv2" in stem:
+            return "tf_efficientnetv2_m.in21k_ft_in1k"
         if "efficientnet" in stem:
-            return "tf_efficientnet_b4.ns_jft_in1k"
+            return "tf_efficientnetv2_m.in21k_ft_in1k"
         sd = EnsembleService._extract_state_dict(blob)
         keys = list(sd.keys())
         if any(k.startswith("stages.") for k in keys):
-            return "convnext_small.fb_in22k_ft_in1k"
+            return "convnext_base.fb_in22k_ft_in1k_384"
         if any(k.startswith("conv_stem") for k in keys):
-            return "tf_efficientnet_b4.ns_jft_in1k"
+            return "tf_efficientnetv2_m.in21k_ft_in1k"
         if any(k.startswith("layer1.") for k in keys) and "fc.weight" in sd:
             return "resnet18"
-        return "tf_efficientnet_b4.ns_jft_in1k"
+        return "tf_efficientnetv2_m.in21k_ft_in1k"
 
     def load(self) -> None:
-        """HF에서 체크포인트 다운로드 후 3모델을 eval 모드로 로드."""
+        """HF에서 체크포인트 다운로드 후 앙상블 모델을 eval 모드로 로드."""
         if self.ready:
             return
         try:

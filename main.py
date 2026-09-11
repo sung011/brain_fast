@@ -56,6 +56,26 @@ def _maybe_load_brain_models() -> None:
             pass
 
 
+def _maybe_warmup_nas() -> None:
+    """NAS SID·연결을 미리 열어 첫 업로드 지연을 줄인다."""
+    if not settings.nas_url or not settings.nas_user or not settings.nas_password:
+        return
+
+    async def _run() -> None:
+        try:
+            from services.nasServices import nas_service
+
+            client = await nas_service._get_client()
+            await nas_service._ensure_sid(client, force=True)
+        except Exception:
+            pass
+
+    try:
+        asyncio.get_running_loop().create_task(_run())
+    except RuntimeError:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -68,6 +88,7 @@ async def lifespan(app: FastAPI):
     wait_for_db()
     purge_old_log_folders()
     _maybe_load_brain_models()
+    _maybe_warmup_nas()
     stop = asyncio.Event()
 
     async def cleanup_loop() -> None:

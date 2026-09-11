@@ -87,6 +87,19 @@
                     </div>
 
                     <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
+                       data-bs-target="#collapseStudy">
+                        <div class="nav-link-icon"><i data-feather="book-open"></i></div>
+                        학습 관리
+                        <div class="sidenav-collapse-arrow"><i class="fas fa-angle-down"></i></div>
+                    </a>
+                    <div class="collapse" id="collapseStudy" data-bs-parent="#accordionSidenav">
+                        <nav class="sidenav-menu-nested nav">
+                            <a class="nav-link" href="/admin/study">학습 목록</a>
+                            <a class="nav-link" href="/admin/study/create">학습 등록</a>
+                        </nav>
+                    </div>
+
+                    <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
                        data-bs-target="#collapseProducts">
                         <div class="nav-link-icon"><i data-feather="package"></i></div>
                         상품 관리
@@ -175,6 +188,7 @@
 <script src="/assets/js/admin/litepicker.js"></script>
 <script src="/assets/js/admin/tab-manager.js"></script>
 <script src="/assets/js/admin/user-sse.js"></script>
+<script src="/assets/js/admin/study-sse.js"></script>
 <script>
     feather.replace();
 </script>
