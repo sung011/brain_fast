@@ -1,0 +1,68 @@
+{# 학습 등록: study 테이블 값 입력 + NAS 업로드 #}
+<div class="px-4">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>학습 등록</span>
+            <a class="btn btn-sm btn-light text-secondary open-in-tab" href="/admin/study?partial=1"
+               data-tab-title="학습 관리">
+                <i class="me-1" data-feather="arrow-left"></i>
+                목록으로
+            </a>
+        </div>
+        <div class="card-body">
+            <form name="studyCreate" id="studyCreateForm" autocomplete="off" enctype="multipart/form-data">
+                <div class="row gx-3">
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputStPart">학습 부위 (st_part)</label>
+                        <select class="form-select" id="inputStPart" name="st_part" required>
+                            <option value="">선택</option>
+                            {% for code, label in part_labels.items() %}
+                            <option value="{{ code }}">{{ code }}: {{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputStModal">영상 종류 (st_modal)</label>
+                        <select class="form-select" id="inputStModal" name="st_modal" required>
+                            <option value="">선택</option>
+                            {% for code, label in modal_labels.items() %}
+                            <option value="{{ code }}">{{ code }}: {{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputStDisease">병명 (st_disease)</label>
+                        <input class="form-control" id="inputStDisease" name="st_disease" type="text"
+                               placeholder="예: 뇌출혈" maxlength="30" required/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputRemoteDir">NAS 저장 경로 (remote_dir)</label>
+                        <input class="form-control" id="inputRemoteDir" name="remote_dir" type="text"
+                               value="{{ nas_base_path }}" placeholder="/stylesheets/assets/brain/CT"
+                               readonly/>
+                        <div class="form-text">부위·영상 종류 선택 시 자동 변경됩니다.</div>
+                    </div>
+                    <div class="col-12 mb-3">
+                        <label class="small mb-1" for="inputStudyFile">이미지 파일 (st_image)</label>
+                        <input class="form-control" id="inputStudyFile" name="file" type="file"
+                               accept="image/*,.dcm,.dicom" required/>
+                    </div>
+                </div>
+                <div id="studyCreateResult" class="alert alert-success d-none mb-3" role="alert"></div>
+                <div class="d-flex align-items-center justify-content-end mt-3">
+                    <a class="btn btn-light me-2 open-in-tab" href="/admin/study?partial=1"
+                       data-tab-title="학습 관리">취소</a>
+                    <button type="submit" class="btn btn-primary" id="studyCreateSubmitBtn">
+                        <i class="me-1" data-feather="upload"></i>
+                        NAS 업로드 후 등록
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script src="/assets/js/admin/study-create.js"></script>
+<script>
+    if (window.initStudyCreate) window.initStudyCreate();
+    if (window.feather) feather.replace();
+</script>

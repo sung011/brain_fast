@@ -21,6 +21,7 @@ from schemas.studySchemas import (
     ST_PART_LABELS,
     StudyCreateResult,
     StudyOut,
+    StudyUpdateResult,
     build_remote_dir,
 )
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
@@ -336,6 +337,39 @@ def study_create_page(request: Request, partial: bool = False):
     return render_with_layout(request, templates, "study_create", data)
 
 
+def _public_image_url(st_image: str | None) -> str | None:
+    """DB st_image → 브라우저에서 볼 수 있는 절대 URL."""
+    if not st_image:
+        return None
+    path = st_image if st_image.startswith("/") else f"/{st_image}"
+    base = (settings.nas_public_base_url or "").rstrip("/")
+    if not base:
+        return path
+    return f"{base}{path}"
+
+
+@router.get("/study/{idx}")
+def study_detail_page(idx: int, request: Request, partial: bool = False):
+    """학습 상세/수정 화면."""
+    data = {
+        "title": f"학습 상세 #{idx}",
+        "study_idx": idx,
+        "part_labels": ST_PART_LABELS,
+        "modal_labels": ST_MODAL_LABELS,
+        "nas_base_path": settings.nas_base_path or "/stylesheets/assets",
+        "nas_public_base_url": (
+            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+        ).rstrip("/"),
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="study_detail.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "study_detail", data)
+
+
 @router.get("/studies_all", response_model=list[StudyOut])
 def studies_all(db: Session = Depends(get_db)):
     return study_service.list_studies(db)
@@ -369,6 +403,17 @@ async def studies_stream(request: Request):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get("/studies/{idx}", response_model=StudyOut)
+def study_get(idx: int, db: Session = Depends(get_db)):
+    row = study_service.get_study(db, idx)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "학습 데이터를 찾을 수 없습니다."},
+        )
+    return row
 
 
 @router.get("/nas/health", response_model=NasHealthResponse)
@@ -538,6 +583,88 @@ async def study_create(
         st_modal=st_modal,
         st_disease=st_disease,
         remote_dir=remote_dir,
+    )
+
+
+@router.put("/study/{idx}", response_model=StudyUpdateResult)
+async def study_update(
+    idx: int,
+    db: Session = Depends(get_db),
+    st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
+    st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
+    st_disease: str = Form(..., description="병명"),
+    file: UploadFile | None = File(None),
+) -> StudyUpdateResult:
+    """학습 수정. 이미지 파일이 있으면 NAS에 새로 올린 뒤 경로를 갱신한다."""
+    existing = study_service.get_study(db, idx)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "학습 데이터를 찾을 수 없습니다."},
+        )
+
+    new_image: str | None = None
+    remote_path: str | None = None
+    has_file = bool(file and file.filename)
+    if has_file and file is not None:
+        svc = nas_service_mod.nas_service
+        if not svc.enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+            )
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="이미지 파일이 비어 있습니다.")
+        dest = _to_nas_upload_dir(build_remote_dir(st_part, st_modal))
+        safe_name = (file.filename or "study.bin").replace("\\", "/").split("/")[-1]
+        upload_name = f"{uuid.uuid4().hex[:10]}_{safe_name}"
+        try:
+            uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+        remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
+        new_image = _to_public_image_path(remote_path)
+
+    try:
+        row = study_service.update_study(
+            db,
+            idx,
+            st_part=st_part,
+            st_modal=st_modal,
+            st_disease=st_disease,
+            st_image=new_image,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc)},
+        ) from exc
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "학습 데이터를 찾을 수 없습니다."},
+        )
+
+    await study_events.publish(
+        "study_updated",
+        {
+            "idx": row.idx,
+            "st_part": row.st_part,
+            "st_modal": row.st_modal,
+            "st_disease": row.st_disease,
+            "st_image": row.st_image,
+        },
+    )
+    return StudyUpdateResult(
+        ok=True,
+        idx=row.idx,
+        st_part=row.st_part,
+        st_modal=row.st_modal,
+        st_disease=row.st_disease,
+        st_image=row.st_image,
+        remote_path=remote_path,
     )
 
 

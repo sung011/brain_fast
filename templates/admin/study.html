@@ -1,0 +1,38 @@
+{# 학습 목록 #}
+<div class="px-4">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>학습 목록</span>
+            <a class="btn btn-sm btn-light text-primary open-in-tab"
+               href="/admin/study/create?partial=1" data-tab-title="학습 등록">
+                <i class="me-1" data-feather="plus"></i>
+                <span class="button-text">학습 등록</span>
+            </a>
+        </div>
+        <div class="card-body">
+            <table class="table table-hover" id="studyTable" style="width:100%">
+                <thead>
+                <tr>
+                    <th>번호</th>
+                    <th>부위</th>
+                    <th>영상</th>
+                    <th>병명</th>
+                    <th>이미지 경로 (NAS)</th>
+                    <th>등록일</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script>
+    window.STUDY_PART_LABELS = {{ part_labels | tojson }};
+    window.STUDY_MODAL_LABELS = {{ modal_labels | tojson }};
+</script>
+<script src="/assets/js/admin/study-manager.js"></script>
+<script>
+    if (window.initStudyManager) window.initStudyManager();
+    if (window.feather) feather.replace();
+</script>

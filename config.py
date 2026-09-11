@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     nas_base_path: str = "/stylesheets/assets"
     # DB st_image 저장 시 이 prefix 를 제거한다. (/web/mu_shop/public + /stylesheets/...)
     nas_public_root: str = "/web/mu_shop/public"
+    # 브라우저에서 이미지 볼 때 쓰는 공개 URL prefix
+    # 예) https://host/mu_shop/public + /stylesheets/assets/...
+    nas_public_base_url: str = "https://olleh7531.synology.me/mu_shop/public"
     nas_verify_ssl: bool = True
     nas_timeout: float = 60.0
     # 분석 완료 시 원본·overlay·result.json 자동 업로드
