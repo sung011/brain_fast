@@ -28,7 +28,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, api, brain
+from routers import admin, commonness, brain
 
 # 오래된 로그 폴더를 다시 검사하는 간격(초). 1시간마다 한 번.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -149,7 +149,7 @@ app.add_exception_handler(Exception, unhandled_exception_handler)  # 그 외 서
 app.include_router(admin.router)
 
 # API 라우터. 경로 예: /items/{item_id}
-app.include_router(api.router)
+app.include_router(commonness.router)
 
 # 화면 공유 ROI 분석 (MediLens와 동일 경로)
 app.include_router(brain.router, prefix="/api/v1", tags=["brain"])

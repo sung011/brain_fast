@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from models.studyModel import StudyModel
@@ -16,6 +16,28 @@ def list_all(db: Session, *, active_only: bool = True) -> list[StudyModel]:
 
 def get_by_idx(db: Session, idx: int) -> StudyModel | None:
     return db.get(StudyModel, idx)
+
+
+def get_random(
+    db: Session,
+    *,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+    exclude_idxs: list[int] | None = None,
+) -> StudyModel | None:
+    """활성 study 중 랜덤 1건. exclude_idxs에 있는 idx는 제외한다."""
+    stmt = select(StudyModel).where(
+        StudyModel.del_yn == "N",
+        StudyModel.state == "N",
+    )
+    if st_part:
+        stmt = stmt.where(StudyModel.st_part == st_part)
+    if st_modal:
+        stmt = stmt.where(StudyModel.st_modal == st_modal)
+    if exclude_idxs:
+        stmt = stmt.where(StudyModel.idx.notin_(exclude_idxs))
+    stmt = stmt.order_by(func.random()).limit(1)
+    return db.scalars(stmt).first()
 
 
 def create(

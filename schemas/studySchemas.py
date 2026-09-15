@@ -69,6 +69,63 @@ ST_MODAL_FOLDERS = {
 ST_PART_VALUES = set(ST_PART_LABELS)
 ST_MODAL_VALUES = set(ST_MODAL_LABELS)
 
+# API에서 brain/chest/CT 같은 이름으로 올 때 DB 코드(1~4, 1~3)로 변환
+ST_PART_ALIASES = {
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "4": "4",
+    "brain": "1",
+    "chest": "2",
+    "thorax": "2",
+    "abdomen": "3",
+    "knee": "4",
+    "뇌": "1",
+    "흉부": "2",
+    "복부": "3",
+    "무릎": "4",
+}
+ST_MODAL_ALIASES = {
+    "1": "1",
+    "2": "2",
+    "3": "3",
+    "xray": "1",
+    "x-ray": "1",
+    "ct": "2",
+    "mri": "3",
+}
+
+
+def resolve_st_part(value: str | None) -> str | None:
+    """부위 이름/코드를 study.st_part(1~4)로 변환한다."""
+    if value is None:
+        return None
+    key = value.strip()
+    if not key:
+        return None
+    code = ST_PART_ALIASES.get(key.lower()) or ST_PART_ALIASES.get(key)
+    if code is None:
+        raise ValueError(
+            "부위(st_part)는 1~4 또는 brain, chest, abdomen, knee 중 하나여야 합니다."
+        )
+    return code
+
+
+def resolve_st_modal(value: str | None) -> str | None:
+    """영상 종류 이름/코드를 study.st_modal(1~3)로 변환한다."""
+    if value is None:
+        return None
+    key = value.strip()
+    if not key:
+        return None
+    code = ST_MODAL_ALIASES.get(key.lower())
+    if code is None:
+        raise ValueError(
+            "영상 종류(st_modal)는 1~3 또는 xray, ct, mri 중 하나여야 합니다."
+        )
+    return code
+
+
 ASSETS_ROOT = "/stylesheets/assets"
 
 
