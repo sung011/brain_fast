@@ -5,7 +5,7 @@ JSON을 주고받는 엔드포인트. 입력값이 잘못되면
 exception_handlers.validation_exception_handler 가 422와 로그를 남긴다.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -14,6 +14,7 @@ from db import ping_db
 from models.studyModel import StudyModel
 from schemas.userSchemas import UserLogin
 from services import learningServices as learning_service
+from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
 from utils.password import hash_password, verify_password
 
@@ -209,3 +210,58 @@ def login_post(body: UserLogin, db: Session = Depends(get_db)):
         "mb_level": user.mb_level,
         **debug,
     }
+
+
+@router.post("/learning/roi-grade")
+async def learning_roi_grade(
+    image: UploadFile = File(..., description="원본 이미지 파일 그대로"),
+    roi_type: str = Form(..., description="box 또는 circle"),
+    x: float | None = Form(None, description="박스 왼쪽 x"),
+    y: float | None = Form(None, description="박스 위쪽 y"),
+    width: float | None = Form(None, description="박스 너비"),
+    height: float | None = Form(None, description="박스 높이"),
+    cx: float | None = Form(None, description="원 중심 x"),
+    cy: float | None = Form(None, description="원 중심 y"),
+    radius: float | None = Form(None, description="원 반지름"),
+    normalized: bool = Form(
+        True,
+        description="true면 좌표는 이미지 대비 0~1, false면 픽셀",
+    ),
+    include_overlay: bool = Form(
+        True,
+        description="이상이 있으면 해당 부위를 색칠한 PNG(base64)를 포함",
+    ),
+):
+    """
+    이미지 + ROI(박스/원) 제출 채점.
+
+    - 이미지에 이상 부위가 있으면 overlay_png_base64 로 색칠해서 돌려준다.
+    - 사용자 ROI가 그 위치에 있으면 정답, 비슷하면 부분정답, 아니면 오답.
+    - 기존 /learning/submit 과는 별개. 병명 채점은 하지 않는다.
+    """
+    data = await image.read()
+    try:
+        return roi_grade_service.grade_image_roi(
+            data,
+            image.filename or "upload.png",
+            roi_type=roi_type,
+            normalized=normalized,
+            x=x,
+            y=y,
+            width=width,
+            height=height,
+            cx=cx,
+            cy=cy,
+            radius=radius,
+            include_overlay=include_overlay,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
