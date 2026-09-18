@@ -177,6 +177,21 @@ class SynologyNasService:
             return path.rstrip("/") or root
         return f"{root}{path}".rstrip("/")
 
+    def to_public_path(self, remote_path: str) -> str:
+        """
+        NAS 전체 경로 → DB/웹용 상대 경로.
+        /web/mu_shop/public/stylesheets/assets/review/a.png
+          → /stylesheets/assets/review/a.png
+        """
+        path = (remote_path or "").replace("\\", "/")
+        root = self.public_root
+        if path.startswith(root + "/"):
+            return path[len(root) :]
+        if path.startswith(root):
+            rest = path[len(root) :]
+            return rest if rest.startswith("/") else f"/{rest}" if rest else "/"
+        return path if path.startswith("/") else f"/{path}"
+
     async def _upload_once(
         self,
         client: httpx.AsyncClient,

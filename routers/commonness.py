@@ -14,8 +14,10 @@ from db import ping_db
 from models.studyModel import StudyModel
 from schemas.userSchemas import UserLogin
 from services import learningServices as learning_service
+from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
+from services.nasServices import NasNotConfiguredError, NasUploadError
 from utils.password import hash_password, verify_password
 
 router = APIRouter(tags=["commonness"])
@@ -214,6 +216,7 @@ def login_post(body: UserLogin, db: Session = Depends(get_db)):
 
 @router.post("/learning/roi-grade")
 async def learning_roi_grade(
+    db: Session = Depends(get_db),
     image: UploadFile = File(..., description="원본 이미지 파일 그대로"),
     roi_type: str = Form(..., description="box 또는 circle"),
     x: float | None = Form(None, description="박스 왼쪽 x"),
@@ -231,17 +234,21 @@ async def learning_roi_grade(
         True,
         description="이상이 있으면 해당 부위를 색칠한 PNG(base64)를 포함",
     ),
+    study_idx: int | None = Form(None, description="현재 문제 study.idx"),
+    user_idx: int | None = Form(None, description="제출 사용자 user_member.idx"),
 ):
     """
     이미지 + ROI(박스/원) 제출 채점.
 
     - 이미지에 이상 부위가 있으면 overlay_png_base64 로 색칠해서 돌려준다.
     - 사용자 ROI가 그 위치에 있으면 정답, 비슷하면 부분정답, 아니면 오답.
-    - 기존 /learning/submit 과는 별개. 병명 채점은 하지 않는다.
+    - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
+      NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
+      review_node.rn_image 에 웹 경로를 넣는다.
     """
     data = await image.read()
     try:
-        return roi_grade_service.grade_image_roi(
+        result = roi_grade_service.grade_image_roi(
             data,
             image.filename or "upload.png",
             roi_type=roi_type,
@@ -265,3 +272,38 @@ async def learning_roi_grade(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
+
+    try:
+        saved = await review_node_service.save_submission(
+            db,
+            image_bytes=data,
+            image_filename=image.filename or "upload.png",
+            grade=result,
+            study_idx=study_idx,
+            user_idx=user_idx,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except NasNotConfiguredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except NasUploadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"NAS 업로드 실패: {exc}",
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"리뷰 저장 실패: {exc}",
+        ) from exc
+    finally:
+        result.pop("_review_png", None)
+
+    result.update(saved)
+    return result

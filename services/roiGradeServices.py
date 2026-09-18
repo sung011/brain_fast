@@ -6,10 +6,13 @@
 """
 from __future__ import annotations
 
+import io
+import math
 from importlib import import_module
 from types import ModuleType
 
 import numpy as np
+from PIL import Image, ImageDraw
 
 # 정답: 이상 부위를 충분히 덮음
 CORRECT_IOU = 0.40
@@ -19,6 +22,10 @@ PARTIAL_IOU = 0.15
 PARTIAL_RECALL = 0.25
 # 중심이 이미지 대각선 대비 이 비율 이내면 "비슷함"
 NEAR_CENTER_RATIO = 0.15
+# 오답 노트용 사용자 ROI 윤곽 (1px dashed cyan)
+_ROI_OUTLINE = (0, 230, 255, 255)
+_ROI_DASH = 4
+_ROI_GAP = 3
 
 _brain_mod: ModuleType | None = None
 
@@ -129,6 +136,82 @@ def _center(mask: np.ndarray) -> tuple[float, float] | None:
     return float(np.mean(xs)), float(np.mean(ys))
 
 
+def _dashed_polyline(
+    draw: ImageDraw.ImageDraw,
+    points: list[tuple[float, float]],
+    color: tuple[int, int, int, int],
+    *,
+    dash: int = _ROI_DASH,
+    gap: int = _ROI_GAP,
+) -> None:
+    """점들을 잇는 1px dashed 선."""
+    if len(points) < 2:
+        return
+    drawing = True
+    remaining = float(dash)
+    for i in range(len(points) - 1):
+        x1, y1 = points[i]
+        x2, y2 = points[i + 1]
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.hypot(dx, dy)
+        if length <= 0:
+            continue
+        ux, uy = dx / length, dy / length
+        pos = 0.0
+        while pos < length:
+            if remaining <= 0:
+                drawing = not drawing
+                remaining = float(dash if drawing else gap)
+            take = min(remaining, length - pos)
+            if drawing:
+                sx = x1 + ux * pos
+                sy = y1 + uy * pos
+                ex = x1 + ux * (pos + take)
+                ey = y1 + uy * (pos + take)
+                draw.line([(sx, sy), (ex, ey)], fill=color, width=1)
+            pos += take
+            remaining -= take
+
+
+def _ellipse_points(x1: int, y1: int, x2: int, y2: int) -> list[tuple[float, float]]:
+    rx = (x2 - x1) / 2
+    ry = (y2 - y1) / 2
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    n = max(64, int(2 * math.pi * max(abs(rx), abs(ry))))
+    return [
+        (cx + rx * math.cos(2 * math.pi * i / n), cy + ry * math.sin(2 * math.pi * i / n))
+        for i in range(n + 1)
+    ]
+
+
+def _to_png_bytes(img_uint8: np.ndarray) -> bytes:
+    buf = io.BytesIO()
+    Image.fromarray(img_uint8).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def draw_user_roi(img_uint8: np.ndarray, user: np.ndarray, roi_type: str) -> np.ndarray:
+    """원본(또는 이상 부위 overlay) 위에 1px dashed ROI를 그린다."""
+    if user is None or not user.any():
+        return img_uint8
+    ys, xs = np.where(user)
+    x1, x2 = int(xs.min()), int(xs.max())
+    y1, y2 = int(ys.min()), int(ys.max())
+    kind = (roi_type or "").strip().lower()
+
+    base = Image.fromarray(img_uint8).convert("RGBA")
+    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    if kind in ("circle", "ellipse", "원"):
+        points = _ellipse_points(x1, y1, x2, y2)
+    else:
+        points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2), (x1, y1)]
+    _dashed_polyline(draw, points, _ROI_OUTLINE)
+    return np.array(Image.alpha_composite(base, layer).convert("RGB"))
+
+
 def grade_overlap(user: np.ndarray, gt: np.ndarray) -> dict:
     """IoU·재현율·중심 거리로 정답/부분정답/오답 판정."""
     inter = int(np.logical_and(user, gt).sum())
@@ -228,10 +311,18 @@ def grade_image_roi(
 
     overlay_b64 = None
     overlay_summary = None
-    if include_overlay and scored["has_abnormality"]:
+    overlay = None
+    if scored["has_abnormality"]:
         overlay = brain.Localization.build_overlay_image(img_uint8, per_class)
-        overlay_b64 = brain.Localization.overlay_to_base64(overlay)
         overlay_summary = brain.Localization.summarize_targets(per_class, targets)
+        if include_overlay:
+            overlay_b64 = brain.Localization.overlay_to_base64(overlay)
+
+    review_img = draw_user_roi(
+        overlay if overlay is not None else img_uint8,
+        user,
+        roi_type,
+    )
 
     findings = [
         {
@@ -265,4 +356,5 @@ def grade_image_roi(
             "findings": findings,
         },
         "disclaimer": constants.DISCLAIMER,
+        "_review_png": _to_png_bytes(review_img),
     }
