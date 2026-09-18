@@ -109,4 +109,37 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="userReviewsModal" tabindex="-1" aria-labelledby="userReviewsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="userReviewsModalLabel">풀이 이력</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3" id="userReviewsSummary"></p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0" id="userReviewsTable" style="width:100%">
+                        <thead>
+                        <tr>
+                            <th>제출일시</th>
+                            <th>문제</th>
+                            <th>부위</th>
+                            <th>영상</th>
+                            <th>병명</th>
+                            <th>결과</th>
+                            <th>제출 이미지</th>
+                        </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">닫기</button>
+            </div>
+        </div>
+    </div>
+</div>
 <script src="/assets/js/admin/user-manager.js"></script>

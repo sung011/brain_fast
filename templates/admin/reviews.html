@@ -1,0 +1,33 @@
+{# 회원 풀이 이력 본문. #}
+<header class="page-header page-header-compact page-header-light mb-4">
+    <div class="container-xl px-4"></div>
+</header>
+
+<div class="px-4">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>풀이 이력</span>
+            <span class="text-muted small">회원이 ROI 채점으로 제출한 학습 기록</span>
+        </div>
+        <div class="card-body">
+            <table class="table table-hover datatable-reviews" id="reviewsTable" style="width:100%"
+                   data-nas-base="{{ nas_public_base_url | default('') }}">
+                <thead>
+                <tr>
+                    <th>제출일시</th>
+                    <th>회원</th>
+                    <th>문제</th>
+                    <th>부위</th>
+                    <th>영상</th>
+                    <th>병명</th>
+                    <th>결과</th>
+                    <th>제출 이미지</th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script src="/assets/js/admin/reviews-manager.js"></script>

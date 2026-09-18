@@ -1,0 +1,34 @@
+{# Q&A 전체 내역 — 게시판 형식 #}
+<div class="px-4" id="qaPageRoot">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>Q&amp;A 문의</span>
+            <span class="badge bg-primary" id="qaUnreadBadge" title="미읽음">0</span>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">
+                회원 문의 전체 내역입니다. 미읽음은 강조 표시됩니다. 행을 클릭하면 채팅으로 답변합니다.
+            </p>
+            <table class="table table-hover" id="qaTable" style="width:100%">
+                <thead>
+                <tr>
+                    <th>번호</th>
+                    <th>상태</th>
+                    <th>제목</th>
+                    <th>회원</th>
+                    <th>최근 메시지</th>
+                    <th>최근 일시</th>
+                    <th>미읽음</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script src="/assets/js/admin/qa-manager.js"></script>
+<script>
+    if (window.initQaManager) window.initQaManager();
+    if (window.feather) feather.replace();
+</script>

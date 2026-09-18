@@ -16,6 +16,11 @@ SOLUTION_MAP = {
     "부분정답": "H",
     "오답": "W",
 }
+SOLUTION_LABELS = {
+    "C": "정답",
+    "H": "부분정답",
+    "W": "오답",
+}
 
 REVIEW_DIR = "/stylesheets/assets/review"
 
@@ -23,6 +28,11 @@ REVIEW_DIR = "/stylesheets/assets/review"
 def solution_code(result: str | None) -> str | None:
     key = (result or "").strip()
     return SOLUTION_MAP.get(key)
+
+
+def solution_label(code: str | None) -> str:
+    key = (code or "").strip().upper()
+    return SOLUTION_LABELS.get(key, code or "-")
 
 
 def _clip_disease(value: str | None) -> str | None:
@@ -117,3 +127,39 @@ async def save_submission(
         "rn_solution": row.rn_solution,
         "remote_path": remote_path,
     }
+
+
+def list_for_admin(
+    db: Session,
+    *,
+    user_idx: int | None = None,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """관리자용 풀이 이력. study·회원 정보를 붙여 돌려준다."""
+    from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
+
+    rows = repositories.list_with_details(db, user_idx=user_idx, limit=limit)
+    items: list[dict[str, Any]] = []
+    for review, study, user in rows:
+        part = study.st_part if study else None
+        modal = study.st_modal if study else None
+        items.append(
+            {
+                "idx": review.idx,
+                "user_idx": review.rn_u_idx,
+                "user_id": user.user_id if user else None,
+                "user_name": user.user_name if user else None,
+                "study_idx": review.rn_s_idx,
+                "st_part": part,
+                "st_part_label": ST_PART_LABELS.get(part or "", part),
+                "st_modal": modal,
+                "st_modal_label": ST_MODAL_LABELS.get(modal or "", modal),
+                "st_disease": (study.st_disease if study else None) or review.rn_disease,
+                "rn_disease": review.rn_disease,
+                "rn_solution": review.rn_solution,
+                "rn_solution_label": solution_label(review.rn_solution),
+                "rn_image": review.rn_image,
+                "created_at": review.created_at,
+            }
+        )
+    return items

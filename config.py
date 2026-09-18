@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     nas_base_path: str = "/stylesheets/assets"
     # 학습 제출(오답 노트) 이미지. NAS에는 /web/mu_shop/public/stylesheets/assets/review
     nas_review_path: str = "/stylesheets/assets/review"
+    # 학습자 메인 홍보 팝업 이미지
+    nas_popup_path: str = "/stylesheets/assets/popup"
     # DB st_image 저장 시 이 prefix 를 제거한다. (/web/mu_shop/public + /stylesheets/...)
     nas_public_root: str = "/web/mu_shop/public"
     # 브라우저에서 이미지 볼 때 쓰는 공개 URL prefix

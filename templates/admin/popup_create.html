@@ -1,0 +1,72 @@
+{# 홍보 팝업 등록 #}
+<div class="px-4">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>팝업 등록</span>
+            <a class="btn btn-sm btn-light text-secondary open-in-tab" href="/admin/popup?partial=1"
+               data-tab-title="팝업">
+                <i class="me-1" data-feather="arrow-left"></i>
+                목록으로
+            </a>
+        </div>
+        <div class="card-body">
+            <form name="popupCreate" id="popupCreateForm" autocomplete="off" enctype="multipart/form-data">
+                <div class="row gx-3">
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputPpTitle">제목 (관리용)</label>
+                        <input class="form-control" id="inputPpTitle" name="pp_title" type="text"
+                               maxlength="100" placeholder="예: 봄 이벤트 안내"/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputPpSort">표시 순서</label>
+                        <input class="form-control" id="inputPpSort" name="pp_sort" type="number"
+                               value="0" step="1"/>
+                        <div class="form-text">숫자가 작을수록 먼저 노출됩니다.</div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputPpLink">클릭 링크 (선택)</label>
+                        <input class="form-control" id="inputPpLink" name="pp_link" type="url"
+                               placeholder="https://..."/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputPpState">상태</label>
+                        <select class="form-select" id="inputPpState" name="state">
+                            <option value="N" selected>노출</option>
+                            <option value="S">숨김</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputStartAt">노출 시작</label>
+                        <input class="form-control" id="inputStartAt" name="start_at" type="datetime-local"/>
+                        <div class="form-text">비우면 즉시 노출</div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="inputEndAt">노출 종료</label>
+                        <input class="form-control" id="inputEndAt" name="end_at" type="datetime-local"/>
+                        <div class="form-text">비우면 무기한</div>
+                    </div>
+                    <div class="col-12 mb-3">
+                        <label class="small mb-1" for="inputPopupFile">팝업 이미지</label>
+                        <input class="form-control" id="inputPopupFile" name="file" type="file"
+                               accept="image/*" required/>
+                        <div class="form-text">NAS {{ nas_popup_path }} 에 업로드됩니다.</div>
+                    </div>
+                </div>
+                <div id="popupCreateResult" class="alert alert-success d-none mb-3" role="alert"></div>
+                <div class="d-flex align-items-center justify-content-end mt-3">
+                    <a class="btn btn-light me-2 open-in-tab" href="/admin/popup?partial=1"
+                       data-tab-title="팝업">취소</a>
+                    <button type="submit" class="btn btn-primary" id="popupCreateSubmitBtn">
+                        <i class="me-1" data-feather="upload"></i>
+                        NAS 업로드 후 등록
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script src="/assets/js/admin/popup-create.js"></script>
+<script>
+    if (window.initPopupCreate) window.initPopupCreate();
+    if (window.feather) feather.replace();
+</script>

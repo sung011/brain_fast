@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from db import get_db
 from schemas.analyzeSchemas import NasHealthResponse, NasUploadResponse
+from schemas.popupSchemas import PopupOut, PopupWriteResult
 from schemas.studySchemas import (
     ST_MODAL_LABELS,
     ST_PART_LABELS,
@@ -25,12 +26,19 @@ from schemas.studySchemas import (
     build_remote_dir,
 )
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
+from services import dashboardServices as dashboard_service
 from services import nasServices as nas_service_mod
+from schemas.qaSchemas import QaMessageBody
+from services import popupServices as popup_service
+from services import qaServices as qa_service
+from services import reviewNodeServices as review_node_service
 from services import studyServices as study_service
 from services import userServices as user_service
 from utils.adminAuth import admin_session_guard
 from utils.password import hash_password, verify_password
+from utils.qa_sse import qa_events
 from utils.renderHelper import render_with_layout
+from utils.review_sse import review_events
 from utils.study_sse import study_events
 from utils.user_sse import user_events
 
@@ -106,16 +114,36 @@ def logout(request: Request):
 # 관리자 메인 화면
 # - GET /admin → index.html 본문을 그린 뒤 partials/layout_adm.html 레이아웃에 넣는다
 @router.get("/")
-def index_page(request: Request):
+def index_page(request: Request, db: Session = Depends(get_db)):
+    stats = dashboard_service.get_stats(db)
+    for item in stats.get("recent_reviews") or []:
+        item["rn_image_url"] = _public_image_url(item.get("rn_image"))
+    stats["health"] = dashboard_service.quick_health()
+
     return render_with_layout(
         request,
         templates,
         "index",
         {
             "title": "Dashboard",
-            "user": request.session.get("user")
+            "user": request.session.get("user"),
+            "nas_public_base_url": (
+                settings.nas_public_base_url
+                or "https://olleh7531.synology.me/mu_shop/public"
+            ).rstrip("/"),
+            "dashboard_stats": stats,
         },
     )
+
+
+@router.get("/dashboard/stats")
+def dashboard_stats(db: Session = Depends(get_db)):
+    """대시보드 카드·차트·최근 풀이 요약. NAS 로그인 없이 빠르게."""
+    stats = dashboard_service.get_stats(db)
+    for item in stats.get("recent_reviews") or []:
+        item["rn_image_url"] = _public_image_url(item.get("rn_image"))
+    stats["health"] = dashboard_service.quick_health()
+    return stats
 
 
 @router.get("/user")
@@ -138,6 +166,93 @@ def user_page(request: Request, partial: bool = False):
 @router.get("/users_all", response_model=list[UserOut])
 def users_all(db: Session = Depends(get_db)):
     return user_service.user_all_data(db)
+
+
+@router.get("/reviews")
+def reviews_page(request: Request, partial: bool = False):
+    """회원 풀이(제출) 이력 목록."""
+    data = {
+        "title": "풀이 이력",
+        "nas_public_base_url": (
+            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+        ).rstrip("/"),
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="reviews.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "reviews", data)
+
+
+@router.get("/reviews_all")
+def reviews_all(user_idx: int | None = None, db: Session = Depends(get_db)):
+    """풀이 이력 JSON. user_idx가 있으면 해당 회원만."""
+    items = review_node_service.list_for_admin(db, user_idx=user_idx)
+    for item in items:
+        item["rn_image_url"] = _public_image_url(item.get("rn_image"))
+        created = item.get("created_at")
+        if created is not None and hasattr(created, "isoformat"):
+            item["created_at"] = created.isoformat(sep=" ", timespec="seconds")
+    return items
+
+
+@router.get("/reviews/stream")
+async def reviews_stream(request: Request):
+    """풀이 이력 변경을 실시간으로 알린다 (SSE)."""
+
+    async def event_generator():
+        queue = await review_events.subscribe()
+        try:
+            yield review_events.format_sse({"event": "connected", "data": {"ok": True}})
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield review_events.format_sse(message)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await review_events.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/user/{idx}/reviews")
+def user_reviews(idx: int, db: Session = Depends(get_db)):
+    """특정 회원의 풀이 이력."""
+    user = user_service.get_user(db, idx)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "회원을 찾을 수 없습니다."},
+        )
+    items = review_node_service.list_for_admin(db, user_idx=idx)
+    for item in items:
+        item["rn_image_url"] = _public_image_url(item.get("rn_image"))
+        created = item.get("created_at")
+        if created is not None and hasattr(created, "isoformat"):
+            item["created_at"] = created.isoformat(sep=" ", timespec="seconds")
+    return {
+        "ok": True,
+        "user": {
+            "idx": user.idx,
+            "user_id": user.user_id,
+            "user_name": user.user_name,
+        },
+        "count": len(items),
+        "items": items,
+    }
 
 
 @router.get("/users/stream")
@@ -681,3 +796,403 @@ async def study_delete(idx: int, db: Session = Depends(get_db)):
         {"idx": row.idx, "st_image": row.st_image},
     )
     return {"ok": True, "idx": row.idx}
+
+
+# ---------------------------------------------------------------------------
+# 홍보 팝업 (학습자 메인)
+# ---------------------------------------------------------------------------
+
+
+def _popup_out(row) -> PopupOut:
+    return PopupOut(
+        idx=row.idx,
+        del_yn=row.del_yn,
+        pp_title=row.pp_title,
+        pp_image=row.pp_image,
+        pp_image_url=_public_image_url(row.pp_image),
+        pp_link=row.pp_link,
+        pp_sort=row.pp_sort or 0,
+        start_at=row.start_at,
+        end_at=row.end_at,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        state=row.state,
+    )
+
+
+@router.get("/popup")
+def popup_page(request: Request, partial: bool = False):
+    """홍보 팝업 목록."""
+    data = {
+        "title": "팝업",
+        "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
+        "nas_public_base_url": (
+            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+        ).rstrip("/"),
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="popup.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "popup", data)
+
+
+@router.get("/popup/create")
+def popup_create_page(request: Request, partial: bool = False):
+    """홍보 팝업 등록."""
+    data = {
+        "title": "팝업 등록",
+        "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="popup_create.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "popup_create", data)
+
+
+@router.get("/popup/{idx}")
+def popup_detail_page(idx: int, request: Request, partial: bool = False):
+    """홍보 팝업 수정."""
+    data = {
+        "title": f"팝업 수정 #{idx}",
+        "popup_idx": idx,
+        "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
+        "nas_public_base_url": (
+            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+        ).rstrip("/"),
+    }
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="popup_detail.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "popup_detail", data)
+
+
+@router.get("/popups_all", response_model=list[PopupOut])
+def popups_all(db: Session = Depends(get_db)):
+    return [_popup_out(row) for row in popup_service.list_admin(db)]
+
+
+@router.get("/popups/{idx}", response_model=PopupOut)
+def popup_get(idx: int, db: Session = Depends(get_db)):
+    row = popup_service.get_popup(db, idx)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "팝업을 찾을 수 없습니다."},
+        )
+    return _popup_out(row)
+
+
+@router.post("/popup", response_model=PopupWriteResult)
+async def popup_create(
+    db: Session = Depends(get_db),
+    file: UploadFile = File(..., description="팝업 이미지"),
+    pp_title: str = Form("", description="관리용 제목"),
+    pp_link: str = Form("", description="클릭 시 이동 URL"),
+    pp_sort: int = Form(0, description="표시 순서(작을수록 먼저)"),
+    start_at: str = Form("", description="노출 시작 datetime-local"),
+    end_at: str = Form("", description="노출 종료 datetime-local"),
+    state: str = Form("N", description="N:노출 / S:숨김"),
+) -> PopupWriteResult:
+    """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장."""
+    svc = nas_service_mod.nas_service
+    if not svc.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+        )
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="이미지 파일이 비어 있습니다.")
+
+    dest = _to_nas_upload_dir(settings.nas_popup_path or "/stylesheets/assets/popup")
+    safe_name = (file.filename or "popup.png").replace("\\", "/").split("/")[-1]
+    upload_name = f"{uuid.uuid4().hex[:10]}_{safe_name}"
+    try:
+        uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+
+    remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
+    pp_image = _to_public_image_path(remote_path)
+    try:
+        row = popup_service.create_popup(
+            db,
+            pp_title=pp_title,
+            pp_image=pp_image,
+            pp_link=pp_link,
+            pp_sort=pp_sort,
+            start_at=start_at,
+            end_at=end_at,
+            state=state,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc)},
+        ) from exc
+
+    return PopupWriteResult(
+        ok=True,
+        idx=row.idx,
+        pp_title=row.pp_title,
+        pp_image=row.pp_image,
+        pp_link=row.pp_link,
+        pp_sort=row.pp_sort or 0,
+        state=row.state,
+        remote_path=remote_path,
+    )
+
+
+@router.put("/popup/{idx}", response_model=PopupWriteResult)
+async def popup_update(
+    idx: int,
+    db: Session = Depends(get_db),
+    pp_title: str = Form(""),
+    pp_link: str = Form(""),
+    pp_sort: int = Form(0),
+    start_at: str = Form(""),
+    end_at: str = Form(""),
+    state: str = Form("N"),
+    file: UploadFile | None = File(None),
+) -> PopupWriteResult:
+    """팝업 수정. 이미지 파일이 있으면 NAS에 새로 올린다."""
+    existing = popup_service.get_popup(db, idx)
+    if existing is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "팝업을 찾을 수 없습니다."},
+        )
+
+    new_image: str | None = None
+    remote_path: str | None = None
+    if file and file.filename:
+        svc = nas_service_mod.nas_service
+        if not svc.enabled:
+            raise HTTPException(
+                status_code=503,
+                detail="NAS가 설정되지 않았습니다.",
+            )
+        data = await file.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="이미지 파일이 비어 있습니다.")
+        dest = _to_nas_upload_dir(settings.nas_popup_path or "/stylesheets/assets/popup")
+        safe_name = file.filename.replace("\\", "/").split("/")[-1]
+        upload_name = f"{uuid.uuid4().hex[:10]}_{safe_name}"
+        try:
+            uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+        remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
+        new_image = _to_public_image_path(remote_path)
+
+    try:
+        row = popup_service.update_popup(
+            db,
+            idx,
+            pp_title=pp_title,
+            pp_link=pp_link,
+            pp_sort=pp_sort,
+            start_at=start_at,
+            end_at=end_at,
+            state=state,
+            pp_image=new_image,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc)},
+        ) from exc
+
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "팝업을 찾을 수 없습니다."},
+        )
+
+    return PopupWriteResult(
+        ok=True,
+        idx=row.idx,
+        pp_title=row.pp_title,
+        pp_image=row.pp_image,
+        pp_link=row.pp_link,
+        pp_sort=row.pp_sort or 0,
+        state=row.state,
+        remote_path=remote_path,
+    )
+
+
+@router.delete("/popup/{idx}")
+def popup_delete(idx: int, db: Session = Depends(get_db)):
+    row = popup_service.delete_popup(db, idx)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "팝업을 찾을 수 없습니다."},
+        )
+    return {"ok": True, "idx": row.idx}
+
+
+def _serialize_dt(value):
+    if value is not None and hasattr(value, "isoformat"):
+        return value.isoformat(sep=" ", timespec="seconds")
+    return value
+
+
+def _qa_thread_json(item: dict) -> dict:
+    out = dict(item)
+    out["qt_last_at"] = _serialize_dt(out.get("qt_last_at"))
+    out["created_at"] = _serialize_dt(out.get("created_at"))
+    return out
+
+
+def _qa_message_json(item: dict) -> dict:
+    out = dict(item)
+    out["created_at"] = _serialize_dt(out.get("created_at"))
+    return out
+
+
+@router.get("/qa")
+def qa_page(request: Request, partial: bool = False):
+    """Q&A 전체 내역(게시판). 탭 fetch 만 partial HTML."""
+    data = {"title": "Q&A"}
+    if partial and (request.headers.get("sec-fetch-dest") or "").lower() == "document":
+        partial = False
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="qa.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "qa", data)
+
+
+@router.get("/qa/stream")
+async def qa_stream(request: Request):
+    """Q&A 변경을 실시간으로 알린다 (SSE)."""
+
+    async def event_generator():
+        queue = await qa_events.subscribe()
+        try:
+            yield qa_events.format_sse({"event": "connected", "data": {"ok": True}})
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield qa_events.format_sse(message)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await qa_events.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/qa/threads")
+def qa_threads(limit: int | None = 50, db: Session = Depends(get_db)):
+    """관리자용 문의 스레드 목록."""
+    rows = qa_service.list_threads_for_admin(db, limit=limit)
+    return {
+        "ok": True,
+        "unread_total": qa_service.admin_unread_total(db),
+        "items": [_qa_thread_json(row) for row in rows],
+    }
+
+
+@router.get("/qa/threads/{idx}")
+def qa_thread_detail(idx: int, db: Session = Depends(get_db)):
+    """문의 스레드 + 메시지. 조회 시 관리자 미읽음 초기화."""
+    detail = qa_service.get_thread_detail(db, idx)
+    if detail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "문의 스레드를 찾을 수 없습니다."},
+        )
+    thread = qa_service.mark_admin_read(db, idx) or detail["thread"]
+    return {
+        "ok": True,
+        "thread": _qa_thread_json(thread),
+        "messages": [_qa_message_json(m) for m in detail["messages"]],
+        "unread_total": qa_service.admin_unread_total(db),
+    }
+
+
+@router.post("/qa/threads/{idx}/messages")
+async def qa_admin_reply(
+    idx: int,
+    body: QaMessageBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """관리자 답변."""
+    session_user = request.session.get("user") or {}
+    admin_idx = session_user.get("idx")
+    try:
+        result = qa_service.add_admin_message(
+            db,
+            thread_idx=idx,
+            admin_idx=admin_idx,
+            body=body.body,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc)},
+        ) from exc
+
+    payload = {
+        "thread": _qa_thread_json(result["thread"]),
+        "message": _qa_message_json(result["message"]),
+        "unread_total": qa_service.admin_unread_total(db),
+    }
+    await qa_events.publish("qa_message", payload)
+    return {"ok": True, **payload}
+
+
+@router.post("/qa/threads/{idx}/close")
+async def qa_close_thread(idx: int, db: Session = Depends(get_db)):
+    """문의 종료."""
+    thread = qa_service.close_thread(db, idx)
+    if thread is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "문의 스레드를 찾을 수 없습니다."},
+        )
+    payload = {
+        "thread": _qa_thread_json(thread),
+        "unread_total": qa_service.admin_unread_total(db),
+    }
+    await qa_events.publish("qa_closed", payload)
+    return {"ok": True, **payload}
+
+
+@router.get("/qa/{idx}")
+def qa_detail_page(idx: int, request: Request, partial: bool = False):
+    """Q&A 채팅 상세. 탭 fetch 만 partial HTML."""
+    data = {"title": f"문의 #{idx}", "thread_idx": idx}
+    if partial and (request.headers.get("sec-fetch-dest") or "").lower() == "document":
+        partial = False
+    if partial:
+        return templates.TemplateResponse(
+            request=request,
+            name="qa_detail.html",
+            context=data,
+        )
+    return render_with_layout(request, templates, "qa_detail", data)

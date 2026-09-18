@@ -9,16 +9,24 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from config import settings
 from db import get_db
 from db import ping_db
 from models.studyModel import StudyModel
+from schemas.popupSchemas import PopupPublicOut
+from schemas.qaSchemas import QaCreateBody, QaMessageBody
 from schemas.userSchemas import UserLogin
+from repositories import studyRepositories as study_repositories
 from services import learningServices as learning_service
+from services import popupServices as popup_service
+from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
 from services.nasServices import NasNotConfiguredError, NasUploadError
 from utils.password import hash_password, verify_password
+from utils.qa_sse import qa_events
+from utils.review_sse import review_events
 
 router = APIRouter(tags=["commonness"])
 
@@ -36,6 +44,9 @@ class LearningSubmitBody(BaseModel):
         default_factory=list,
         description="이미 푼 문제 idx 목록. 다음 문제에서 제외",
     )
+    user_idx: int | None = Field(
+        None, description="로그인 사용자 idx. 있으면 제출 이력 문제 제외"
+    )
 
 
 def _problem_payload(row: StudyModel) -> dict:
@@ -52,6 +63,160 @@ def _problem_payload(row: StudyModel) -> dict:
 def health_db():
     """PostgreSQL 연결 확인. 연결된 데이터베이스 이름을 돌려준다."""
     return {"ok": True, "database": ping_db()}
+
+
+def _popup_public_url(pp_image: str | None) -> str | None:
+    if not pp_image:
+        return None
+    path = pp_image if pp_image.startswith("/") else f"/{pp_image}"
+    base = (settings.nas_public_base_url or "").rstrip("/")
+    if not base:
+        return path
+    return f"{base}{path}"
+
+
+@router.get("/popups", response_model=list[PopupPublicOut])
+def public_popups(db: Session = Depends(get_db)):
+    """
+    학습자 메인용 활성 홍보 팝업 목록.
+    del_yn=N, state=N, 노출 기간 안인 항목만 pp_sort 순으로 반환.
+    """
+    rows = popup_service.list_public(db)
+    return [
+        PopupPublicOut(
+            idx=row.idx,
+            pp_title=row.pp_title,
+            pp_image=row.pp_image,
+            pp_image_url=_popup_public_url(row.pp_image),
+            pp_link=row.pp_link,
+            pp_sort=row.pp_sort or 0,
+        )
+        for row in rows
+    ]
+
+
+def _qa_dt(value):
+    if value is not None and hasattr(value, "isoformat"):
+        return value.isoformat(sep=" ", timespec="seconds")
+    return value
+
+
+def _qa_thread_public(item: dict) -> dict:
+    out = dict(item)
+    out["qt_last_at"] = _qa_dt(out.get("qt_last_at"))
+    out["created_at"] = _qa_dt(out.get("created_at"))
+    return out
+
+
+def _qa_message_public(item: dict) -> dict:
+    out = dict(item)
+    out["created_at"] = _qa_dt(out.get("created_at"))
+    return out
+
+
+@router.post("/qa")
+async def qa_create(body: QaCreateBody, db: Session = Depends(get_db)):
+    """학습자 문의 생성 (새 스레드 + 첫 메시지)."""
+    try:
+        result = qa_service.create_inquiry(
+            db,
+            user_idx=body.user_idx,
+            title=body.title,
+            body=body.body,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    payload = {
+        "thread": _qa_thread_public(result["thread"]),
+        "message": _qa_message_public(result["message"]),
+        "unread_total": qa_service.admin_unread_total(db),
+    }
+    await qa_events.publish("qa_created", payload)
+    return {"ok": True, **payload}
+
+
+@router.get("/qa")
+def qa_list_for_user(
+    user_idx: int = Query(..., description="회원 user_member.idx"),
+    db: Session = Depends(get_db),
+):
+    """학습자 본인 문의 스레드 목록."""
+    rows = qa_service.list_threads_for_user(db, user_idx)
+    return {
+        "ok": True,
+        "items": [_qa_thread_public(row) for row in rows],
+    }
+
+
+@router.get("/qa/{idx}")
+def qa_detail_for_user(
+    idx: int,
+    user_idx: int = Query(..., description="회원 user_member.idx"),
+    db: Session = Depends(get_db),
+):
+    """학습자 본인 문의 상세. 조회 시 회원 미읽음 초기화."""
+    detail = qa_service.get_thread_detail(db, idx)
+    if detail is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="문의 스레드를 찾을 수 없습니다.",
+        )
+    thread = detail["thread"]
+    if thread.get("qt_u_idx") != user_idx:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="본인 문의만 조회할 수 있습니다.",
+        )
+    try:
+        marked = qa_service.mark_user_read(db, idx, user_idx)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return {
+        "ok": True,
+        "thread": _qa_thread_public(marked or thread),
+        "messages": [_qa_message_public(m) for m in detail["messages"]],
+    }
+
+
+@router.post("/qa/{idx}/messages")
+async def qa_user_reply(
+    idx: int,
+    body: QaMessageBody,
+    db: Session = Depends(get_db),
+):
+    """학습자 추가 메시지."""
+    if body.user_idx is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_idx가 필요합니다.",
+        )
+    try:
+        result = qa_service.add_user_message(
+            db,
+            thread_idx=idx,
+            user_idx=body.user_idx,
+            body=body.body,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    payload = {
+        "thread": _qa_thread_public(result["thread"]),
+        "message": _qa_message_public(result["message"]),
+        "unread_total": qa_service.admin_unread_total(db),
+    }
+    await qa_events.publish("qa_message", payload)
+    return {"ok": True, **payload}
 
 
 @router.get("/items/{item_id}")
@@ -121,13 +286,18 @@ def learning_problem(
         default=None,
         description="이미 푼 idx. 예) exclude_idxs=1&exclude_idxs=2",
     ),
+    user_idx: int | None = Query(
+        default=None,
+        description="로그인 사용자 idx. review_node 제출 이력 제외",
+    ),
     db: Session = Depends(get_db),
 ):
     """
     study 테이블에서 랜덤 문제 1건.
     - st_part: 1~4 또는 brain, chest, abdomen, knee
     - st_modal: 1~3 또는 xray, ct, mri
-    예) /learning/problem?st_part=chest&st_modal=CT
+    - user_idx: 있으면 해당 사용자가 이미 제출한 문제 제외
+    예) /learning/problem?st_part=chest&st_modal=CT&user_idx=3
     화면에서는 시작 시 1번만 호출하고, 제출 전에는 다시 호출하지 않는다.
     다음 문제는 POST /learning/submit 응답의 next를 사용한다.
     """
@@ -137,6 +307,7 @@ def learning_problem(
             st_part=st_part,
             st_modal=st_modal,
             exclude_idxs=exclude_idxs,
+            user_idx=user_idx,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -145,9 +316,12 @@ def learning_problem(
         ) from exc
 
     if row is None:
+        detail = "조건에 맞는 학습 문제가 없습니다."
+        if user_idx is not None:
+            detail = "풀지 않은 학습 문제가 더 없습니다. (이미 제출한 문제는 제외됩니다)"
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="조건에 맞는 학습 문제가 없습니다.",
+            detail=detail,
         )
     return {"ok": True, "problem": _problem_payload(row)}
 
@@ -166,6 +340,7 @@ def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
             st_part=body.st_part,
             st_modal=body.st_modal,
             exclude_idxs=body.exclude_idxs,
+            user_idx=body.user_idx,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -236,6 +411,12 @@ async def learning_roi_grade(
     ),
     study_idx: int | None = Form(None, description="현재 문제 study.idx"),
     user_idx: int | None = Form(None, description="제출 사용자 user_member.idx"),
+    st_part: str | None = Form(
+        None, description="다음 문제 부위. 없으면 study 행 값 사용"
+    ),
+    st_modal: str | None = Form(
+        None, description="다음 문제 영상 종류. 없으면 study 행 값 사용"
+    ),
 ):
     """
     이미지 + ROI(박스/원) 제출 채점.
@@ -245,6 +426,9 @@ async def learning_roi_grade(
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
+    - user_idx + study_idx 를 넣으면 제출 이력이 남아
+      이후 GET /learning/problem?user_idx=... 에서 같은 문제가 제외된다.
+    - next: 방금 푼 문제를 제외한 다음 랜덤 문제(없으면 null).
     """
     data = await image.read()
     try:
@@ -306,4 +490,37 @@ async def learning_roi_grade(
         result.pop("_review_png", None)
 
     result.update(saved)
+
+    await review_events.publish(
+        "review_created",
+        {
+            "review_idx": saved.get("review_idx"),
+            "user_idx": user_idx,
+            "study_idx": study_idx,
+            "rn_image": saved.get("rn_image"),
+            "rn_solution": saved.get("rn_solution"),
+        },
+    )
+
+    next_row = None
+    if study_idx is not None:
+        part = st_part
+        modal = st_modal
+        if part is None or modal is None:
+            current_study = study_repositories.get_by_idx(db, int(study_idx))
+            if current_study is not None:
+                part = part or current_study.st_part
+                modal = modal or current_study.st_modal
+        try:
+            next_row = learning_service.get_random_problem(
+                db,
+                st_part=part,
+                st_modal=modal,
+                exclude_idxs=[int(study_idx)],
+                user_idx=user_idx,
+            )
+        except ValueError:
+            next_row = None
+
+    result["next"] = _problem_payload(next_row) if next_row else None
     return result

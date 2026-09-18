@@ -7,7 +7,7 @@
     <title>{{ title | default('관리자') }}</title>
     <link href="https://cdn.jsdelivr.net/npm/litepicker/dist/css/litepicker.css" rel="stylesheet"/>
     <link href="/assets/css/styles.css" rel="stylesheet"/>
-    <link href="/assets/css/custom.css" rel="stylesheet"/>
+    <link href="/assets/css/custom.css?v=20260918unread2" rel="stylesheet"/>
     <link rel="icon" type="image/x-icon" href="/assets/img/favicon.png"/>
     <link rel="stylesheet" href="https://cdn.datatables.net/1.13.7/css/dataTables.bootstrap5.min.css"/>
     <script data-search-pseudo-elements defer
@@ -35,6 +35,28 @@
     </button>
     <a class="navbar-brand pe-3 ps-4 ps-lg-2" href="/admin">관리자</a>
     <ul class="navbar-nav align-items-center ms-auto">
+        <li class="nav-item dropdown no-caret d-none d-sm-block me-3 dropdown-notifications">
+            <a class="btn btn-icon btn-transparent-dark position-relative dropdown-toggle"
+               id="navbarDropdownMessages"
+               href="javascript:void(0);" role="button" data-bs-toggle="dropdown" aria-haspopup="true"
+               aria-expanded="false">
+                <i data-feather="mail"></i>
+                <span id="qaMessageCenterBadge" class="qa-mail-badge d-none">0</span>
+            </a>
+            <div class="dropdown-menu dropdown-menu-end border-0 shadow animated--fade-in-up"
+                 aria-labelledby="navbarDropdownMessages">
+                <h6 class="dropdown-header dropdown-notifications-header">
+                    <i class="me-2" data-feather="mail"></i>
+                    Message Center
+                </h6>
+                <div id="qaMessageCenterList"></div>
+                <a class="dropdown-item dropdown-notifications-footer"
+                   href="#!" role="button" id="qaMessageCenterFooter">
+                    <span id="qaMessageCenterFooterLabel">전체 내역 보기</span>
+                    <i class="dropdown-notifications-footer-icon" data-feather="arrow-right"></i>
+                </a>
+            </div>
+        </li>
         <li class="nav-item dropdown no-caret dropdown-user me-3 me-lg-4">
             <a class="btn btn-icon btn-transparent-dark dropdown-toggle" id="navbarDropdownUserImage"
                href="javascript:void(0);" role="button" data-bs-toggle="dropdown" aria-haspopup="true"
@@ -71,7 +93,12 @@
                         화면 공유 분석
                     </a>-->
 
-                    <div class="sidenav-menu-heading">Custom</div>
+                    <div class="sidenav-menu-heading">관리</div>
+
+                    <a class="nav-link" href="/admin">
+                        <div class="nav-link-icon"><i data-feather="home"></i></div>
+                        Dashboard
+                    </a>
 
                     <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
                        data-bs-target="#collapseMembers">
@@ -82,7 +109,7 @@
                     <div class="collapse" id="collapseMembers" data-bs-parent="#accordionSidenav">
                         <nav class="sidenav-menu-nested nav">
                             <a class="nav-link" href="/admin/user" data-usertype="buyer">회원 관리</a>
-                            <!--<a class="nav-link" href="javascript:void(0);">권한 관리</a>-->
+                            <a class="nav-link" href="/admin/reviews" data-tab-title="풀이 이력">풀이 이력</a>
                         </nav>
                     </div>
 
@@ -99,65 +126,18 @@
                         </nav>
                     </div>
 
-                    <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
-                       data-bs-target="#collapseProducts">
-                        <div class="nav-link-icon"><i data-feather="package"></i></div>
-                        상품 관리
-                        <div class="sidenav-collapse-arrow"><i class="fas fa-angle-down"></i></div>
+                    <a class="nav-link" href="/admin/qa" data-tab-title="Q&A">
+                        <div class="nav-link-icon"><i data-feather="message-circle"></i></div>
+                        Q&A
+                        <span id="qaSidenavBadge" class="qa-sidenav-badge d-none">0</span>
                     </a>
-                    <div class="collapse" id="collapseProducts" data-bs-parent="#accordionSidenav">
-                        <nav class="sidenav-menu-nested nav">
-                            <a class="nav-link" href="javascript:void(0);">상품 목록</a>
-                            <a class="nav-link" href="javascript:void(0);">리뷰 및 문의</a>
-                        </nav>
-                    </div>
 
-                    <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
-                       data-bs-target="#collapseOrders">
-                        <div class="nav-link-icon"><i data-feather="repeat"></i></div>
-                        주문 관리
-                        <div class="sidenav-collapse-arrow"><i class="fas fa-angle-down"></i></div>
-                    </a>
-                    <div class="collapse" id="collapseOrders" data-bs-parent="#accordionSidenav">
-                        <nav class="sidenav-menu-nested nav">
-                            <a class="nav-link" href="javascript:void(0);">전체 주문</a>
-                            <a class="nav-link" href="javascript:void(0);">정산 관리</a>
-                        </nav>
-                    </div>
-
-                    <div class="sidenav-menu-heading">UI Toolkit</div>
-
-                    <!--<a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
-                       data-bs-target="#collapseStats">
+                    <a class="nav-link" href="/admin/popup">
                         <div class="nav-link-icon"><i data-feather="layout"></i></div>
-                        통계 및 대시보드
-                        <div class="sidenav-collapse-arrow"><i class="fas fa-angle-down"></i></div>
+                        팝업
                     </a>
-                    <div class="collapse" id="collapseStats" data-bs-parent="#accordionSidenav">
-                        <nav class="sidenav-menu-nested nav">
-                            <a class="nav-link" href="/admin">대시보드</a>
-                            <a class="nav-link" href="javascript:void(0);">매출 통계</a>
-                        </nav>
-                    </div>-->
-
-                    <a class="nav-link collapsed" href="javascript:void(0);" data-bs-toggle="collapse"
-                       data-bs-target="#collapseSite">
-                        <div class="nav-link-icon"><i data-feather="globe"></i></div>
-                        사이트 관리
-                        <div class="sidenav-collapse-arrow"><i class="fas fa-angle-down"></i></div>
-                    </a>
-                    <div class="collapse" id="collapseSite" data-bs-parent="#accordionSidenav">
-                        <nav class="sidenav-menu-nested nav">
-                            <a class="nav-link" href="javascript:void(0);">공지사항</a>
-                            <a class="nav-link" href="javascript:void(0);">이벤트 관리</a>
-                            <a class="nav-link" href="javascript:void(0);">약관 관리</a>
-                            <a class="nav-link" href="javascript:void(0);">시스템 설정</a>
-                            <a class="nav-link" href="javascript:void(0);">카테고리 관리</a>
-                        </nav>
-                    </div>
                 </div>
-            </div>
-            <div class="sidenav-footer">
+            </div>            <div class="sidenav-footer">
                 <div class="sidenav-footer-content">
                     <div class="sidenav-footer-subtitle">Logged in as:</div>
                     <div class="sidenav-footer-title">{{ user.user_id }}({{ user.user_name }})</div>
@@ -179,9 +159,6 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/2.9.4/Chart.min.js"></script>
-<script src="/assets/demo/chart-area-demo.js"></script>
-<script src="/assets/demo/chart-bar-demo.js"></script>
-<script src="/assets/demo/chart-pie-demo.js"></script>
 <script src="/assets/js/scripts.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/litepicker/dist/bundle.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/litepicker/dist/plugins/ranges.js"></script>
@@ -189,6 +166,10 @@
 <script src="/assets/js/admin/tab-manager.js"></script>
 <script src="/assets/js/admin/user-sse.js"></script>
 <script src="/assets/js/admin/study-sse.js"></script>
+<script src="/assets/js/admin/reviews-sse.js"></script>
+<script src="/assets/js/admin/qa-sse.js"></script>
+<script src="/assets/js/admin/message-center.js?v=20260918unread2"></script>
+<script src="/assets/js/admin/dashboard.js"></script>
 <script>
     feather.replace();
 </script>

@@ -61,6 +61,24 @@ document.addEventListener('DOMContentLoaded', function () {
         if (tabPane.querySelector('#studyCreateForm') && typeof window.initStudyCreate === 'function') {
             window.initStudyCreate(tabPane);
         }
+        if (tabPane.querySelector('#reviewsTable') && typeof window.initReviewsManager === 'function') {
+            window.initReviewsManager(tabPane);
+        }
+        if (tabPane.querySelector('#popupTable') && typeof window.initPopupManager === 'function') {
+            window.initPopupManager(tabPane);
+        }
+        if (tabPane.querySelector('#popupCreateForm') && typeof window.initPopupCreate === 'function') {
+            window.initPopupCreate(tabPane);
+        }
+        if (tabPane.querySelector('#popupDetailRoot') && typeof window.initPopupDetail === 'function') {
+            window.initPopupDetail(tabPane);
+        }
+        if (tabPane.querySelector('#qaPageRoot') && typeof window.initQaManager === 'function') {
+            window.initQaManager(tabPane);
+        }
+        if (tabPane.querySelector('#qaDetailRoot') && typeof window.initQaDetail === 'function') {
+            window.initQaDetail(tabPane);
+        }
         if (typeof window.feather !== 'undefined') {
             window.feather.replace();
         }
@@ -102,7 +120,11 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     const createOrShowTab = (linkElement) => {
-        const rawUrl = linkElement.getAttribute('href');
+        const rawUrl = linkElement.getAttribute('data-tab-href')
+            || linkElement.getAttribute('href');
+        if (!rawUrl || rawUrl === '#!' || rawUrl.startsWith('javascript:')) {
+            return;
+        }
         const title = linkElement.dataset.tabTitle || linkElement.textContent.trim();
         const hasUserType = linkElement.hasAttribute('data-usertype');
 
@@ -130,6 +152,14 @@ document.addEventListener('DOMContentLoaded', function () {
         const existingTabButton = document.getElementById(tabButtonId);
         if (existingTabButton) {
             new bootstrap.Tab(existingTabButton).show();
+            updateTabUI();
+            const target = existingTabButton.getAttribute('data-bs-target');
+            const pane = target ? document.querySelector(target) : null;
+            if (pane && pane.querySelector('#qaPageRoot') && window.__pendingQaIdx) {
+                const idx = window.__pendingQaIdx;
+                window.__pendingQaIdx = null;
+                document.dispatchEvent(new CustomEvent('admin:qa:open', {detail: {idx: idx}}));
+            }
             return;
         }
 
@@ -262,4 +292,31 @@ document.addEventListener('DOMContentLoaded', function () {
         event.preventDefault();
         createOrShowTab(link);
     });
+
+    // 상단 Message Center 등 사이드바/탭 밖 open-in-tab
+    document.addEventListener('click', function (event) {
+        const link = event.target.closest('a.open-in-tab');
+        if (!link) return;
+        if (sidebarNav.contains(link) || tabContentContainer.contains(link)) return;
+        const href = link.getAttribute('data-tab-href') || link.getAttribute('href');
+        if (!href || href === '#!' || href.startsWith('javascript:')) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        createOrShowTab(link);
+    });
+
+    window.AdminTabs = {
+        open: createOrShowTab,
+        openUrl: function (url, title, extra) {
+            const a = document.createElement('a');
+            a.setAttribute('href', url);
+            a.setAttribute('data-tab-href', url);
+            if (title) a.setAttribute('data-tab-title', title);
+            if (extra && extra.qaIdx != null) {
+                window.__pendingQaIdx = String(extra.qaIdx);
+            }
+            createOrShowTab(a);
+        },
+    };
 });

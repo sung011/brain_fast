@@ -1,0 +1,71 @@
+{# 홍보 팝업 수정 #}
+<div class="px-4" id="popupDetailRoot" data-idx="{{ popup_idx }}">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>팝업 수정 #{{ popup_idx }}</span>
+            <a class="btn btn-sm btn-light text-secondary open-in-tab" href="/admin/popup?partial=1"
+               data-tab-title="팝업">
+                <i class="me-1" data-feather="arrow-left"></i>
+                목록으로
+            </a>
+        </div>
+        <div class="card-body">
+            <form name="popupEdit" id="popupEditForm" autocomplete="off" enctype="multipart/form-data">
+                <div class="row gx-3">
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editPpTitle">제목 (관리용)</label>
+                        <input class="form-control" id="editPpTitle" name="pp_title" type="text" maxlength="100"/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editPpSort">표시 순서</label>
+                        <input class="form-control" id="editPpSort" name="pp_sort" type="number" step="1"/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editPpLink">클릭 링크 (선택)</label>
+                        <input class="form-control" id="editPpLink" name="pp_link" type="url"/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editPpState">상태</label>
+                        <select class="form-select" id="editPpState" name="state">
+                            <option value="N">노출</option>
+                            <option value="S">숨김</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editStartAt">노출 시작</label>
+                        <input class="form-control" id="editStartAt" name="start_at" type="datetime-local"/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editEndAt">노출 종료</label>
+                        <input class="form-control" id="editEndAt" name="end_at" type="datetime-local"/>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1">현재 이미지</label>
+                        <div id="editPpPreview" class="border rounded p-2 text-center bg-light">
+                            <span class="text-muted">불러오는 중…</span>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="small mb-1" for="editPopupFile">이미지 교체 (선택)</label>
+                        <input class="form-control" id="editPopupFile" name="file" type="file" accept="image/*"/>
+                        <div class="form-text">선택하지 않으면 기존 이미지를 유지합니다.</div>
+                    </div>
+                </div>
+                <div id="popupEditResult" class="alert alert-success d-none mb-3" role="alert"></div>
+                <div class="d-flex align-items-center justify-content-end mt-3">
+                    <a class="btn btn-light me-2 open-in-tab" href="/admin/popup?partial=1"
+                       data-tab-title="팝업">취소</a>
+                    <button type="submit" class="btn btn-primary" id="popupEditSubmitBtn">저장</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+    window.POPUP_NAS_BASE = {{ nas_public_base_url | tojson }};
+</script>
+<script src="/assets/js/admin/popup-detail.js"></script>
+<script>
+    if (window.initPopupDetail) window.initPopupDetail();
+    if (window.feather) feather.replace();
+</script>

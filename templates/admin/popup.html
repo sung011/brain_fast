@@ -1,0 +1,37 @@
+{# 홍보 팝업 목록 #}
+<div class="px-4">
+    <div class="card mb-4">
+        <div class="card-header d-flex align-items-center justify-content-between">
+            <span>팝업</span>
+            <a class="btn btn-sm btn-light text-primary open-in-tab"
+               href="/admin/popup/create?partial=1" data-tab-title="팝업 등록">
+                <i class="me-1" data-feather="plus"></i>
+                <span class="button-text">팝업 등록</span>
+            </a>
+        </div>
+        <div class="card-body">
+            <p class="text-muted small mb-3">학습자 메인에 노출되는 이미지 팝업입니다. 공개 API: <code>GET /popups</code></p>
+            <table class="table table-hover" id="popupTable" style="width:100%"
+                   data-nas-base="{{ nas_public_base_url | default('') }}">
+                <thead>
+                <tr>
+                    <th>번호</th>
+                    <th>제목</th>
+                    <th>미리보기</th>
+                    <th>순서</th>
+                    <th>기간</th>
+                    <th>상태</th>
+                    <th>등록일</th>
+                    <th></th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<script src="/assets/js/admin/popup-manager.js"></script>
+<script>
+    if (window.initPopupManager) window.initPopupManager();
+    if (window.feather) feather.replace();
+</script>

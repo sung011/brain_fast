@@ -1,0 +1,32 @@
+{# Q&A 문의 상세 — 채팅 (내용 중심) #}
+<div class="px-4" id="qaDetailRoot" data-idx="{{ thread_idx }}">
+    <div class="qa-messenger mb-4">
+        <div class="qa-messenger-head">
+            <div class="qa-messenger-head-left">
+                <a class="btn btn-sm btn-light qa-messenger-back open-in-tab"
+                   href="/admin/qa?partial=1" data-tab-title="Q&A">← 목록</a>
+                <div class="qa-messenger-who">
+                    <div class="qa-messenger-title" id="qaChatTitle">불러오는 중…</div>
+                    <div class="qa-messenger-user" id="qaChatMeta">문의 회원 정보</div>
+                </div>
+            </div>
+            <div class="qa-messenger-head-right">
+                <span class="badge bg-light text-dark" id="qaStatusBadge">진행중</span>
+                <button type="button" class="btn btn-sm btn-outline-light" id="qaCloseBtn">종료</button>
+            </div>
+        </div>
+
+        <div id="qaMessageList" class="qa-messenger-body" aria-live="polite"></div>
+
+        <form id="qaReplyForm" class="qa-messenger-foot">
+            <textarea class="form-control qa-messenger-input" id="qaReplyBody" rows="1"
+                      placeholder="메시지를 입력하세요…" required></textarea>
+            <button class="btn btn-primary qa-messenger-send" type="submit" id="qaReplyBtn">전송</button>
+        </form>
+    </div>
+</div>
+<script src="/assets/js/admin/qa-detail.js?v=20260918chat2"></script>
+<script>
+    if (window.initQaDetail) window.initQaDetail();
+    if (window.feather) feather.replace();
+</script>

@@ -3,6 +3,8 @@
 
     const API_BASE = typeof baseUrl === 'string' ? baseUrl : '';
     let editModal = null;
+    let reviewsModal = null;
+    let reviewsModalUserIdx = null;
 
     function reloadUserTables() {
         if (typeof window.jQuery === 'undefined') {
@@ -24,6 +26,29 @@
         window.AdminUserSSE.on('user_created', reloadUserTables);
         window.AdminUserSSE.on('user_updated', reloadUserTables);
         window.AdminUserSSE.on('user_deleted', reloadUserTables);
+
+        if (window.AdminReviewSSE) {
+            window.AdminReviewSSE.on('review_created', function (data) {
+                const modalEl = document.getElementById('userReviewsModal');
+                if (!modalEl || !modalEl.classList.contains('show')) {
+                    return;
+                }
+                if (reviewsModalUserIdx == null) {
+                    return;
+                }
+                if (data && data.user_idx != null &&
+                    Number(data.user_idx) !== Number(reviewsModalUserIdx)) {
+                    return;
+                }
+                const tableEl = document.getElementById('userReviewsTable');
+                if (tableEl && typeof window.jQuery !== 'undefined' &&
+                    window.jQuery.fn.DataTable.isDataTable(tableEl)) {
+                    window.jQuery(tableEl).DataTable().ajax.reload(null, false);
+                    return;
+                }
+                openReviewsModal({idx: reviewsModalUserIdx});
+            });
+        }
     }
 
     async function requestJson(url, method, body) {
@@ -62,6 +87,34 @@
         return parseInt(level, 10) === 10 ? '관리자' : '일반 회원';
     }
 
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    function formatDate(value) {
+        if (!value) return '-';
+        try {
+            const d = new Date(value);
+            if (Number.isNaN(d.getTime())) return String(value);
+            return d.toLocaleString('ko-KR');
+        } catch (e) {
+            return String(value);
+        }
+    }
+
+    function solutionBadge(code, label) {
+        const text = label || code || '-';
+        let cls = 'bg-secondary';
+        if (code === 'C') cls = 'bg-success';
+        else if (code === 'H') cls = 'bg-warning text-dark';
+        else if (code === 'W') cls = 'bg-danger';
+        return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>';
+    }
+
     function getEditModal() {
         const modalElement = document.getElementById('userEditModal');
         if (!modalElement || typeof bootstrap === 'undefined') {
@@ -71,6 +124,17 @@
             editModal = bootstrap.Modal.getOrCreateInstance(modalElement);
         }
         return editModal;
+    }
+
+    function getReviewsModal() {
+        const modalElement = document.getElementById('userReviewsModal');
+        if (!modalElement || typeof bootstrap === 'undefined') {
+            return null;
+        }
+        if (!reviewsModal) {
+            reviewsModal = bootstrap.Modal.getOrCreateInstance(modalElement);
+        }
+        return reviewsModal;
     }
 
     function openEditModal(rowData) {
@@ -90,6 +154,127 @@
         form.userPw.value = '';
         form.userPwConfirm.value = '';
         modal.show();
+    }
+
+    async function openReviewsModal(rowData) {
+        const modal = getReviewsModal();
+        const title = document.getElementById('userReviewsModalLabel');
+        const summary = document.getElementById('userReviewsSummary');
+        const tableEl = document.getElementById('userReviewsTable');
+        if (!modal || !tableEl || typeof window.jQuery === 'undefined') {
+            return;
+        }
+
+        const $ = window.jQuery;
+        const name = rowData.user_name || rowData.user_id || ('#' + rowData.idx);
+        reviewsModalUserIdx = rowData.idx;
+        if (title) {
+            title.textContent = '풀이 이력 — ' + name;
+        }
+        if (summary) {
+            summary.textContent = (rowData.user_id ? rowData.user_id + ' · ' : '') + '불러오는 중…';
+        }
+        modal.show();
+
+        const ajaxUrl = '/admin/reviews_all?user_idx=' + encodeURIComponent(rowData.idx);
+
+        if ($.fn.DataTable.isDataTable(tableEl)) {
+            const dt = $(tableEl).DataTable();
+            dt.ajax.url(ajaxUrl).load(function (json) {
+                const count = Array.isArray(json) ? json.length : 0;
+                if (summary) {
+                    summary.textContent = (rowData.user_id ? rowData.user_id + ' · ' : '') +
+                        '총 ' + count + '건';
+                }
+            });
+            return;
+        }
+
+        $(tableEl).DataTable({
+            destroy: true,
+            ajax: {
+                url: ajaxUrl,
+                type: 'GET',
+                dataSrc: function (json) {
+                    const rows = Array.isArray(json) ? json : [];
+                    if (summary) {
+                        summary.textContent = (rowData.user_id ? rowData.user_id + ' · ' : '') +
+                            '총 ' + rows.length + '건';
+                    }
+                    return rows;
+                },
+            },
+            columns: [
+                {
+                    data: 'created_at',
+                    render: function (data) {
+                        return escapeHtml(formatDate(data));
+                    },
+                },
+                {
+                    data: 'study_idx',
+                    render: function (data) {
+                        return data != null ? '#' + data : '-';
+                    },
+                },
+                {
+                    data: 'st_part_label',
+                    defaultContent: '-',
+                    render: function (data) {
+                        return escapeHtml(data || '-');
+                    },
+                },
+                {
+                    data: 'st_modal_label',
+                    defaultContent: '-',
+                    render: function (data) {
+                        return escapeHtml(data || '-');
+                    },
+                },
+                {
+                    data: 'st_disease',
+                    render: function (data, type, row) {
+                        return escapeHtml(data || row.rn_disease || '-');
+                    },
+                },
+                {
+                    data: 'rn_solution',
+                    render: function (data, type, row) {
+                        if (type === 'filter' || type === 'sort') {
+                            return row.rn_solution_label || data || '';
+                        }
+                        return solutionBadge(data, row.rn_solution_label);
+                    },
+                },
+                {
+                    data: 'rn_image',
+                    orderable: false,
+                    searchable: false,
+                    render: function (data, type, row) {
+                        const url = row.rn_image_url || row.rn_image;
+                        if (!url) return '<span class="text-muted">-</span>';
+                        const safe = escapeHtml(url);
+                        return '<a href="' + safe + '" target="_blank" rel="noopener">' +
+                            '<img src="' + safe + '" alt="제출" ' +
+                            'style="max-height:48px;max-width:72px;object-fit:cover;" ' +
+                            'class="rounded border" loading="lazy"></a>';
+                    },
+                },
+            ],
+            language: {
+                emptyTable: '풀이 이력이 없습니다.',
+                zeroRecords: '검색 결과가 없습니다.',
+                search: '검색:',
+                lengthMenu: '_MENU_개씩 보기',
+                info: '_START_ - _END_ / 총 _TOTAL_건',
+                infoEmpty: '0 건',
+                infoFiltered: '(전체 _MAX_건 중 필터)',
+                paginate: {previous: '이전', next: '다음'},
+            },
+            order: [[0, 'desc']],
+            pageLength: 10,
+            lengthMenu: [[10, 25, 50], [10, 25, 50]],
+        });
     }
 
     async function saveEditForm() {
@@ -171,6 +356,15 @@
             }
         });
 
+        $(document).off('click.userManager', '.user-reviews-btn').on('click.userManager', '.user-reviews-btn', function (event) {
+            event.preventDefault();
+            const table = $(this).closest('table').DataTable();
+            const rowData = table.row($(this).closest('tr')).data();
+            if (rowData) {
+                openReviewsModal(rowData);
+            }
+        });
+
         $(document).off('click.userManager', '.user-delete-btn').on('click.userManager', '.user-delete-btn', function (event) {
             event.preventDefault();
             const table = $(this).closest('table').DataTable();
@@ -227,7 +421,9 @@
                         orderable: false,
                         defaultContent: '',
                         render: function (data, type, row) {
-                            return '<button type="button" class="btn btn-datatable btn-icon btn-transparent-dark me-2 user-edit-btn" title="수정">' +
+                            return '<button type="button" class="btn btn-datatable btn-icon btn-transparent-dark me-2 user-reviews-btn" title="풀이 이력">' +
+                                '<i data-feather="clipboard"></i></button>' +
+                                '<button type="button" class="btn btn-datatable btn-icon btn-transparent-dark me-2 user-edit-btn" title="수정">' +
                                 '<i data-feather="edit"></i></button>' +
                                 '<button type="button" class="btn btn-datatable btn-icon btn-transparent-dark user-delete-btn" title="삭제">' +
                                 '<i data-feather="trash-2"></i></button>';

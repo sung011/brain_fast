@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from models.medicalTermsModel import MedicalTermsModel
 from models.studyModel import StudyModel
 from repositories import learningRepositories as repositories
+from repositories import reviewNodeRepositories as review_node_repositories
 from repositories import studyRepositories as study_repositories
 from schemas.studySchemas import resolve_st_modal, resolve_st_part
 
@@ -40,16 +41,33 @@ def _normalize_exclude(exclude_idxs: list[int] | None) -> list[int] | None:
     return [int(x) for x in exclude_idxs]
 
 
+def _merge_exclude_idxs(
+    db: Session,
+    *,
+    exclude_idxs: list[int] | None = None,
+    user_idx: int | None = None,
+) -> list[int] | None:
+    """프론트 exclude + 해당 사용자가 이미 제출한 study idx를 합친다."""
+    merged: list[int] = list(_normalize_exclude(exclude_idxs) or [])
+    if user_idx is not None:
+        for idx in review_node_repositories.list_solved_study_idxs(db, int(user_idx)):
+            if idx not in merged:
+                merged.append(idx)
+    return merged or None
+
+
 def get_random_problem(
     db: Session,
     *,
     st_part: str | None = None,
     st_modal: str | None = None,
     exclude_idxs: list[int] | None = None,
+    user_idx: int | None = None,
 ) -> StudyModel | None:
     """학습용 study 문제를 랜덤으로 1건 조회한다.
 
     st_part/st_modal은 숫자(1~4, 1~3) 또는 이름(brain, chest, CT 등)을 받는다.
+    user_idx가 있으면 review_node에 제출한 문제는 제외한다.
     """
     part = resolve_st_part(st_part)
     modal = resolve_st_modal(st_modal)
@@ -58,7 +76,9 @@ def get_random_problem(
         db,
         st_part=part,
         st_modal=modal,
-        exclude_idxs=_normalize_exclude(exclude_idxs),
+        exclude_idxs=_merge_exclude_idxs(
+            db, exclude_idxs=exclude_idxs, user_idx=user_idx
+        ),
     )
 
 
@@ -70,6 +90,7 @@ def submit_problem(
     st_part: str | None = None,
     st_modal: str | None = None,
     exclude_idxs: list[int] | None = None,
+    user_idx: int | None = None,
 ) -> dict:
     """
     현재 문제를 채점하고, 제출 후에만 다음 랜덤 문제를 돌려준다.
@@ -83,7 +104,9 @@ def submit_problem(
     given = (answer or "").strip()
     correct = bool(expected) and expected.casefold() == given.casefold()
 
-    done = list(_normalize_exclude(exclude_idxs) or [])
+    done = list(
+        _merge_exclude_idxs(db, exclude_idxs=exclude_idxs, user_idx=user_idx) or []
+    )
     if study_idx not in done:
         done.append(study_idx)
 
@@ -92,6 +115,7 @@ def submit_problem(
         st_part=st_part or row.st_part,
         st_modal=st_modal or row.st_modal,
         exclude_idxs=done,
+        user_idx=user_idx,
     )
 
     return {
