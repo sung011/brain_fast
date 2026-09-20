@@ -1,8 +1,14 @@
 """
-화면 공유 ROI 분석 API.
+화면 공유 ROI 분석 API 라우터.
 
-원본: MediLens_화면공유분석 /api/v1/analyze
-클래스: class/brain
+main.py 에서 prefix="/api/v1" 을 붙인다.
+실제 주소 예: /api/v1/health, /api/v1/analyze/screen-roi
+원본: MediLens 화면공유분석. 분석 로직은 class/brain.
+
+하는 일:
+- GET  /api/v1/health                      : 앙상블·MedGemma 모델 로드 상태
+- POST /api/v1/analyze/screen-roi          : 화면 ROI 이미지 분류·소견
+- POST /api/v1/analyze/screen-roi/explain  : 분류 결과로 판독문(설명) 생성
 """
 
 from __future__ import annotations

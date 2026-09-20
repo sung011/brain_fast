@@ -1,8 +1,20 @@
 """
-일반 API 라우터.
+학습자(앱/웹)용 일반 JSON API 라우터.
 
-JSON을 주고받는 엔드포인트. 입력값이 잘못되면
-exception_handlers.validation_exception_handler 가 422와 로그를 남긴다.
+prefix 없음. 주소 예: /login, /qa, /learning/problem
+
+하는 일:
+- /health/db          : DB 연결 확인
+- /login              : 학습자 로그인
+- /popups             : 메인 화면 홍보 팝업 목록
+- /qa ...             : 문의 생성·목록·상세·추가 메시지
+- /glossary           : 의학용어 사전 조회
+- /learning/problem   : 랜덤 학습 문제 1건
+- /learning/submit    : 병명 제출·채점 + 다음 문제
+- /learning/roi-grade : 이미지+ROI 제출 채점 (리뷰 저장 포함)
+- /items/{item_id}    : (연습용) 입력값 검증 테스트
+
+입력값이 잘못되면 exception_handlers 가 422와 로그를 남긴다.
 """
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
@@ -361,6 +373,7 @@ def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
 
 @router.post("/login")
 def login_post(body: UserLogin, db: Session = Depends(get_db)):
+    """학습자 로그인. 성공 시 idx, user_id, user_name, mb_level 을 돌려준다."""
     user = user_service.login(db, body)
 
     # 개발 확인용 응답. 나중에 제거하세요.

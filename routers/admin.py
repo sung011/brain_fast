@@ -1,8 +1,19 @@
 """
 관리자 웹 페이지 라우터.
 
-router 의 prefix="/admin" 이므로
-이 파일의 "/" 는 실제 주소 /admin 이 된다.
+prefix="/admin" 이라서 이 파일의 "/" 는 실제 주소 /admin 이 된다.
+로그인·로그아웃을 제외한 /admin/* 은 관리자 세션이 필요하다.
+Swagger(/docs)에는 숨긴다 (main.py 에서 include_in_schema=False).
+
+하는 일:
+- /admin/login, /logout     : 관리자 로그인·로그아웃
+- /admin/                   : 대시보드 홈
+- /admin/user...            : 회원 목록·가입·수정·삭제, SSE 실시간 갱신
+- /admin/reviews...         : 학습자 ROI 제출 리뷰 조회, SSE
+- /admin/study...           : 학습 문제(스터디) CRUD, NAS 이미지 업로드
+- /admin/popup...           : 홍보 팝업 CRUD
+- /admin/qa...              : 문의 답변·종료, SSE 실시간 알림
+- /admin/nas/...            : NAS 연결 확인·파일 업로드
 """
 
 import asyncio
