@@ -304,8 +304,45 @@ def grade_image_roi(
 
     probs = brain.ensemble_service.predict(img_uint8)
     _, mask_union, per_class, targets = brain.Localization.locate_abnormality(
-        brain.ensemble_service, img_uint8, probs
+        brain.ensemble_service.hemorrhage,
+        img_uint8,
+        probs,
+        classes=constants.CLASSES,
+        task="hemorrhage",
     )
+
+    germinoma_cls = None
+    if brain.ensemble_service.germinoma and brain.ensemble_service.germinoma.ready:
+        probs_g = brain.ensemble_service.germinoma.predict(img_uint8)
+        g_classes = list(brain.ensemble_service.germinoma.classes)
+        _, mask_g, per_g, targets_g = brain.Localization.locate_abnormality(
+            brain.ensemble_service.germinoma,
+            img_uint8,
+            probs_g,
+            classes=g_classes,
+            task="germinoma",
+        )
+        if float(np.max(probs_g)) >= 0.45:
+            mask_union = mask_union | mask_g
+            per_class = {**per_class, **per_g}
+        g_findings = [
+            {
+                "label": name,
+                "label_ko": constants.class_ko(name),
+                "score": float(probs_g[i]),
+            }
+            for i, name in enumerate(g_classes)
+        ]
+        g_findings.sort(key=lambda f: f["score"], reverse=True)
+        g_top = g_findings[0]
+        germinoma_cls = {
+            "top_label": g_top["label"],
+            "top_label_ko": g_top["label_ko"],
+            "confidence": g_top["score"],
+            "findings": g_findings,
+            "probs": [float(probs_g[i]) for i in range(len(g_classes))],
+            "task": "germinoma",
+        }
 
     scored = grade_overlap(user, mask_union)
 
@@ -314,7 +351,21 @@ def grade_image_roi(
     overlay = None
     if scored["has_abnormality"]:
         overlay = brain.Localization.build_overlay_image(img_uint8, per_class)
-        overlay_summary = brain.Localization.summarize_targets(per_class, targets)
+        overlay_summary = brain.Localization.summarize_targets(
+            per_class, targets, classes=constants.CLASSES
+        )
+        if germinoma_cls and float(germinoma_cls["confidence"]) >= 0.45:
+            g_sum = brain.Localization.summarize_targets(
+                per_class,
+                [0],
+                classes=[germinoma_cls["top_label"]],
+            )
+            if g_sum and g_sum != "강조된 이상 부위 없음":
+                overlay_summary = (
+                    f"{overlay_summary} | {g_sum}"
+                    if overlay_summary and overlay_summary != "강조된 이상 부위 없음"
+                    else g_sum
+                )
         if include_overlay:
             overlay_b64 = brain.Localization.overlay_to_base64(overlay)
 
@@ -354,7 +405,9 @@ def grade_image_roi(
             "top_label_ko": top["label_ko"],
             "confidence": top["score"],
             "findings": findings,
+            "task": "hemorrhage",
         },
+        "germinoma": germinoma_cls,
         "disclaimer": constants.DISCLAIMER,
         "_review_png": _to_png_bytes(review_img),
     }

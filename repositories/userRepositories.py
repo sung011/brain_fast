@@ -17,6 +17,7 @@ def get_by_user_id(
 ) -> UserModel | None:
     """로그인 아이디(user_id)로 회원을 조회한다."""
     stmt = select(UserModel).where(UserModel.user_id == user_id)
+
     if active_only:
         stmt = stmt.where(UserModel.del_yn == "N")
     return db.scalars(stmt).first()

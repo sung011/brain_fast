@@ -38,10 +38,17 @@ if HF_TOKEN:
     os.environ["HUGGING_FACE_HUB_TOKEN"] = HF_TOKEN
 
 HF_REPO = os.environ.get("HF_REPO", "kimsungil/Brain_Hemorrhage")
+# 출혈(ICH) 6클래스 앙상블
 CKPT_FILES = [
     "best_m0_convnext_base.pt",
     "best_m0_effv2_m.pt",
 ]
+# germinoma CT 이진(tumor) 앙상블 — 분석 시 출혈과 함께 추론
+GERMINOMA_CKPT_FILES = [
+    "best_germinoma_ct_convnext_base.pt",
+    "best_germinoma_ct_effv2_m.pt",
+]
+ENABLE_GERMINOMA = os.environ.get("ENABLE_GERMINOMA", "1") == "1"
 
 IMG_SIZE = int(os.environ.get("IMG_SIZE", "384"))
 WINDOW_MODE = os.environ.get("WINDOW_MODE", "brain_subdural")

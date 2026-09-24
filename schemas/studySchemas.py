@@ -22,12 +22,28 @@ class StudyOut(BaseModel):
 
 class StudyCreateResult(BaseModel):
     ok: bool = True
-    idx: int
+    idx: int | None = None
     st_part: str | None = None
     st_modal: str | None = None
     st_disease: str | None = None
     st_image: str | None = None
     remote_path: str | None = None
+    filename: str | None = None
+    error: str | None = None
+
+
+class StudyBatchCreateResult(BaseModel):
+    """학습 다중 등록 결과."""
+    ok: bool = True
+    count: int = 0
+    failed: int = 0
+    items: list[StudyCreateResult] = []
+    message: str | None = None
+
+
+# 학습 다중 등록 한도
+STUDY_BATCH_MAX_FILES = 50
+STUDY_BATCH_MAX_BYTES = 20 * 1024 * 1024  # 파일당 20MB
 
 
 class StudyUpdateResult(BaseModel):

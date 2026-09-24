@@ -260,27 +260,40 @@ class MedGemmaService:
         per_class: dict,
         targets: list[int],
         clinical: str | None = None,
+        germinoma_probs: list[float] | None = None,
     ) -> str:
         self._ensure_loaded()
 
         if self.backend == "template":
             self._last_source = "template"
-            report = build_template_report(probs, per_class, targets)
-            return merge_ai_reference(report, probs)
+            report = build_template_report(
+                probs, per_class, targets, germinoma_probs=germinoma_probs
+            )
+            return merge_ai_reference(report, probs, germinoma_probs=germinoma_probs)
 
-        extra = build_report_extra(probs, per_class, targets, clinical=clinical)
+        extra = build_report_extra(
+            probs,
+            per_class,
+            targets,
+            clinical=clinical,
+            germinoma_probs=germinoma_probs,
+        )
         messages = self._build_messages(original_uint8, overlay_uint8, extra)
         try:
             raw_report = self._generate(messages)
         except Exception:
             if MEDGEMMA_FALLBACK_TEMPLATE:
                 self._last_source = "template-fallback"
-                report = build_template_report(probs, per_class, targets)
-                return merge_ai_reference(report, probs)
+                report = build_template_report(
+                    probs, per_class, targets, germinoma_probs=germinoma_probs
+                )
+                return merge_ai_reference(report, probs, germinoma_probs=germinoma_probs)
             raise
 
-        report = normalize_korean_report(raw_report, probs, per_class, targets)
-        return merge_ai_reference(report, probs)
+        report = normalize_korean_report(
+            raw_report, probs, per_class, targets, germinoma_probs=germinoma_probs
+        )
+        return merge_ai_reference(report, probs, germinoma_probs=germinoma_probs)
 
     @staticmethod
     def decode_overlay_base64(b64: str) -> np.ndarray:

@@ -16,7 +16,7 @@ from PIL import Image, ImageFilter
 
 from .config import HIGH_PROB_THR
 from .constants import CLASS_COLORS, CLASSES, class_ko
-from .ensemble import EnsembleService, _infer_transforms, ensemble_service
+from .ensemble import TaskEnsemble, _infer_transforms
 
 
 def _cam_target_layer(model: torch.nn.Module, name: str):
@@ -36,7 +36,7 @@ def _cam_target_layer(model: torch.nn.Module, name: str):
 
 
 def gradcam_one(
-    service: EnsembleService,
+    service: TaskEnsemble,
     model: torch.nn.Module,
     name: str,
     img_uint8: np.ndarray,
@@ -130,7 +130,7 @@ def cam_to_mask(cam: np.ndarray, interior: np.ndarray) -> tuple[np.ndarray, np.n
 
 
 def ensemble_gradcam(
-    service: EnsembleService,
+    service: TaskEnsemble,
     img_uint8: np.ndarray,
     target_idx: int,
     out_hw: tuple[int, int],
@@ -147,26 +147,42 @@ def ensemble_gradcam(
 
 
 def locate_abnormality(
-    service: EnsembleService,
+    service: TaskEnsemble,
     img_uint8: np.ndarray,
     probs: np.ndarray,
     high_thr: float = HIGH_PROB_THR,
+    *,
+    classes: list[str] | None = None,
+    task: str = "hemorrhage",
 ) -> tuple[np.ndarray, np.ndarray, dict, list[int]]:
     """
-    분류 확률 기반 대상 클래스 선정 → Grad-CAM + 강도 마스크 fusion.
+    분류 확률 기반 대상 클래스 선정 → Grad-CAM + 마스크 fusion.
+
+    task=hemorrhage: 강도 기반 출혈 마스크와 결합
+    task=germinoma: Grad-CAM + 뇌 내부 마스크 위주
 
     Returns:
         cam_union, mask_union, per_class dict, target class indices
     """
+    label_names = list(classes) if classes is not None else list(getattr(service, "classes", CLASSES))
     h, w = img_uint8.shape[:2]
     gray = img_uint8[..., 0].astype(np.float32)
     interior = brain_interior_mask(gray)
+
+    if task == "germinoma":
+        return _locate_germinoma(service, img_uint8, probs, label_names, interior, high_thr)
+
     ich_mask = intensity_hemorrhage_mask(gray, interior)
 
+    n = len(probs)
+    subtype_n = min(5, max(0, n - 1)) if n >= 2 else n
     targets = [i for i, p in enumerate(probs) if float(p) >= high_thr]
     if not targets:
-        targets = [int(np.argmax(probs[:5]))]
-        if float(probs[5]) >= 0.45:
+        if subtype_n > 0:
+            targets = [int(np.argmax(probs[:subtype_n]))]
+        else:
+            targets = [int(np.argmax(probs))]
+        if n >= 6 and float(probs[5]) >= 0.45:
             targets.append(5)
         targets = sorted(set(targets))
 
@@ -175,10 +191,13 @@ def locate_abnormality(
     mask_union = np.zeros((h, w), dtype=bool)
 
     for ti in targets:
+        if ti >= len(label_names):
+            continue
         cam = ensemble_gradcam(service, img_uint8, ti, (h, w))
         cam_in, cam_mask = cam_to_mask(cam, interior)
 
-        if float(probs[5]) >= 0.45 or float(probs[ti]) >= high_thr:
+        any_p = float(probs[5]) if n >= 6 else 0.0
+        if any_p >= 0.45 or float(probs[ti]) >= high_thr:
             inter = cam_mask & ich_mask
             mask = inter if inter.sum() >= 8 else (cam_mask | ich_mask)
         else:
@@ -190,7 +209,53 @@ def locate_abnormality(
             .filter(ImageFilter.MinFilter(3))
         ) > 0
 
-        per_class[CLASSES[ti]] = {
+        per_class[label_names[ti]] = {
+            "prob": float(probs[ti]),
+            "cam": cam_in,
+            "mask": mask,
+        }
+        cam_union = np.maximum(cam_union, cam_in)
+        mask_union |= mask
+
+    if cam_union.max() > 0:
+        cam_union = cam_union / cam_union.max()
+
+    return cam_union, mask_union, per_class, targets
+
+
+def _locate_germinoma(
+    service: TaskEnsemble,
+    img_uint8: np.ndarray,
+    probs: np.ndarray,
+    label_names: list[str],
+    interior: np.ndarray,
+    high_thr: float,
+) -> tuple[np.ndarray, np.ndarray, dict, list[int]]:
+    """germinoma(tumor) Grad-CAM 위치 추정 — 출혈 강도 마스크는 쓰지 않음."""
+    h, w = img_uint8.shape[:2]
+    targets = [i for i, p in enumerate(probs) if float(p) >= high_thr]
+    if not targets:
+        targets = [int(np.argmax(probs))]
+
+    per_class: dict = {}
+    cam_union = np.zeros((h, w), dtype=np.float32)
+    mask_union = np.zeros((h, w), dtype=bool)
+
+    for ti in targets:
+        if ti >= len(label_names):
+            continue
+        if float(probs[ti]) < 0.35:
+            continue
+        cam = ensemble_gradcam(service, img_uint8, ti, (h, w))
+        cam_in, cam_mask = cam_to_mask(cam, interior)
+        mask = cam_mask if cam_mask.any() else (interior & (cam_in >= 0.35))
+        mask = np.array(
+            Image.fromarray((mask.astype(np.uint8) * 255))
+            .filter(ImageFilter.MaxFilter(3))
+            .filter(ImageFilter.MinFilter(3))
+        ) > 0
+
+        per_class[label_names[ti]] = {
             "prob": float(probs[ti]),
             "cam": cam_in,
             "mask": mask,
@@ -224,11 +289,19 @@ def overlay_to_base64(overlay: np.ndarray) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def summarize_targets(per_class: dict, targets: list[int]) -> str:
+def summarize_targets(
+    per_class: dict,
+    targets: list[int],
+    *,
+    classes: list[str] | None = None,
+) -> str:
     """UI·프롬프트용 한 줄 위치 요약 (예: '경막하출혈 (p=0.92, 중부-좌측)')."""
+    label_names = list(classes) if classes is not None else list(CLASSES)
     bits = []
     for ti in targets:
-        name = CLASSES[ti]
+        if ti >= len(label_names):
+            continue
+        name = label_names[ti]
         info = per_class.get(name)
         if not info or not info["mask"].any():
             continue

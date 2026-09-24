@@ -7,6 +7,8 @@ prefix 없음. 나중에 마이페이지·프로필 등을 여기 추가하면 �
 - GET /text : 연결 확인용 Hello World (개발 테스트)
 """
 
+from typing import Any
+
 from fastapi import APIRouter
 
 router = APIRouter(tags=["user"])
@@ -16,3 +18,9 @@ router = APIRouter(tags=["user"])
 def me():
     """서버 연결 확인. {"message": "Hello World"} 를 돌려준다."""
     return {"message": "Hello World"}
+
+
+@router.post("/example")
+def example(body: dict[str, Any]):
+    print(f"body : {body}")
+    return body

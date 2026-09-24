@@ -28,9 +28,13 @@ from config import settings
 from db import get_db
 from schemas.analyzeSchemas import NasHealthResponse, NasUploadResponse
 from schemas.popupSchemas import PopupOut, PopupWriteResult
+from schemas.qaSchemas import QaMessageBody
 from schemas.studySchemas import (
     ST_MODAL_LABELS,
     ST_PART_LABELS,
+    STUDY_BATCH_MAX_BYTES,
+    STUDY_BATCH_MAX_FILES,
+    StudyBatchCreateResult,
     StudyCreateResult,
     StudyOut,
     StudyUpdateResult,
@@ -39,14 +43,12 @@ from schemas.studySchemas import (
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
 from services import dashboardServices as dashboard_service
 from services import nasServices as nas_service_mod
-from schemas.qaSchemas import QaMessageBody
 from services import popupServices as popup_service
 from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import studyServices as study_service
 from services import userServices as user_service
 from utils.adminAuth import admin_session_guard
-from utils.password import hash_password, verify_password
 from utils.qa_sse import qa_events
 from utils.renderHelper import render_with_layout
 from utils.review_sse import review_events
@@ -78,23 +80,13 @@ def login_page(request: Request):
 
 @router.post("/login")
 def login_post(request: Request, body: UserLogin, db: Session = Depends(get_db)):
+    print(f"body : {body}")
     user = user_service.login(db, body)
 
-    # 개발 확인용 응답. 나중에 제거하세요.
-    debug = {
-        "plain_pw": body.user_pw,
-        "hashed_pw": hash_password(body.user_pw),
-        "db_user_pw": user.user_pw if user else None,
-        "pw_match": (
-            verify_password(body.user_pw, user.user_pw)
-            if user and user.user_pw.startswith("$2")
-            else None
-        ),
-    }
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"message": "아이디 또는 비밀번호가 올바르지 않습니다.", **debug},
+            detail={"message": "아이디 또는 비밀번호가 올바르지 않습니다."},
         )
 
     # 로그인 성공 시 세션에 사용자 정보 저장 (비밀번호는 저장하지 않음)
@@ -111,7 +103,6 @@ def login_post(request: Request, body: UserLogin, db: Session = Depends(get_db))
         "user_id": user.user_id,
         "user_name": user.user_name,
         "mb_level": user.mb_level,
-        **debug,
     }
 
 
@@ -139,8 +130,8 @@ def index_page(request: Request, db: Session = Depends(get_db)):
             "title": "Dashboard",
             "user": request.session.get("user"),
             "nas_public_base_url": (
-                settings.nas_public_base_url
-                or "https://olleh7531.synology.me/mu_shop/public"
+                    settings.nas_public_base_url
+                    or "https://olleh7531.synology.me/mu_shop/public"
             ).rstrip("/"),
             "dashboard_stats": stats,
         },
@@ -185,7 +176,7 @@ def reviews_page(request: Request, partial: bool = False):
     data = {
         "title": "풀이 이력",
         "nas_public_base_url": (
-            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
         ).rstrip("/"),
     }
     if partial:
@@ -484,7 +475,7 @@ def study_detail_page(idx: int, request: Request, partial: bool = False):
         "modal_labels": ST_MODAL_LABELS,
         "nas_base_path": settings.nas_base_path or "/stylesheets/assets",
         "nas_public_base_url": (
-            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
         ).rstrip("/"),
     }
     if partial:
@@ -573,21 +564,21 @@ def _to_public_image_path(remote_path: str) -> str:
     path = (remote_path or "").replace("\\", "/")
     root = (settings.nas_public_root or "/web/mu_shop/public").rstrip("/")
     if path.startswith(root + "/"):
-        return path[len(root) :]
+        return path[len(root):]
     if path.startswith(root):
-        rest = path[len(root) :]
+        rest = path[len(root):]
         return rest if rest.startswith("/") else f"/{rest}" if rest else "/"
     return path if path.startswith("/") else f"/{path}"
 
 
 async def _upload_and_save_study(
-    db: Session,
-    *,
-    file: UploadFile,
-    st_part: str,
-    st_modal: str,
-    st_disease: str,
-    remote_dir: str,
+        db: Session,
+        *,
+        file: UploadFile,
+        st_part: str,
+        st_modal: str,
+        st_disease: str,
+        remote_dir: str,
 ) -> StudyCreateResult:
     """이미지를 NAS에 올린 뒤 study 행을 만든다."""
     svc = nas_service_mod.nas_service
@@ -600,6 +591,11 @@ async def _upload_and_save_study(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="이미지 파일이 비어 있습니다.")
+    if len(data) > STUDY_BATCH_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"파일이 너무 큽니다 (최대 {STUDY_BATCH_MAX_BYTES // (1024 * 1024)}MB).",
+        )
 
     # 부위·영상 종류로 경로 자동 결정 (프론트 remote_dir 보다 우선)
     auto_dir = build_remote_dir(st_part, st_modal)
@@ -653,15 +649,15 @@ async def _upload_and_save_study(
 
 @router.post("/nas/upload", response_model=NasUploadResponse)
 async def nas_upload(
-    db: Session = Depends(get_db),
-    file: UploadFile = File(...),
-    st_part: str = Form(..., description="학습 부위 — 1:뇌 2:흉부 3:복부 4:무릎"),
-    st_modal: str = Form(..., description="영상 종류 — 1:X-ray 2:CT 3:MRI"),
-    st_disease: str = Form(..., description="병명 (최대 30자)"),
-    remote_dir: str = Form(
-        default="/stylesheets/assets",
-        description="웹 상대 저장 폴더. 기본값 /stylesheets/assets (NAS에는 /web/mu_shop/public 이 앞에 붙음)",
-    ),
+        db: Session = Depends(get_db),
+        file: UploadFile = File(...),
+        st_part: str = Form(..., description="학습 부위 — 1:뇌 2:흉부 3:복부 4:무릎"),
+        st_modal: str = Form(..., description="영상 종류 — 1:X-ray 2:CT 3:MRI"),
+        st_disease: str = Form(..., description="병명 (최대 30자)"),
+        remote_dir: str = Form(
+            default="/stylesheets/assets",
+            description="웹 상대 저장 폴더. 기본값 /stylesheets/assets (NAS에는 /web/mu_shop/public 이 앞에 붙음)",
+        ),
 ) -> NasUploadResponse:
     """
     NAS 업로드 + study 테이블 저장.
@@ -689,37 +685,120 @@ async def nas_upload(
     )
 
 
-@router.post("/study", response_model=StudyCreateResult)
+@router.post("/study", response_model=StudyBatchCreateResult)
 async def study_create(
-    db: Session = Depends(get_db),
-    file: UploadFile = File(...),
-    st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
-    st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
-    st_disease: str = Form(..., description="병명"),
-    remote_dir: str = Form(
-        default="/stylesheets/assets",
-        description="웹 상대 저장 폴더. 기본값 /stylesheets/assets",
-    ),
-) -> StudyCreateResult:
-    """학습 등록: 이미지를 NAS에 올린 뒤 study 테이블에 경로·메타를 저장한다."""
-    return await _upload_and_save_study(
-        db,
-        file=file,
-        st_part=st_part,
-        st_modal=st_modal,
-        st_disease=st_disease,
-        remote_dir=remote_dir,
+        db: Session = Depends(get_db),
+        files: list[UploadFile] = File(default=[]),
+        file: UploadFile | None = File(None),
+        st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
+        st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
+        st_disease: str = Form(..., description="병명"),
+        remote_dir: str = Form(
+            default="/stylesheets/assets",
+            description="웹 상대 저장 폴더. 기본값 /stylesheets/assets",
+        ),
+) -> StudyBatchCreateResult:
+    """학습 등록: 이미지(다수)를 NAS에 올린 뒤 study 행을 각각 저장한다."""
+    uploads: list[UploadFile] = []
+    if files:
+        uploads.extend([f for f in files if f is not None and (f.filename or "").strip()])
+    if file is not None and (file.filename or "").strip():
+        # 단일 file 필드(하위 호환) — 이미 files에 없으면 추가
+        if not any(f is file for f in uploads):
+            uploads.append(file)
+
+    if not uploads:
+        raise HTTPException(status_code=400, detail="이미지 파일을 1개 이상 선택해주세요.")
+
+    if len(uploads) > STUDY_BATCH_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"한 번에 최대 {STUDY_BATCH_MAX_FILES}개까지 등록할 수 있습니다.",
+        )
+
+    items: list[StudyCreateResult] = []
+    failed = 0
+    for upload in uploads:
+        name = (upload.filename or "study.bin").replace("\\", "/").split("/")[-1]
+        try:
+            # 크기 사전 확인(가능한 경우)
+            size_hint = getattr(upload, "size", None)
+            if isinstance(size_hint, int) and size_hint > STUDY_BATCH_MAX_BYTES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"파일이 너무 큽니다 (최대 {STUDY_BATCH_MAX_BYTES // (1024 * 1024)}MB).",
+                )
+            result = await _upload_and_save_study(
+                db,
+                file=upload,
+                st_part=st_part,
+                st_modal=st_modal,
+                st_disease=st_disease,
+                remote_dir=remote_dir,
+            )
+            # 업로드 직후 바이트 길이도 확인 (size 힌트가 없는 환경)
+            items.append(
+                StudyCreateResult(
+                    ok=True,
+                    idx=result.idx,
+                    st_part=result.st_part,
+                    st_modal=result.st_modal,
+                    st_disease=result.st_disease,
+                    st_image=result.st_image,
+                    remote_path=result.remote_path,
+                    filename=name,
+                )
+            )
+        except HTTPException as exc:
+            failed += 1
+            detail = exc.detail
+            if isinstance(detail, dict):
+                msg = str(detail.get("message") or detail)
+            else:
+                msg = str(detail)
+            items.append(
+                StudyCreateResult(
+                    ok=False,
+                    idx=None,
+                    filename=name,
+                    error=msg,
+                )
+            )
+        except Exception as exc:
+            failed += 1
+            items.append(
+                StudyCreateResult(
+                    ok=False,
+                    idx=None,
+                    filename=name,
+                    error=str(exc),
+                )
+            )
+
+    created = len(items) - failed
+    if created == 0:
+        raise HTTPException(
+            status_code=400,
+            detail=items[0].error if items else "등록에 실패했습니다.",
+        )
+
+    return StudyBatchCreateResult(
+        ok=failed == 0,
+        count=created,
+        failed=failed,
+        items=items,
+        message=f"{created}건 등록 완료" + (f", {failed}건 실패" if failed else ""),
     )
 
 
 @router.put("/study/{idx}", response_model=StudyUpdateResult)
 async def study_update(
-    idx: int,
-    db: Session = Depends(get_db),
-    st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
-    st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
-    st_disease: str = Form(..., description="병명"),
-    file: UploadFile | None = File(None),
+        idx: int,
+        db: Session = Depends(get_db),
+        st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
+        st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
+        st_disease: str = Form(..., description="병명"),
+        file: UploadFile | None = File(None),
 ) -> StudyUpdateResult:
     """학습 수정. 이미지 파일이 있으면 NAS에 새로 올린 뒤 경로를 갱신한다."""
     existing = study_service.get_study(db, idx)
@@ -838,7 +917,7 @@ def popup_page(request: Request, partial: bool = False):
         "title": "팝업",
         "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
         "nas_public_base_url": (
-            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
         ).rstrip("/"),
     }
     if partial:
@@ -874,7 +953,7 @@ def popup_detail_page(idx: int, request: Request, partial: bool = False):
         "popup_idx": idx,
         "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
         "nas_public_base_url": (
-            settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
         ).rstrip("/"),
     }
     if partial:
@@ -904,14 +983,14 @@ def popup_get(idx: int, db: Session = Depends(get_db)):
 
 @router.post("/popup", response_model=PopupWriteResult)
 async def popup_create(
-    db: Session = Depends(get_db),
-    file: UploadFile = File(..., description="팝업 이미지"),
-    pp_title: str = Form("", description="관리용 제목"),
-    pp_link: str = Form("", description="클릭 시 이동 URL"),
-    pp_sort: int = Form(0, description="표시 순서(작을수록 먼저)"),
-    start_at: str = Form("", description="노출 시작 datetime-local"),
-    end_at: str = Form("", description="노출 종료 datetime-local"),
-    state: str = Form("N", description="N:노출 / S:숨김"),
+        db: Session = Depends(get_db),
+        file: UploadFile = File(..., description="팝업 이미지"),
+        pp_title: str = Form("", description="관리용 제목"),
+        pp_link: str = Form("", description="클릭 시 이동 URL"),
+        pp_sort: int = Form(0, description="표시 순서(작을수록 먼저)"),
+        start_at: str = Form("", description="노출 시작 datetime-local"),
+        end_at: str = Form("", description="노출 종료 datetime-local"),
+        state: str = Form("N", description="N:노출 / S:숨김"),
 ) -> PopupWriteResult:
     """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장."""
     svc = nas_service_mod.nas_service
@@ -965,15 +1044,15 @@ async def popup_create(
 
 @router.put("/popup/{idx}", response_model=PopupWriteResult)
 async def popup_update(
-    idx: int,
-    db: Session = Depends(get_db),
-    pp_title: str = Form(""),
-    pp_link: str = Form(""),
-    pp_sort: int = Form(0),
-    start_at: str = Form(""),
-    end_at: str = Form(""),
-    state: str = Form("N"),
-    file: UploadFile | None = File(None),
+        idx: int,
+        db: Session = Depends(get_db),
+        pp_title: str = Form(""),
+        pp_link: str = Form(""),
+        pp_sort: int = Form(0),
+        start_at: str = Form(""),
+        end_at: str = Form(""),
+        state: str = Form("N"),
+        file: UploadFile | None = File(None),
 ) -> PopupWriteResult:
     """팝업 수정. 이미지 파일이 있으면 NAS에 새로 올린다."""
     existing = popup_service.get_popup(db, idx)
@@ -1147,10 +1226,10 @@ def qa_thread_detail(idx: int, db: Session = Depends(get_db)):
 
 @router.post("/qa/threads/{idx}/messages")
 async def qa_admin_reply(
-    idx: int,
-    body: QaMessageBody,
-    request: Request,
-    db: Session = Depends(get_db),
+        idx: int,
+        body: QaMessageBody,
+        request: Request,
+        db: Session = Depends(get_db),
 ):
     """관리자 답변."""
     session_user = request.session.get("user") or {}

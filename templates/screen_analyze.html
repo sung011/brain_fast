@@ -1024,6 +1024,9 @@
       const form = new FormData();
       form.append("image", blob, "roi.png");
       form.append("probs_json", JSON.stringify(analysis.classification.probs));
+      if (analysis.germinoma && analysis.germinoma.probs) {
+        form.append("germinoma_probs_json", JSON.stringify(analysis.germinoma.probs));
+      }
       if (analysis.overlay_png_base64) {
         form.append("overlay_png_base64", analysis.overlay_png_base64);
       }
@@ -1116,6 +1119,19 @@
       explainText.innerHTML = `<div class="report-wrap">${html}</div>`;
     }
 
+    function renderFindingsList(findings) {
+      return (findings || [])
+        .map(
+          (f) => `
+          <div style="font-size:13px;margin-bottom:2px">${escapeHtml(f.label_ko)}
+            <strong style="float:right">${(f.score * 100).toFixed(0)}%</strong>
+          </div>
+          <div class="bar"><span style="width:${(f.score * 100).toFixed(0)}%"></span></div>
+        `
+        )
+        .join("");
+    }
+
     function renderAnalysis(out) {
       resultEmpty.style.display = "none";
       resultBox.style.display = "block";
@@ -1124,24 +1140,26 @@
       explainText.innerHTML = "";
 
       const top = out.classification;
-      resultTitle.textContent = `최상위 의심: ${top.top_label_ko}`;
+      const g = out.germinoma;
+      let title = `출혈 최상위: ${top.top_label_ko}`;
+      if (g) {
+        title += ` · germinoma: ${g.top_label_ko} ${(g.confidence * 100).toFixed(0)}%`;
+      }
+      resultTitle.textContent = title;
       resultMeta.innerHTML = `
         <div>ROI 크기: <strong>${out.roi.width}×${out.roi.height}</strong></div>
         <div>밝기 평균/편차: <strong>${out.image_stats.mean}</strong> / <strong>${out.image_stats.std}</strong></div>
         <div>추론 시간: <strong>${out.latency_ms}ms</strong></div>
-        ${out.overlay_summary ? `<div>이상 부위: <strong>${out.overlay_summary}</strong></div>` : ""}
+        ${out.overlay_summary ? `<div>이상 부위: <strong>${escapeHtml(out.overlay_summary)}</strong></div>` : ""}
       `;
 
-      probList.innerHTML = out.classification.findings
-        .map(
-          (f) => `
-          <div style="font-size:13px;margin-bottom:2px">${f.label_ko}
-            <strong style="float:right">${(f.score * 100).toFixed(0)}%</strong>
-          </div>
-          <div class="bar"><span style="width:${(f.score * 100).toFixed(0)}%"></span></div>
-        `
-        )
-        .join("");
+      let listHtml = `<div style="font-size:12px;opacity:.75;margin:8px 0 4px">출혈 (ICH)</div>`;
+      listHtml += renderFindingsList(out.classification.findings);
+      if (g && g.findings) {
+        listHtml += `<div style="font-size:12px;opacity:.75;margin:12px 0 4px">Germinoma</div>`;
+        listHtml += renderFindingsList(g.findings);
+      }
+      probList.innerHTML = listHtml;
 
       if (out.overlay_png_base64) {
         overlayPreview.style.display = "block";

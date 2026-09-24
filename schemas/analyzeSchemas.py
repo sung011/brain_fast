@@ -34,6 +34,7 @@ class ClassificationResult(BaseModel):
     confidence: float
     findings: list[FindingItem]
     probs: list[float] = Field(description="CLASSES 순서의 원시 확률")
+    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma")
 
 
 class NasUploadInfo(BaseModel):
@@ -50,6 +51,7 @@ class ScreenRoiResponse(BaseModel):
     roi: RoiInfo
     image_stats: ImageStats
     classification: ClassificationResult
+    germinoma: ClassificationResult | None = None
     overlay_png_base64: str | None = None
     overlay_summary: str | None = None
     source: str = "screen_capture"
@@ -97,6 +99,7 @@ class HealthResponse(BaseModel):
     status: str
     models_loaded: bool
     models_error: str | None = None
+    germinoma_loaded: bool = False
     medgemma_loaded: bool = False
     medgemma_error: str | None = None
     medgemma_device: str | None = None

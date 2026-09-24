@@ -70,6 +70,9 @@ async def health() -> HealthResponse:
         status="ok" if brain.ensemble_service.ready else "degraded",
         models_loaded=brain.ensemble_service.ready,
         models_error=brain.ensemble_service.error,
+        germinoma_loaded=bool(
+            brain.ensemble_service.germinoma and brain.ensemble_service.germinoma.ready
+        ),
         medgemma_loaded=brain.medgemma_service.ready,
         medgemma_error=brain.medgemma_service.error,
         medgemma_device=brain.medgemma_service.device,
@@ -89,7 +92,13 @@ def _ensure_ensemble(brain: ModuleType) -> None:
         ) from exc
 
 
-def _build_classification(brain: ModuleType, probs) -> ClassificationResult:
+def _build_classification(
+    brain: ModuleType,
+    probs,
+    *,
+    classes: list[str],
+    task: str,
+) -> ClassificationResult:
     constants = import_module("class.brain.constants")
     findings = [
         FindingItem(
@@ -97,7 +106,7 @@ def _build_classification(brain: ModuleType, probs) -> ClassificationResult:
             label_ko=constants.class_ko(name),
             score=float(probs[i]),
         )
-        for i, name in enumerate(constants.CLASSES)
+        for i, name in enumerate(classes)
     ]
     findings.sort(key=lambda f: f.score, reverse=True)
     top = findings[0]
@@ -106,7 +115,8 @@ def _build_classification(brain: ModuleType, probs) -> ClassificationResult:
         top_label_ko=top.label_ko,
         confidence=top.score,
         findings=findings,
-        probs=[float(probs[i]) for i in range(len(constants.CLASSES))],
+        probs=[float(probs[i]) for i in range(len(classes))],
+        task=task,
     )
 
 
@@ -190,19 +200,62 @@ async def analyze_screen_roi(
         raise HTTPException(status_code=400, detail=f"이미지 디코딩 실패: {exc}") from exc
 
     h, w = img_uint8.shape[:2]
-    probs = brain.ensemble_service.predict(img_uint8)
-    classification = _build_classification(brain, probs)
+    preds = brain.ensemble_service.predict_all(img_uint8)
+    probs = preds["hemorrhage"]
+    classification = _build_classification(
+        brain, probs, classes=constants.CLASSES, task="hemorrhage"
+    )
+    germinoma_cls = None
+    probs_g = preds.get("germinoma")
+    if probs_g is not None and brain.ensemble_service.germinoma is not None:
+        germinoma_cls = _build_classification(
+            brain,
+            probs_g,
+            classes=list(brain.ensemble_service.germinoma.classes),
+            task="germinoma",
+        )
     stats = brain.Preprocess.image_stats(img_uint8)
 
     overlay_b64 = None
     overlay_summary = None
     if include_overlay:
-        _, _, per_class, targets = brain.Localization.locate_abnormality(
-            brain.ensemble_service, img_uint8, probs
+        _, _, per_h, targets_h = brain.Localization.locate_abnormality(
+            brain.ensemble_service.hemorrhage,
+            img_uint8,
+            probs,
+            classes=constants.CLASSES,
+            task="hemorrhage",
         )
+        per_class = dict(per_h)
+        summaries = [
+            brain.Localization.summarize_targets(
+                per_h, targets_h, classes=constants.CLASSES
+            )
+        ]
+        if (
+            probs_g is not None
+            and brain.ensemble_service.germinoma is not None
+            and brain.ensemble_service.germinoma.ready
+        ):
+            g_classes = list(brain.ensemble_service.germinoma.classes)
+            _, _, per_g, targets_g = brain.Localization.locate_abnormality(
+                brain.ensemble_service.germinoma,
+                img_uint8,
+                probs_g,
+                classes=g_classes,
+                task="germinoma",
+            )
+            per_class.update(per_g)
+            summaries.append(
+                brain.Localization.summarize_targets(
+                    per_g, targets_g, classes=g_classes
+                )
+            )
         overlay = brain.Localization.build_overlay_image(img_uint8, per_class)
         overlay_b64 = brain.Localization.overlay_to_base64(overlay)
-        overlay_summary = brain.Localization.summarize_targets(per_class, targets)
+        overlay_summary = " | ".join(
+            s for s in summaries if s and s != "강조된 이상 부위 없음"
+        ) or "강조된 이상 부위 없음"
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     latency_ms = int((time.perf_counter() - t0) * 1000)
@@ -211,6 +264,7 @@ async def analyze_screen_roi(
         roi=RoiInfo(width=w, height=h),
         image_stats=ImageStats(**stats),
         classification=classification,
+        germinoma=germinoma_cls,
         overlay_png_base64=overlay_b64,
         overlay_summary=overlay_summary,
         source=modality if modality != "unknown" else "screen_capture",
@@ -233,6 +287,7 @@ async def explain_screen_roi(
     image: UploadFile = File(...),
     probs_json: str = Form(...),
     overlay_png_base64: str = Form(""),
+    germinoma_probs_json: str = Form(""),
 ) -> ExplainResponse:
     brain = _load_brain()
     config = import_module("class.brain.config")
@@ -251,6 +306,18 @@ async def explain_screen_roi(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"probs_json 파싱 실패: {exc}") from exc
 
+    germinoma_probs: list[float] | None = None
+    if germinoma_probs_json.strip():
+        try:
+            gp = json.loads(germinoma_probs_json)
+            if not isinstance(gp, list) or not gp:
+                raise ValueError("germinoma_probs_json must be a non-empty list")
+            germinoma_probs = [float(p) for p in gp]
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400, detail=f"germinoma_probs_json 파싱 실패: {exc}"
+            ) from exc
+
     _ensure_ensemble(brain)
 
     try:
@@ -263,9 +330,32 @@ async def explain_screen_roi(
     import numpy as np
 
     probs_arr = np.array(probs, dtype=np.float32)
-    _, _, per_class, targets = brain.Localization.locate_abnormality(
-        brain.ensemble_service, img_uint8, probs_arr
+    _, _, per_h, targets_h = brain.Localization.locate_abnormality(
+        brain.ensemble_service.hemorrhage,
+        img_uint8,
+        probs_arr,
+        classes=constants.CLASSES,
+        task="hemorrhage",
     )
+    per_class = dict(per_h)
+    targets = list(targets_h)
+
+    if (
+        germinoma_probs is not None
+        and brain.ensemble_service.germinoma is not None
+        and brain.ensemble_service.germinoma.ready
+    ):
+        g_classes = list(brain.ensemble_service.germinoma.classes)
+        gp_arr = np.array(germinoma_probs, dtype=np.float32)
+        _, _, per_g, targets_g = brain.Localization.locate_abnormality(
+            brain.ensemble_service.germinoma,
+            img_uint8,
+            gp_arr,
+            classes=g_classes,
+            task="germinoma",
+        )
+        per_class.update(per_g)
+
     overlay_uint8 = brain.Localization.build_overlay_image(img_uint8, per_class)
 
     if overlay_png_base64.strip():
@@ -283,6 +373,7 @@ async def explain_screen_roi(
             probs=probs,
             per_class=per_class,
             targets=targets,
+            germinoma_probs=germinoma_probs,
         )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

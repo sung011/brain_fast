@@ -44,6 +44,10 @@ _FINDING_MORPH = {
         "두개내출혈은 유형을 가리지 않은 종합 점수입니다. "
         "화면에 보이는 고밀도 음영이 출혈일 가능성을 나타내며, 구체 유형은 함께 제시된 2순위 소견과 맞춰 봅니다."
     ),
+    "tumor": (
+        "송과체·안장상부 등에서 경계가 비교적 분명한 종괴 음영과 주변 구조 압박이 있으면 "
+        "생식세포종양(germinoma) 가능성을 고려합니다. 단일 축상면만으로는 확정할 수 없습니다."
+    ),
 }
 _SECTION_ORDER = ("검사", "화질", "범위", "소견", "인상", "확실도", "면책")
 _VALID_SECTION = re.compile(r"^[\[【](검사|화질|범위|소견|인상|확실도|면책|AI참고)[\]】]\s*(.*)$")
@@ -180,6 +184,7 @@ def build_report_extra(
     per_class: dict,
     targets: list[int],
     clinical: str | None = None,
+    germinoma_probs=None,
 ) -> str:
     """MedGemma 프롬프트에 붙일 짧은 AI 힌트 (영상 우선)."""
     parts: list[str] = []
@@ -188,7 +193,12 @@ def build_report_extra(
     high = top_report_findings(probs)
     if high:
         parts.append(
-            f"AI 분류 상위 {len(high)}개(점수 무관, 소견·인상에 형태까지 자세히 기술): {_findings_scores(high)}"
+            f"AI 출혈 분류 상위 {len(high)}개(점수 무관, 소견·인상에 형태까지 자세히 기술): {_findings_scores(high)}"
+        )
+    if germinoma_probs is not None and len(germinoma_probs) > 0:
+        g_score = float(germinoma_probs[0])
+        parts.append(
+            f"AI germinoma(tumor) 점수: {class_ko('tumor')} {g_score:.0%}({_score_band(g_score)})"
         )
     loc = summarize_targets(per_class, targets)
     if loc and loc != "해당 없음":
@@ -196,24 +206,30 @@ def build_report_extra(
     return " / ".join(parts) if parts else ""
 
 
-def format_ai_reference_section(probs) -> str:
+def format_ai_reference_section(probs, germinoma_probs=None) -> str:
     high = top_report_findings(probs)
     if not high:
-        return "【AI참고】 분류 결과 없음"
-    rest = [
-        (CLASSES[i], float(probs[i]))
-        for i in range(len(probs))
-        if CLASSES[i] not in {name for name, _ in high} and CLASSES[i] != "any"
-    ]
-    rest.sort(key=lambda x: -x[1])
-    rest_txt = ", ".join(f"{class_ko(n)} {p:.0%}" for n, p in rest[:3]) if rest else "없음"
-    return (
-        f"【AI참고】 앙상블 상위 {len(high)}개: {_findings_scores(high)}. "
-        f"그 외: {rest_txt}."
-    )
+        ich_txt = "분류 결과 없음"
+    else:
+        rest = [
+            (CLASSES[i], float(probs[i]))
+            for i in range(len(probs))
+            if CLASSES[i] not in {name for name, _ in high} and CLASSES[i] != "any"
+        ]
+        rest.sort(key=lambda x: -x[1])
+        rest_txt = ", ".join(f"{class_ko(n)} {p:.0%}" for n, p in rest[:3]) if rest else "없음"
+        ich_txt = (
+            f"출혈 앙상블 상위 {len(high)}개: {_findings_scores(high)}. "
+            f"그 외: {rest_txt}."
+        )
+    bits = [ich_txt]
+    if germinoma_probs is not None and len(germinoma_probs) > 0:
+        g_score = float(germinoma_probs[0])
+        bits.append(f"germinoma: {class_ko('tumor')} {g_score:.0%}({_score_band(g_score)}).")
+    return "【AI참고】 " + " ".join(bits)
 
 
-def merge_ai_reference(report: str, probs) -> str:
+def merge_ai_reference(report: str, probs, germinoma_probs=None) -> str:
     """판독문 끝에 【AI참고】 앙상블 확률 + 【면책】 섹션을 붙인다."""
     disclaimer = _DISCLAIMER
     if "【면책】" in report:
@@ -229,7 +245,13 @@ def merge_ai_reference(report: str, probs) -> str:
     for marker in ("【AI참고】", "【확률】", "【의심】"):
         if marker in head:
             head = head.split(marker)[0].rstrip()
-    return head.rstrip() + "\n" + format_ai_reference_section(probs) + "\n" + f"【면책】 {disclaimer}"
+    return (
+        head.rstrip()
+        + "\n"
+        + format_ai_reference_section(probs, germinoma_probs)
+        + "\n"
+        + f"【면책】 {disclaimer}"
+    )
 
 
 def make_radiology_prompt(extra_context: str | None = None, *, dual_image: bool = False) -> str:
@@ -403,7 +425,33 @@ def _mentions_all_findings(body: str, findings: list[tuple[str, float]]) -> bool
     return all(class_ko(name) in body for name, _ in findings)
 
 
-def _fill_and_polish_sections(sections: dict, probs, per_class: dict, targets: list[int]) -> dict:
+def _append_germinoma_to_findings(
+    findings_body: str,
+    impression: str,
+    germinoma_probs,
+) -> tuple[str, str]:
+    if germinoma_probs is None or len(germinoma_probs) == 0:
+        return findings_body, impression
+    g_score = float(germinoma_probs[0])
+    if g_score < 0.35:
+        return findings_body, impression
+    g_findings = [("tumor", g_score)]
+    g_line = _build_detailed_findings(g_findings, "해당 절편")
+    g_imp = _build_detailed_impression(g_findings)
+    if class_ko("tumor") not in findings_body:
+        findings_body = (findings_body + "\n" + g_line).strip() if findings_body else g_line
+    if class_ko("tumor") not in impression:
+        impression = (impression + "\n" + g_imp).strip() if impression else g_imp
+    return findings_body, impression
+
+
+def _fill_and_polish_sections(
+    sections: dict,
+    probs,
+    per_class: dict,
+    targets: list[int],
+    germinoma_probs=None,
+) -> dict:
     sections.setdefault("검사", "전산화단층촬영 / 두부 / 축상면 / 비조영")
     if "검사" in sections:
         sections["검사"] = re.sub(r"\s+", " ", sections["검사"]).replace("조영제 사용 안 함", "비조영")
@@ -437,6 +485,14 @@ def _fill_and_polish_sections(sections: dict, probs, per_class: dict, targets: l
         if not impression:
             sections["인상"] = "1. 임상 상관 및 추가 영상 검토 필요."
 
+    findings_body, impression = _append_germinoma_to_findings(
+        sections.get("소견", "").strip(),
+        sections.get("인상", "").strip(),
+        germinoma_probs,
+    )
+    sections["소견"] = findings_body
+    sections["인상"] = impression
+
     if not sections.get("확실도", "").strip():
         sections["확실도"] = _certainty_from_top(high)
 
@@ -459,7 +515,12 @@ def format_report_from_sections(sections: dict) -> str:
     return "\n".join(lines)
 
 
-def build_template_report(probs, per_class: dict, targets: list[int]) -> str:
+def build_template_report(
+    probs,
+    per_class: dict,
+    targets: list[int],
+    germinoma_probs=None,
+) -> str:
     """MedGemma API 없이 앙상블·overlay 결과만으로 상세 한국어 판독문 생성."""
     loc = _location_phrase(per_class, targets)
     high = top_report_findings(probs)
@@ -481,10 +542,21 @@ def build_template_report(probs, per_class: dict, targets: list[int]) -> str:
             "인상": "1. 급성 두개내 병변은 명확하지 않음.\n2. 전체 시리즈 재검토를 권고합니다.",
             "확실도": "낮음 — 우세 유형 없음, 단일 축상 절편.",
         }
+    findings_body, impression = _append_germinoma_to_findings(
+        sections["소견"], sections["인상"], germinoma_probs
+    )
+    sections["소견"] = findings_body
+    sections["인상"] = impression
     return format_report_from_sections(sections)
 
 
-def normalize_korean_report(text: str, probs, per_class: dict, targets: list[int]) -> str:
+def normalize_korean_report(
+    text: str,
+    probs,
+    per_class: dict,
+    targets: list[int],
+    germinoma_probs=None,
+) -> str:
     """
     LLM raw 출력 → 섹션 파싱 → 빈 섹션 보정 → 최종 【검사】~【확실도】 문자열.
 
@@ -492,7 +564,9 @@ def normalize_korean_report(text: str, probs, per_class: dict, targets: list[int
     """
     text = _clean_raw_report(text)
     sections = _parse_sections_flexible(text)
-    sections = _fill_and_polish_sections(sections, probs, per_class, targets)
+    sections = _fill_and_polish_sections(
+        sections, probs, per_class, targets, germinoma_probs=germinoma_probs
+    )
     return format_report_from_sections(sections)
 
 

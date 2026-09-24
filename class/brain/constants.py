@@ -1,9 +1,9 @@
 """
-ICH(두개내출혈) 분류 도메인 상수.
+뇌 CT 분류 도메인 상수.
 
-- CLASSES: 모델 출력 순서 (6개)
-- CLASS_KO: UI·판독문용 한글 표시명
-- CLASS_COLORS: Grad-CAM overlay RGB 색상 (0~1)
+- CLASSES: 출혈(ICH) 모델 출력 순서 (6개)
+- GERMINOMA_CLASSES: germinoma CT 이진 분류 (tumor 1개)
+- CLASS_KO / CLASS_COLORS: UI·판독문·overlay용
 """
 
 CLASSES = [
@@ -15,6 +15,10 @@ CLASSES = [
     "any",
 ]
 
+GERMINOMA_CLASSES = [
+    "tumor",
+]
+
 CLASS_KO = {
     "epidural": "경막외출혈",
     "intraparenchymal": "뇌실질내출혈",
@@ -22,6 +26,7 @@ CLASS_KO = {
     "subarachnoid": "지주막하출혈",
     "subdural": "경막하출혈",
     "any": "두개내출혈",
+    "tumor": "생식세포종양",
 }
 
 CLASS_COLORS = {
@@ -31,6 +36,7 @@ CLASS_COLORS = {
     "subarachnoid": (0.2, 1.0, 0.3),
     "subdural": (1.0, 0.2, 0.9),
     "any": (1.0, 0.55, 0.0),
+    "tumor": (0.55, 0.35, 1.0),
 }
 
 DISCLAIMER = (

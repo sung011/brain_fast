@@ -193,7 +193,7 @@ app.add_exception_handler(Exception, unhandled_exception_handler)  # 그 외 예
 
 # admin: 관리자 HTML (회원·스터디·팝업·문의·리뷰·NAS). /admin/...
 # include_in_schema=False → Swagger(/docs)에는 안 보임
-app.include_router(admin.router, include_in_schema=False)
+app.include_router(admin.router)
 
 # commonness: 학습자 JSON API (로그인·Q&A·학습·팝업·용어사전)
 app.include_router(commonness.router)
