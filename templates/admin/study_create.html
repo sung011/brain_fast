@@ -92,6 +92,26 @@
                                readonly/>
                         <div class="form-text">부위·영상 종류 선택 시 자동 변경됩니다. 선택한 파일마다 동일 메타로 등록됩니다.</div>
                     </div>
+                    <div class="col-12 mb-3 d-none" id="studyUploadModeWrap">
+                        <label class="small mb-1 d-block">MRI 등록 방식</label>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="upload_mode"
+                                   id="uploadModeEach" value="each" checked>
+                            <label class="form-check-label" for="uploadModeEach">파일마다 문제 (여러 문제)</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="upload_mode"
+                                   id="uploadModeSlide" value="slide">
+                            <label class="form-check-label" for="uploadModeSlide">한 문제의 슬라이드</label>
+                        </div>
+                        <div class="alert alert-light border small mt-2 mb-0 d-none" id="studySlideNameHint">
+                            한 문제로 등록할 때는 파일 이름을 <code>01_이름.png</code> 또는
+                            <code>01_이름.jpg</code> 형식으로 수정한 뒤 등록하세요.
+                            앞 숫자 순서대로 한 문제의 <code>st_image</code>에 저장됩니다.
+                        </div>
+                        <div class="alert alert-warning small mt-2 mb-0 d-none" id="studySlideNameError"
+                             style="white-space: pre-line"></div>
+                    </div>
                     <div class="col-12 mb-3">
                         <label class="small mb-1" for="inputStudyFile">이미지 파일 (다수 가능)</label>
                         <div class="study-dropzone" id="studyDropzone" tabindex="0" role="button"
@@ -102,13 +122,13 @@
                             <div class="fw-semibold mb-1">파일을 여기에 끌어다 놓으세요</div>
                             <div class="text-muted small mb-1">또는 클릭하여 여러 장 선택 (PNG, JPG, DICOM 등)</div>
                             <div class="small mb-2">
-                                <span class="badge text-bg-light border text-secondary">최대 50개</span>
+                                <span class="badge text-bg-light border text-secondary">최대 200개</span>
                                 <span class="badge text-bg-light border text-secondary ms-1">파일당 20MB</span>
                             </div>
                             <div class="text-muted small" id="studyFileCount">선택된 파일 없음</div>
                         </div>
                         <div class="form-text mt-2">
-                            한 번에 최대 <strong>50개</strong>까지, 파일당 최대 <strong>20MB</strong>까지 업로드할 수 있습니다.
+                            한 번에 최대 <strong>200개</strong>까지, 파일당 최대 <strong>20MB</strong>까지 업로드할 수 있습니다.
                         </div>
                         <input class="d-none" id="inputStudyFile" name="files" type="file"
                                accept="image/*,.dcm,.dicom" multiple/>

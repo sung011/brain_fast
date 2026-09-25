@@ -48,7 +48,14 @@
             }
             tbody.innerHTML = rows.map(function (row) {
                 const path = row.st_image || '';
-                const shortPath = path.length > 48 ? ('…' + path.slice(-48)) : path;
+                let shortPath = path.length > 48 ? ('…' + path.slice(-48)) : path;
+                const trimmed = path.trim();
+                if (trimmed.charAt(0) === '[') {
+                    try {
+                        const slides = JSON.parse(trimmed);
+                        if (Array.isArray(slides)) shortPath = '슬라이드 ' + slides.length + '장';
+                    } catch (e) { /* 경로 문자열 그대로 */ }
+                }
                 return (
                     '<tr data-idx="' + row.idx + '">' +
                     '<td>' + row.idx + '</td>' +

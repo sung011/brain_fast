@@ -17,6 +17,7 @@ Swagger(/docs)에는 숨긴다 (main.py 에서 include_in_schema=False).
 """
 
 import asyncio
+import json
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
@@ -39,6 +40,9 @@ from schemas.studySchemas import (
     StudyOut,
     StudyUpdateResult,
     build_remote_dir,
+    resolve_st_modal,
+    slide_name_errors,
+    slide_order_number,
 )
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
 from services import dashboardServices as dashboard_service
@@ -579,8 +583,9 @@ async def _upload_and_save_study(
         st_modal: str,
         st_disease: str,
         remote_dir: str,
+        persist: bool = True,
 ) -> StudyCreateResult:
-    """이미지를 NAS에 올린 뒤 study 행을 만든다."""
+    """이미지를 NAS에 올린 뒤 study 행을 만든다. persist=False 면 경로만 돌려준다."""
     svc = nas_service_mod.nas_service
     if not svc.enabled:
         raise HTTPException(
@@ -611,6 +616,17 @@ async def _upload_and_save_study(
     remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
     # DB에는 /web/mu_shop/public 을 뺀 웹 경로만 저장
     st_image = _to_public_image_path(remote_path)
+    if not persist:
+        return StudyCreateResult(
+            ok=True,
+            st_part=st_part,
+            st_modal=st_modal,
+            st_disease=st_disease,
+            st_image=st_image,
+            remote_path=remote_path,
+            filename=safe_name,
+        )
+
     try:
         row = study_service.create_study(
             db,
@@ -644,6 +660,7 @@ async def _upload_and_save_study(
         st_disease=row.st_disease,
         st_image=row.st_image,
         remote_path=remote_path,
+        filename=safe_name,
     )
 
 
@@ -685,6 +702,101 @@ async def nas_upload(
     )
 
 
+async def _create_slide_study(
+        db: Session,
+        *,
+        uploads: list[UploadFile],
+        st_part: str,
+        st_modal: str,
+        st_disease: str,
+        remote_dir: str,
+) -> StudyBatchCreateResult:
+    """MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다."""
+    try:
+        modal_code = resolve_st_modal(st_modal)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if modal_code != "3":
+        raise HTTPException(
+            status_code=400,
+            detail="한 문제의 슬라이드는 영상 종류가 MRI일 때만 등록할 수 있습니다.",
+        )
+
+    names = [
+        (upload.filename or "").replace("\\", "/").split("/")[-1]
+        for upload in uploads
+    ]
+    errors = slide_name_errors(names)
+    if errors:
+        raise HTTPException(status_code=400, detail=" ".join(errors))
+
+    ordered = sorted(
+        uploads,
+        key=lambda upload: (
+            slide_order_number(upload.filename) or 0,
+            (upload.filename or ""),
+        ),
+    )
+    paths: list[str] = []
+    try:
+        for upload in ordered:
+            result = await _upload_and_save_study(
+                db,
+                file=upload,
+                st_part=st_part,
+                st_modal=modal_code,
+                st_disease=st_disease,
+                remote_dir=remote_dir,
+                persist=False,
+            )
+            if not result.st_image:
+                raise HTTPException(status_code=502, detail="이미지 경로를 만들지 못했습니다.")
+            paths.append(result.st_image)
+        row = study_service.create_study(
+            db,
+            st_part=st_part,
+            st_modal=modal_code,
+            st_disease=st_disease,
+            st_image=json.dumps(paths, ensure_ascii=False),
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": str(exc)},
+        ) from exc
+
+    await study_events.publish(
+        "study_created",
+        {
+            "idx": row.idx,
+            "st_part": row.st_part,
+            "st_modal": row.st_modal,
+            "st_disease": row.st_disease,
+            "st_image": row.st_image,
+        },
+    )
+    label = f"슬라이드 {len(paths)}장"
+    return StudyBatchCreateResult(
+        ok=True,
+        count=1,
+        failed=0,
+        items=[
+            StudyCreateResult(
+                ok=True,
+                idx=row.idx,
+                st_part=row.st_part,
+                st_modal=row.st_modal,
+                st_disease=row.st_disease,
+                st_image=row.st_image,
+                filename=label,
+            )
+        ],
+        message=f"{label}으로 1건 등록 완료",
+    )
+
+
 @router.post("/study", response_model=StudyBatchCreateResult)
 async def study_create(
         db: Session = Depends(get_db),
@@ -696,6 +808,10 @@ async def study_create(
         remote_dir: str = Form(
             default="/stylesheets/assets",
             description="웹 상대 저장 폴더. 기본값 /stylesheets/assets",
+        ),
+        upload_mode: str = Form(
+            default="each",
+            description="each: 파일마다 문제, slide: MRI 한 문제(JSON 배열)",
         ),
 ) -> StudyBatchCreateResult:
     """학습 등록: 이미지(다수)를 NAS에 올린 뒤 study 행을 각각 저장한다."""
@@ -714,6 +830,19 @@ async def study_create(
         raise HTTPException(
             status_code=400,
             detail=f"한 번에 최대 {STUDY_BATCH_MAX_FILES}개까지 등록할 수 있습니다.",
+        )
+
+    mode = (upload_mode or "each").strip().lower()
+    if mode not in {"each", "slide"}:
+        raise HTTPException(status_code=400, detail="등록 방식은 each 또는 slide 여야 합니다.")
+    if mode == "slide":
+        return await _create_slide_study(
+            db,
+            uploads=uploads,
+            st_part=st_part,
+            st_modal=st_modal,
+            st_disease=st_disease,
+            remote_dir=remote_dir,
         )
 
     items: list[StudyCreateResult] = []
@@ -798,38 +927,14 @@ async def study_update(
         st_part: str = Form(..., description="1:뇌 2:흉부 3:복부 4:무릎"),
         st_modal: str = Form(..., description="1:X-ray 2:CT 3:MRI"),
         st_disease: str = Form(..., description="병명"),
-        file: UploadFile | None = File(None),
 ) -> StudyUpdateResult:
-    """학습 수정. 이미지 파일이 있으면 NAS에 새로 올린 뒤 경로를 갱신한다."""
+    """학습 수정. 이미지(st_image)는 바꾸지 않는다."""
     existing = study_service.get_study(db, idx)
     if existing is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"message": "학습 데이터를 찾을 수 없습니다."},
         )
-
-    new_image: str | None = None
-    remote_path: str | None = None
-    has_file = bool(file and file.filename)
-    if has_file and file is not None:
-        svc = nas_service_mod.nas_service
-        if not svc.enabled:
-            raise HTTPException(
-                status_code=503,
-                detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
-            )
-        data = await file.read()
-        if not data:
-            raise HTTPException(status_code=400, detail="이미지 파일이 비어 있습니다.")
-        dest = _to_nas_upload_dir(build_remote_dir(st_part, st_modal))
-        safe_name = (file.filename or "study.bin").replace("\\", "/").split("/")[-1]
-        upload_name = f"{uuid.uuid4().hex[:10]}_{safe_name}"
-        try:
-            uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
-        remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
-        new_image = _to_public_image_path(remote_path)
 
     try:
         row = study_service.update_study(
@@ -838,7 +943,6 @@ async def study_update(
             st_part=st_part,
             st_modal=st_modal,
             st_disease=st_disease,
-            st_image=new_image,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -869,7 +973,7 @@ async def study_update(
         st_modal=row.st_modal,
         st_disease=row.st_disease,
         st_image=row.st_image,
-        remote_path=remote_path,
+        remote_path=None,
     )
 
 

@@ -66,6 +66,13 @@ class SynologyNasService:
                 "NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요."
             )
 
+    def _timeout_message(self) -> str:
+        host = self.base_url or "NAS"
+        return (
+            f"NAS 응답이 없습니다 ({host}). "
+            "시놀로지 DSM 웹이 열려 있는지 확인한 뒤 다시 등록하세요."
+        )
+
     async def _get_client(self) -> httpx.AsyncClient:
         """Keep-alive 연결을 재사용하는 공유 클라이언트."""
         if self._client is None or self._client.is_closed:
@@ -100,18 +107,21 @@ class SynologyNasService:
         ]
         data: dict[str, Any] = {}
         for version in versions:
-            resp = await client.get(
-                "/webapi/auth.cgi",
-                params={
-                    "api": "SYNO.API.Auth",
-                    "version": version,
-                    "method": "login",
-                    "account": self.user,
-                    "passwd": self.password,
-                    "session": "FileStation",
-                    "format": "sid",
-                },
-            )
+            try:
+                resp = await client.get(
+                    "/webapi/auth.cgi",
+                    params={
+                        "api": "SYNO.API.Auth",
+                        "version": version,
+                        "method": "login",
+                        "account": self.user,
+                        "passwd": self.password,
+                        "session": "FileStation",
+                        "format": "sid",
+                    },
+                )
+            except httpx.TimeoutException as exc:
+                raise NasUploadError(self._timeout_message()) from exc
             resp.raise_for_status()
             data = resp.json()
             if data.get("success"):
@@ -208,16 +218,19 @@ class SynologyNasService:
             "overwrite": (None, _bool_str(overwrite)),
             "filename": (safe_name, content, "application/octet-stream"),
         }
-        resp = await client.post(
-            "/webapi/entry.cgi",
-            params={
-                "api": "SYNO.FileStation.Upload",
-                "version": "2",
-                "method": "upload",
-                "_sid": sid,
-            },
-            files=files,
-        )
+        try:
+            resp = await client.post(
+                "/webapi/entry.cgi",
+                params={
+                    "api": "SYNO.FileStation.Upload",
+                    "version": "2",
+                    "method": "upload",
+                    "_sid": sid,
+                },
+                files=files,
+            )
+        except httpx.TimeoutException as exc:
+            raise NasUploadError(self._timeout_message()) from exc
         resp.raise_for_status()
         return resp.json()
 

@@ -17,9 +17,10 @@
         '3': 'MRI',
     };
     const ASSETS_ROOT = '/stylesheets/assets';
-    const MAX_FILES = 50;
+    const MAX_FILES = 200;
     const MAX_BYTES = 20 * 1024 * 1024;
     const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|tif{1,2}|dcm|dicom)$/i;
+    const SLIDE_NAME_RE = /^(\d+)_.+\.(png|jpe?g|gif|webp|bmp|tiff?)$/i;
 
     function buildRemoteDir(part, modal) {
         const partFolder = PART_FOLDERS[String(part || '').trim()];
@@ -66,9 +67,73 @@
         const fileListEl = form.querySelector('#studyFileList');
         const fileCountEl = form.querySelector('#studyFileCount');
         const btn = form.querySelector('#studyCreateSubmitBtn');
+        const modeWrap = form.querySelector('#studyUploadModeWrap');
+        const slideHint = form.querySelector('#studySlideNameHint');
+        const slideError = form.querySelector('#studySlideNameError');
         /** @type {File[]} */
         let selectedFiles = [];
         const previewUrls = new Map();
+
+        function isMri() {
+            return String(form.st_modal && form.st_modal.value || '') === '3';
+        }
+
+        function uploadMode() {
+            const checked = form.querySelector('input[name="upload_mode"]:checked');
+            return checked ? checked.value : 'each';
+        }
+
+        function isSlideMode() {
+            return isMri() && uploadMode() === 'slide';
+        }
+
+        function slideOrder(file) {
+            const matched = SLIDE_NAME_RE.exec((file && file.name) || '');
+            return matched ? parseInt(matched[1], 10) : null;
+        }
+
+        function slideNameErrors(files) {
+            const errors = [];
+            const seen = {};
+            files.forEach(function (file) {
+                const name = (file && file.name) || '(이름 없음)';
+                const order = slideOrder(file);
+                if (order == null) {
+                    errors.push(name + ' — 파일 이름을 01_이름.png 또는 01_이름.jpg 형식으로 수정한 뒤 등록하세요.');
+                    return;
+                }
+                if (seen[order]) {
+                    const label = String(order).padStart(2, '0');
+                    errors.push(name + ' — 순서 번호 ' + label + ' 가 ' + seen[order] + ' 와 중복입니다.');
+                    return;
+                }
+                seen[order] = name;
+            });
+            return errors;
+        }
+
+        function showSlideErrors(errors) {
+            if (!slideError) return;
+            if (!errors.length) {
+                slideError.classList.add('d-none');
+                slideError.textContent = '';
+                return;
+            }
+            slideError.classList.remove('d-none');
+            slideError.textContent = errors.join('\n');
+        }
+
+        function syncUploadMode() {
+            const mri = isMri();
+            if (modeWrap) modeWrap.classList.toggle('d-none', !mri);
+            if (!mri) {
+                const eachRadio = form.querySelector('#uploadModeEach');
+                if (eachRadio) eachRadio.checked = true;
+            }
+            if (slideHint) slideHint.classList.toggle('d-none', !isSlideMode());
+            if (!isSlideMode()) showSlideErrors([]);
+            renderFileList();
+        }
 
         function syncRemoteDir() {
             if (!form.remote_dir) return;
@@ -88,9 +153,13 @@
             if (!btn) return;
             const icon = '<i class="me-1" data-feather="upload"></i>';
             const n = selectedFiles.length;
-            btn.innerHTML = n > 0
-                ? icon + 'NAS 업로드 후 등록 (' + n + '건)'
-                : icon + 'NAS 업로드 후 등록';
+            let label = 'NAS 업로드 후 등록';
+            if (n > 0 && isSlideMode()) {
+                label += ' (슬라이드 ' + n + '장, 1건)';
+            } else if (n > 0) {
+                label += ' (' + n + '건)';
+            }
+            btn.innerHTML = icon + label;
             if (window.feather) feather.replace();
         }
 
@@ -103,7 +172,21 @@
             previewUrls.clear();
         }
 
+        function sortSlideFiles() {
+            if (!isSlideMode()) return;
+            selectedFiles.sort(function (a, b) {
+                const na = slideOrder(a);
+                const nb = slideOrder(b);
+                if (na == null && nb == null) return String(a.name).localeCompare(String(b.name));
+                if (na == null) return 1;
+                if (nb == null) return -1;
+                if (na !== nb) return na - nb;
+                return String(a.name).localeCompare(String(b.name));
+            });
+        }
+
         function renderFileList() {
+            sortSlideFiles();
             syncInputFiles();
             if (fileCountEl) {
                 fileCountEl.textContent = selectedFiles.length
@@ -134,10 +217,15 @@
                     } else {
                         thumb = '<span class="study-file-thumb d-inline-flex align-items-center justify-content-center text-muted small">DCM</span>';
                     }
+                    const order = isSlideMode() ? slideOrder(file) : null;
+                    const orderLabel = order == null
+                        ? ''
+                        : ('<span class="badge text-bg-light border me-1">' + String(order).padStart(2, '0') + '</span>');
                     return (
                         '<div class="list-group-item">' +
                         thumb +
                         '<div class="file-name" title="' + escapeHtml(file.name) + '">' +
+                        orderLabel +
                         escapeHtml(file.name) +
                         ' <span class="text-muted">(' + formatBytes(file.size) + ')</span></div>' +
                         '<button type="button" class="btn btn-sm btn-outline-danger py-0 px-2" data-remove-idx="' +
@@ -165,6 +253,7 @@
 
             const rejected = [];
             const tooBig = [];
+            const badNames = [];
             incoming.forEach(function (file) {
                 if (!isLikelyImage(file)) {
                     rejected.push(file.name || '(이름 없음)');
@@ -172,6 +261,10 @@
                 }
                 if (file.size > MAX_BYTES) {
                     tooBig.push(file.name || '(이름 없음)');
+                    return;
+                }
+                if (isSlideMode() && slideOrder(file) == null) {
+                    badNames.push((file.name || '(이름 없음)') + ' — 파일 이름을 01_이름.png 또는 01_이름.jpg 형식으로 수정한 뒤 등록하세요.');
                     return;
                 }
                 const dup = selectedFiles.some(function (f) {
@@ -193,12 +286,22 @@
             if (tooBig.length && util && util.showToast) {
                 util.showToast('20MB 초과 파일은 제외했습니다: ' + tooBig.slice(0, 3).join(', '));
             }
+            if (isSlideMode()) {
+                const nameErrors = slideNameErrors(selectedFiles).concat(badNames);
+                showSlideErrors(nameErrors);
+                if (nameErrors.length && util && util.showToast) {
+                    util.showToast(nameErrors[0]);
+                }
+            } else {
+                showSlideErrors([]);
+            }
             renderFileList();
         }
 
         function removeAt(idx) {
             if (idx < 0 || idx >= selectedFiles.length) return;
             selectedFiles.splice(idx, 1);
+            if (isSlideMode()) showSlideErrors(slideNameErrors(selectedFiles));
             renderFileList();
         }
 
@@ -241,6 +344,14 @@
                 if (util && util.showToast) util.showToast('이미지 파일을 선택해주세요.');
                 return;
             }
+            if (isSlideMode()) {
+                const nameErrors = slideNameErrors(selectedFiles);
+                showSlideErrors(nameErrors);
+                if (nameErrors.length) {
+                    if (util && util.showToast) util.showToast(nameErrors[0]);
+                    return;
+                }
+            }
 
             syncRemoteDir();
 
@@ -252,6 +363,7 @@
             fd.append('st_modal', form.st_modal.value);
             fd.append('st_disease', form.st_disease.value.trim());
             fd.append('remote_dir', form.remote_dir.value.trim());
+            fd.append('upload_mode', isSlideMode() ? 'slide' : 'each');
 
             if (btn) btn.disabled = true;
             if (resultBox) {
@@ -345,7 +457,34 @@
 
         form.addEventListener('submit', handleSubmit);
         if (form.st_part) form.st_part.addEventListener('change', syncRemoteDir);
-        if (form.st_modal) form.st_modal.addEventListener('change', syncRemoteDir);
+        if (form.st_modal) {
+            form.st_modal.addEventListener('change', function () {
+                syncRemoteDir();
+                syncUploadMode();
+            });
+        }
+        form.querySelectorAll('input[name="upload_mode"]').forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                if (isSlideMode()) {
+                    const kept = [];
+                    const dropped = [];
+                    selectedFiles.forEach(function (file) {
+                        if (slideOrder(file) == null) dropped.push(file);
+                        else kept.push(file);
+                    });
+                    selectedFiles = kept;
+                    const nameErrors = slideNameErrors(selectedFiles).concat(dropped.map(function (file) {
+                        return (file.name || '(이름 없음)') + ' — 파일 이름을 01_이름.png 또는 01_이름.jpg 형식으로 수정한 뒤 등록하세요.';
+                    }));
+                    showSlideErrors(nameErrors);
+                    if (nameErrors.length) {
+                        const util = u();
+                        if (util && util.showToast) util.showToast(nameErrors[0]);
+                    }
+                }
+                syncUploadMode();
+            });
+        });
 
         if (fileInput) {
             fileInput.addEventListener('change', function () {
@@ -409,7 +548,7 @@
         });
 
         syncRemoteDir();
-        renderFileList();
+        syncUploadMode();
     }
 
     window.initStudyCreate = bind;
