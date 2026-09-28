@@ -5,6 +5,8 @@ __pycache__
 *.pyd
 .Python
 .env
+AGENTS.override.md
+CLAUDE.local.md
 .idea
 .vscode
 logs

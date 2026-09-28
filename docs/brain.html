@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>뇌 CT 분석 설명</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    dl { margin: 0.4rem 0 0; }
+    dt { font-weight: 700; margin-top: 0.55rem; }
+    dd { margin: 0.15rem 0 0 0; }
+    nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>뇌 CT 분석은 무엇을 하는가</h1>
+    <p class="lead">화면에서 고른 뇌 CT 조각을 받아, 출혈 종류와 생식세포종양(germinoma) 가능성을 숫자로 내고, 모델이 본 자리를 색으로 덧그린 뒤, 한국어 설명을 만듭니다. 의사 진단이 아닙니다.</p>
+    <div class="note">
+      <p>결과는 학습·실습용 보조입니다. 화면과 API에 이미 “최종 판단은 의사에게 있다”는 안내가 있습니다. 이 문서는 그 코드를 처음 보는 사람이 파일마다 역할을 따라가게 하려고 씁니다.</p>
+    </div>
+
+    <h2>한 번 요청이 지나가는 순서</h2>
+    <ol>
+      <li>사용자가 <code>/</code> 화면(<code>templates/screen_analyze.html</code>)에서 이미지를 보냅니다.</li>
+      <li><code>routers/brain.py</code>가 주소 <code>/api/v1/analyze/screen-roi</code>로 파일을 받습니다. 여기에는 모델 계산이 없습니다.</li>
+      <li><code>preprocess.py</code>가 그림 파일이나 DICOM을 모델이 읽는 3채널 이미지로 바꿉니다.</li>
+      <li><code>ensemble.py</code>가 출혈 6가지와 germinoma를 각각 두 모델의 평균으로 추정합니다.</li>
+      <li><code>localization.py</code>가 높은 확률 부위를 찾아 색 overlay를 만듭니다.</li>
+      <li>설정이 켜져 있으면 원본, overlay, <code>result.json</code>을 NAS에 올립니다.</li>
+      <li>이어서 <code>/api/v1/analyze/screen-roi/explain</code>이 <code>medgemma.py</code>와 <code>report_format.py</code>로 한국어 판독문을 만듭니다.</li>
+    </ol>
+
+    <nav>
+      <h2>파일마다 보기</h2>
+      <ul>
+        <li><a href="#router">라우터</a></li>
+        <li><a href="#preprocess">전처리</a></li>
+        <li><a href="#ensemble">앙상블</a></li>
+        <li><a href="#localization">위치 표시</a></li>
+        <li><a href="#constants">라벨</a></li>
+        <li><a href="#config">설정</a></li>
+        <li><a href="#report">판독문</a></li>
+        <li><a href="#medgemma">문장 생성</a></li>
+      </ul>
+    </nav>
+
+    <article id="router">
+      <h3><code>routers/brain.py</code> — 입구</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>이미지를 받아 뇌 CT 분석 모듈에 넘기고, JSON으로 다시 돌려줍니다.</dd>
+        <dt>받는 것</dt>
+        <dd>업로드 이미지. 설명 API는 앞에서 나온 확률과 overlay도 받습니다.</dd>
+        <dt>하는 일</dt>
+        <dd><code>importlib.import_module("class.brain")</code>으로 모듈을 엽니다. 폴더 이름이 파이썬 예약어 <code>class</code>라서 <code>from class.brain import ...</code>는 쓰지 않습니다. 너무 큰 파일은 거절하고, 분석이 끝나면 응답 형식을 맞춥니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>상위 라벨, 클래스별 점수, overlay 이미지, 판독문, 안내 문구.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>모델 가중치를 여기서 계산하지 않습니다. 회원·스터디 같은 DB 업무도 하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>주소 앞에는 <code>main.py</code>가 <code>/api/v1</code>을 붙입니다. 파일 안의 <code>/analyze/screen-roi</code>는 실제로 <code>/api/v1/analyze/screen-roi</code>입니다.</dd>
+      </dl>
+    </article>
+
+    <article id="preprocess">
+      <h3><code>class/brain/preprocess.py</code> — 그림 맞추기</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>올린 파일을 모델 입력용 이미지로 바꿉니다.</dd>
+        <dt>받는 것</dt>
+        <dd>PNG, JPG 또는 DICOM 바이트.</dd>
+        <dt>하는 일</dt>
+        <dd>DICOM이면 픽셀을 HU로 읽고, CT 창(뇌, 경막하, 골)을 적용합니다. 화면 캡처는 이미 숫자 이미지가 아니라서, 밝기를 그 창 배치에 맞게 3채널로 다시 구성합니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>높이×너비×3 크기의 8비트 이미지.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>무슨 병인지 판단하지 않습니다. 진단명을 붙이지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>전처리가 학습할 때와 다르면 뒤에 있는 모델 점수는 의미를 잃습니다. 창 종류를 바꿀 때도 그 점을 먼저 확인합니다.</dd>
+      </dl>
+    </article>
+
+    <article id="ensemble">
+      <h3><code>class/brain/ensemble.py</code> — 두 모델의 평균</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>한 장이 아니라 두 종류의 분류 모델을 같이 돌려 점수를 평균합니다.</dd>
+        <dt>받는 것</dt>
+        <dd>전처리가 끝난 이미지.</dd>
+        <dt>하는 일</dt>
+        <dd>출혈은 ConvNeXt-Base와 EfficientNetV2-M이 6개 클래스 점수를 내고 평균합니다. germinoma도 같은 방식의 별도 앙상블입니다. 가중치는 Hugging Face 저장소에서 받아 오며, 저장소 파일로 커밋하지 않습니다. 서버를 켤 때 바로 불러오지 않으면 첫 분석 요청에서 불러옵니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>출혈 확률과, 설정이 켜져 있으면 germinoma 확률.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>그림 위에 색을 칠하지 않고, 한국어 문장을 쓰지 않습니다. 흉부·복부·무릎·뇌 MRI 모델은 이 파일에 넣지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>앙상블은 “더 큰 AI 하나”가 아니라, 서로 다른 두 모델의 의견을 섞는 절차입니다. germinoma는 출혈 6클래스 안에 들어 있지 않고 옆에 있는 별도 작업입니다.</dd>
+      </dl>
+    </article>
+
+    <article id="localization">
+      <h3><code>class/brain/localization.py</code> — 어디를 봤는지</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>점수가 높은 클래스에 대해, 모델이 이미지의 어느 영역을 봤는지 표시합니다.</dd>
+        <dt>받는 것</dt>
+        <dd>앙상블이 쓰는 모델, 전처리 이미지, 클래스별 확률.</dd>
+        <dt>하는 일</dt>
+        <dd>Grad-CAM으로 주목 영역을 구하고, 뇌 안쪽 마스크·밝은 출혈 영역과 맞춰 본 뒤 색 overlay PNG를 만듭니다. 클래스 색은 <code>constants.py</code>에 있습니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>overlay 이미지와 “어디에 표시했는지” 짧은 문장.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>확률 자체를 새로 계산하지 않습니다. 해부학 위치를 사람 의사처럼 확정하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>색이 칠해졌다고 그 칸이 병변으로 확정된 것은 아닙니다. 모델이 그 클래스 점수에 기여했다고 본 영역입니다.</dd>
+      </dl>
+    </article>
+
+    <article id="constants">
+      <h3><code>class/brain/constants.py</code> — 이름표</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>출혈 클래스의 순서, 한국어 이름, overlay 색을 한곳에 둡니다.</dd>
+        <dt>받는 것</dt>
+        <dd>영문 클래스 이름.</dd>
+        <dt>하는 일</dt>
+        <dd>순서는 epidural, intraparenchymal, intraventricular, subarachnoid, subdural, any 입니다. 한국어는 경막외출혈, 뇌실질내출혈, 뇌실내출혈, 지주막하출혈, 경막하출혈, 두개내출혈입니다. germinoma의 tumor는 생식세포종양입니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>화면과 판독문에 쓸 한글 이름과 색.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>점수를 계산하지 않습니다. 다른 파일에 같은 이름표를 다시 적지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>이 순서는 모델을 학습할 때의 출력 순서와 같아야 합니다. 자리만 바꾸면 점수가 다른 병명에 붙습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="config">
+      <h3><code>class/brain/config.py</code> — 이 분석만의 설정</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>뇌 CT 분석에만 쓰는 환경 값을 읽습니다.</dd>
+        <dt>받는 것</dt>
+        <dd>환경 변수. 예시로 이미지 크기, germinoma 사용 여부, 판독문 방식, 업로드 최대 크기.</dd>
+        <dt>하는 일</dt>
+        <dd>값이 없으면 코드 안의 기본값을 씁니다. 앱 전체 DB·NAS 설정은 루트 <code>config.py</code>에 있고, 여기와 역할을 나누었습니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>다른 뇌 CT 파일이 import 하는 설정 값.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>비밀 토큰 값을 문서나 응답 문장에 출력하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>루트 <code>config.py</code>와 파일 이름이 같습니다. 경로가 <code>class/brain/config.py</code>인지 프로젝트 루트인지 먼저 확인합니다.</dd>
+      </dl>
+    </article>
+
+    <article id="report">
+      <h3><code>class/brain/report_format.py</code> — 문장 틀</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>확률을 한국어 판독문 형식에 맞춥니다.</dd>
+        <dt>받는 것</dt>
+        <dd>클래스 확률, 위치 요약, 문장 모델이 만든 초고.</dd>
+        <dt>하는 일</dt>
+        <dd>지시문을 만들고, 나온 글을 【검사】부터 【확실도】까지 정리합니다. 【AI참고】에 점수 상위 항목을 붙이고 면책 문장을 넣습니다. 문장 모델을 쓰지 않는 template 방식이면 앙상블 점수로 이 틀을 직접 채웁니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>화면이 그대로 보여줄 한국어 문자열.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>이미지를 직접 보지 않습니다. 점수를 바꾸지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>문장이 길어 보여도 근거는 앞 단계의 확률과 위치 요약입니다. 틀이 확률과 모순되면 이 파일이 문장을 다듬습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="medgemma">
+      <h3><code>class/brain/medgemma.py</code> — 설명 문장</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>이미지와 점수를 바탕으로 한국어 설명 문단을 만듭니다.</dd>
+        <dt>받는 것</dt>
+        <dd>원본 이미지, overlay, 출혈 확률, germinoma 확률.</dd>
+        <dt>하는 일</dt>
+        <dd>세 가지 방식 중 하나를 씁니다. <code>api</code>는 원격 추론, <code>template</code>는 다운로드 없이 앙상블 요약만, <code>local</code>은 이 컴퓨터에서 모델을 돌립니다. api가 실패하면 template로 대신하게 할 수 있습니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd><code>report_format.py</code>를 거친 최종 판독문.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>분류 점수를 대신 만들지 않습니다. 회원 정보나 NAS 업로드를 하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>분류기(ensemble)와 설명문(MedGemma)은 다른 모델입니다. 설명이 자연스러워도 확률 숫자와 다른 말을 하면, 학습자는 숫자를 먼저 봅니다.</dd>
+      </dl>
+    </article>
+
+    <h2>다른 부위와 섞지 않는 이유</h2>
+    <p>흉부, 복부, 무릎, 뇌 MRI는 <code>class/brain/</code> 안에 이어서 만들지 않습니다. 각각 <code>class/thorax/</code>, <code>class/abdomen/</code>, <code>class/knee/</code>, <code>class/brain_mri/</code>로 만들고, 이 문서와 같은 항목으로 <code>docs/</code>에 HTML을 추가합니다.</p>
+  </main>
+</body>
+</html>
