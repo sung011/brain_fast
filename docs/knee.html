@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>무릎 MRI 분석 설명</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    dl { margin: 0.4rem 0 0; }
+    dt { font-weight: 700; margin-top: 0.55rem; }
+    dd { margin: 0.15rem 0 0 0; }
+    nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>무릎 MRI 분석은 무엇을 하는가</h1>
+    <p class="lead">무릎 MRI 볼륨(슬라이스 묶음)을 받아 “이상 소견”, “ACL(전방십자인대)”, “반월판” 세 가지를 숫자로 추정하고, ACL이 있는 대략적인 위치를 박스로, 모델이 참고한 영역을 색으로 보여 줍니다. 의사 진단이 아닙니다.</p>
+    <div class="note">
+      <p>결과는 학습·실습용 보조입니다. 박스는 “ACL이 있는 대략적 해부학 위치”이고 파열 위치가 아닙니다. 색 영역은 모델이 참고한 곳이지 병변이 아닙니다. 숫자는 보정된 모델 점수이지 개인의 실제 위험률이 아닙니다.</p>
+      <p>이 패키지는 아직 API 주소에 연결되어 있지 않습니다. 코드로만 불러 쓸 수 있고, 주소·응답 형식은 설계 후에 붙입니다.</p>
+    </div>
+
+    <h2>한 번 예측이 지나가는 순서</h2>
+    <ol>
+      <li>호출하는 쪽이 촬영면별 볼륨을 <code>{"axial": ..., "coronal": ..., "sagittal": ...}</code> 모양으로 넘깁니다. 일부 면만 있어도 됩니다.</li>
+      <li><code>preprocess.py</code>가 볼륨이 (슬라이스, 높이, 너비) 숫자 배열인지, NaN·너무 큰 크기가 아닌지 확인합니다. 이상하면 여기서 멈춥니다.</li>
+      <li><code>ensemble.py</code>가 소견마다 필요한 촬영면 모델로 확률을 구해 평균하고 보정합니다.</li>
+      <li>보정된 확률이 0.4~0.6 사이면 “판단 어려움”, 아니면 “가능성 높음/낮음”으로 문구를 정합니다.</li>
+      <li>필요하면 <code>localization.py</code>가 ACL 박스와 Grad-CAM 색 영역을 만듭니다.</li>
+    </ol>
+
+    <nav>
+      <h2>파일마다 보기</h2>
+      <ul>
+        <li><a href="#config">설정</a></li>
+        <li><a href="#constants">문구</a></li>
+        <li><a href="#errors">오류 종류</a></li>
+        <li><a href="#preprocess">전처리</a></li>
+        <li><a href="#model">모델 구조</a></li>
+        <li><a href="#ensemble">앙상블</a></li>
+        <li><a href="#localization">위치 표시</a></li>
+        <li><a href="#tests">테스트</a></li>
+      </ul>
+    </nav>
+
+    <article id="config">
+      <h3><code>class/knee/config.py</code> — 설정</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>가중치를 어디서 받을지, 어떤 파일을 쓸지, 입력 크기 한도가 얼마인지 정해 둡니다.</dd>
+        <dt>받는 것</dt>
+        <dd>환경 변수 또는 프로젝트 <code>.env</code>의 <code>KNEE_HF_REPO</code>(저장소), <code>KNEE_HF_REVISION</code>(선택, 고정할 커밋).</dd>
+        <dt>하는 일</dt>
+        <dd>값을 “환경 변수 → <code>.env</code> → 기본값” 순서로 찾습니다. 부를 때마다 읽어서, <code>.env</code>를 나중에 바꿔도 반영됩니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>저장소 이름, 소견×촬영면별 체크포인트 파일 이름, 게이팅 구간, 크기 한도.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>가중치 파일을 저장소에 두지 않고, 토큰 같은 비밀값을 적지 않습니다. 입력 크기(224)는 학습 값 그대로라 바꿀 수 없게 두었습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>팀원마다 저장소 계정이 달라도 각자 <code>.env</code>에 자기 값을 적으면 됩니다. 반월판은 결합기가 axial·coronal만 쓰도록 골랐기 때문에 sagittal 모델을 올리지 않았습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="constants">
+      <h3><code>class/knee/constants.py</code> — 문구</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>소견 이름, 판정 문구, 면책 문구를 한곳에 둡니다.</dd>
+        <dt>받는 것</dt>
+        <dd>없음.</dd>
+        <dt>하는 일</dt>
+        <dd>“ACL 파열 가능성 높음/낮음”, “판단 어려움” 같은 글자와 <code>DISCLAIMER</code>를 담고 있습니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>글자 상수들.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>확률 계산을 하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd><code>DISCLAIMER</code>는 예측 결과에 자동으로 붙지 않습니다. 화면이나 API 응답을 만들 때 반드시 함께 보여 주어야 합니다.</dd>
+      </dl>
+    </article>
+
+    <article id="errors">
+      <h3><code>class/knee/errors.py</code> — 오류 종류</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>원인에 따라 오류를 둘로 나눕니다.</dd>
+        <dt>받는 것</dt>
+        <dd>없음.</dd>
+        <dt>하는 일</dt>
+        <dd><code>KneeInputError</code>는 올린 영상이 규칙에 안 맞을 때, <code>KneeAnalysisError</code>는 계산 결과가 NaN이거나 0~1 밖일 때 냅니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>예외 두 가지.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>오류를 정상 결과처럼 바꾸지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>나중에 API를 만들면 입력 오류는 사용자에게 알리는 오류, 분석 오류는 서버 오류로 나눠 응답합니다.</dd>
+      </dl>
+    </article>
+
+    <article id="preprocess">
+      <h3><code>class/knee/preprocess.py</code> — 전처리</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>영상을 모델이 읽는 크기와 밝기로 맞춥니다.</dd>
+        <dt>받는 것</dt>
+        <dd>(슬라이스, 높이, 너비) 숫자 배열 하나.</dd>
+        <dt>하는 일</dt>
+        <dd>먼저 배열 모양·자료형·NaN·크기 한도를 검사합니다. 통과하면 밝기를 0~1로 맞추고, 필요하면 가운데를 잘라 224×224로 줄인 뒤 3채널로 만들어 ImageNet 방식으로 정규화합니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>(슬라이스, 3, 224, 224) 텐서.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>DICOM 읽기, 촬영면 추측, 영상 저장은 하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>슬라이스가 여러 장이라 모양이 정확히 3차원이어야 합니다. 한 장짜리 2차원 그림은 받지 않습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="model">
+      <h3><code>class/knee/model.py</code> — 모델 구조</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>슬라이스별 ResNet 특징을 하나로 합쳐 점수 하나를 내는 구조입니다.</dd>
+        <dt>받는 것</dt>
+        <dd>(슬라이스, 3, 224, 224) 텐서.</dd>
+        <dt>하는 일</dt>
+        <dd>슬라이스를 각각 ResNet에 통과시킨 뒤, 가장 이상한 슬라이스를 대표로 잡거나(max) 중요한 슬라이스에 더 가중치를 주어(attention) 합칩니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>확률로 바꾸기 전 점수 하나(logit).</dd>
+        <dt>하지 않는 일</dt>
+        <dd>학습하지 않습니다. 이미 학습된 가중치를 받아 예측만 합니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>층 이름(<code>features</code>, <code>attn</code>, <code>head</code>)이 학습 때와 같아야 가중치가 들어갑니다. 예측과 Grad-CAM이 같은 모델 객체를 동시에 쓰지 않도록 <code>INFERENCE_LOCK</code>도 여기 있습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="ensemble">
+      <h3><code>class/knee/ensemble.py</code> — 앙상블</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>가중치를 받아 오고, 촬영면별 예측을 합쳐 소견별 결과를 만듭니다.</dd>
+        <dt>받는 것</dt>
+        <dd>촬영면 이름을 키로 한 볼륨 묶음. 예: <code>{"sagittal": 볼륨}</code>.</dd>
+        <dt>하는 일</dt>
+        <dd>처음 부를 때 <code>load()</code>로 Hugging Face에서 파일 17개를 받아 모델 14개를 올립니다. 예측 때는 소견마다 필요한 촬영면의 확률을 평균하고, 보정한 뒤, 0.4~0.6이면 “판단 어려움”으로 표시합니다. 판정은 반올림 전 값으로 하고, 보여 주는 <code>prob</code>만 소수 셋째 자리로 반올림합니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>소견마다 <code>status</code>가 <code>evaluated</code>이면 확률·문구·쓴 면·빠진 면, <code>not_evaluated</code>이면 이유와 필요한 면.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>필요한 촬영면이 없을 때 낮은 확률로 채우지 않습니다. NaN이나 범위 밖 확률은 결과로 내지 않고 오류를 냅니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>반월판은 axial·coronal만 씁니다. sagittal만 넣으면 반월판은 “판단하지 않음”으로 나옵니다. 학습 폴더의 원본 코드는 이때 sagittal 모델로 대신 답했지만, 성능이 낮아 뺀 것이므로 의도한 차이입니다.</dd>
+      </dl>
+    </article>
+
+    <article id="localization">
+      <h3><code>class/knee/localization.py</code> — 위치 표시</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>ACL이 있는 대략적 위치 박스와, 모델이 참고한 영역 색칠을 만듭니다.</dd>
+        <dt>받는 것</dt>
+        <dd>슬라이스 한 장(0~1 회색), 또는 볼륨과 모델.</dd>
+        <dt>하는 일</dt>
+        <dd>YOLO 모델로 박스를 찾고, Grad-CAM으로 어디를 참고했는지 계산해 가장 강한 한 덩어리만 옅게 칠합니다. 최댓값의 5%보다 큰 반응만 칠하기 때문에, 반응이 한 점뿐인 CAM에서도 반응 없는 영역까지 칠하지 않습니다. 계산 도중 실패해도 걸어 둔 감시 장치(hook)를 반드시 뗍니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>박스(0~1 비율 좌표, 못 찾으면 <code>None</code>), 색칠한 이미지와 “색칠했는지” 여부.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>병변(파열) 위치를 알려 주지 않습니다. 반응이 없는 CAM에는 색칠하지 않고 원본을 그대로 돌려줍니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>박스가 <code>None</code>인 것은 오류가 아니라 “못 찾았다”는 정상 결과입니다. 호출하는 쪽이 이 경우를 처리해야 합니다.</dd>
+      </dl>
+    </article>
+
+    <article id="tests">
+      <h3><code>tests/test_knee.py</code> — 테스트</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>가중치를 받지 않고 가짜 모델로 동작을 확인합니다.</dd>
+        <dt>받는 것</dt>
+        <dd>없음. 실제 가중치를 쓰는 확인은 <code>KNEE_RUN_REAL_WEIGHTS=1</code>일 때만 돕니다.</dd>
+        <dt>하는 일</dt>
+        <dd>입력 검증, 게이팅 경계값(0.399/0.4/0.5/0.6/0.601), 설정 우선순위, 로드 실패 후 재시도, 촬영면이 빠진 경우, NaN 방지, 박스·CAM 처리, hook 정리를 확인합니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>통과/실패.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>임상 성능을 검증하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>torch가 없는 환경에서는 이 테스트를 건너뜁니다. 실행은 <code>python -m pytest tests/test_knee.py</code>.</dd>
+      </dl>
+    </article>
+  </main>
+</body>
+</html>
