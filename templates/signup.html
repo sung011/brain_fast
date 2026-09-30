@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>회원가입 — 메디스캔노트</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/css/signup.css">
+</head>
+<body data-mode="{{ 'preview' if preview else 'live' }}" data-stage="1">
+{# 입력칸에는 name 속성을 두지 않는다. 스크립트가 늦게 로드돼도 값이 주소(URL)로 전송되지 않게 하려는 것이다. #}
+<div class="bg-deco" aria-hidden="true">
+  <svg class="deco-left" viewBox="0 0 520 620" fill="none">
+    <g stroke="#63edb1" stroke-width="1">
+      <circle cx="0" cy="470" r="130" opacity=".16"/><circle cx="0" cy="470" r="210" opacity=".12"/><circle cx="0" cy="470" r="290" opacity=".09"/><circle cx="0" cy="470" r="370" opacity=".06"/>
+      <ellipse cx="60" cy="470" rx="300" ry="86" transform="rotate(-24 60 470)" opacity=".13"/>
+      <g transform="translate(-72 60)">
+        <path d="M92 132V96h36M212 96h36v36M248 212v36h-36M128 248H92v-36" opacity=".34"/>
+        <rect x="150" y="150" width="52" height="52" rx="3" opacity=".3"/>
+      </g>
+    </g>
+    <circle cx="104" cy="236" r="3" fill="#63edb1" opacity=".7"/><circle cx="64" cy="330" r="2" fill="#63edb1" opacity=".5"/><circle cx="260" cy="420" r="2" fill="#4b8f67" opacity=".6"/>
+    <path d="M0 560h90l16-30 24 58 22-42 14 14h120" stroke="#63edb1" stroke-width="1.2" opacity=".22"/>
+  </svg>
+  <svg class="deco-right" viewBox="0 0 520 620" fill="none">
+    <g stroke="#63edb1" stroke-width="1">
+      <circle cx="520" cy="150" r="130" opacity=".16"/><circle cx="520" cy="150" r="210" opacity=".12"/><circle cx="520" cy="150" r="290" opacity=".09"/><circle cx="520" cy="150" r="370" opacity=".06"/>
+      <ellipse cx="460" cy="150" rx="300" ry="86" transform="rotate(20 460 150)" opacity=".13"/>
+      <path d="M300 470v-30h30M430 440h30v30M460 560v30h-30M330 590h-30v-30" opacity=".34"/>
+      <path d="M380 515h30M395 500v30" opacity=".3"/>
+    </g>
+    <circle cx="395" cy="515" r="3" fill="#63edb1" opacity=".7"/><circle cx="470" cy="330" r="2" fill="#63edb1" opacity=".5"/><circle cx="270" cy="250" r="2" fill="#4b8f67" opacity=".6"/>
+  </svg>
+</div>
+{% if preview %}
+  <div class="preview" aria-label="화면 설계 미리보기">
+    <strong>화면 설계 미리보기 · 실제 가입·메일 발송 없음</strong>
+    <button type="button" data-preview="1" aria-pressed="true">계정 정보</button>
+    <button type="button" data-preview="2" aria-pressed="false">기본 정보</button>
+    <button type="button" data-preview="3" aria-pressed="false">가입 완료</button>
+    <select id="scenario" aria-label="확인할 화면 상태">
+      <option value="normal">정상 흐름</option>
+      <option value="email">이메일 중복</option>
+      <option value="network">네트워크 오류</option>
+    </select>
+  </div>
+{% endif %}
+
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="5" y="3" width="22" height="26" rx="5" stroke="#a3b9ae"/><path d="M10 16h4l2-5 3 10 2-5h3" stroke="#63edb1" stroke-width="1.7"/><path d="M3 7V3h4M25 29h4v-4" stroke="#63edb1"/></svg>
+    <span>메디<em>스캔</em>노트</span>
+  </div>
+  <button type="button" class="login-link" data-login><span class="existing">이미 계정이 있나요?</span><span>로그인 ↗</span></button>
+</header>
+
+{% if not preview %}
+<div class="demo-banner" id="demoNotice" role="note">
+  <p><strong>화면 시연 · 실제 가입·전송·저장 없음</strong> <span class="demo-text">지금은 화면만 있어서 입력한 정보는 어디에도 보내지거나 저장되지 않습니다. 실제 개인정보는 입력하지 마세요.</span></p>
+</div>
+{% endif %}
+
+<main>
+  <aside class="intro">
+    <div class="eyebrow">LEARN · COMPARE · REMEMBER</div>
+    <div class="intro-main">
+      <h1>영상에서 시작해, <br><span>이해로 이어지는</span> <br>나의 학습 노트.</h1>
+      <p class="lead">의료영상을 살펴보고, 관심 영역을 비교하고,<br>배운 내용을 나만의 기록으로 남겨 보세요.</p>
+    </div>
+{% if preview %}
+    {# 가입 완료(3단계, 미리보기 전용)에서만 보이는 환영 문구. 운영 화면에는 완료 단계가 없어 렌더하지 않는다. #}
+    <div class="intro-welcome">
+      <h1>환영합니다! <br><span>나의 학습 노트</span>를 <br>시작해요.</h1>
+      <p class="lead">살펴보고, 비교하고, 기록하는<br>하루하루를 응원할게요.</p>
+    </div>
+{% endif %}
+    {# 서비스 항목: 기본 정보(2단계)에서만 보인다(CSS: body[data-stage='2']). 문구는 AGENTS.md 기능 명세에 있는 기능만 적었다. #}
+    <ul class="features" aria-label="메디스캔노트에서 할 수 있는 일">
+      <li>
+        <span class="ficon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4h6v3H9zM9 14l2 2 4-4"/></svg></span>
+        <div><strong>영상 보고 문제 풀기</strong><p>의료영상을 보고 병명을 제출하면 다음 문제로 이어집니다.</p></div>
+      </li>
+      <li>
+        <span class="ficon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/><rect x="9" y="9" width="6" height="6"/></svg></span>
+        <div><strong>관심 영역 표시와 복습</strong><p>살펴본 위치(관심 영역)를 표시하면 채점하고, 복습할 수 있게 기록으로 남깁니다.</p></div>
+      </li>
+      <li>
+        <span class="ficon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M7.5 12h2l1.5-3 2 6 1.5-3h2"/></svg></span>
+        <div><strong>AI 참고 분석</strong><p>화면에 띄운 뇌 CT의 관심 영역을 AI가 분석해 색으로 보여 주고 한국어로 설명합니다. 학습 참고용이며 진단이 아닙니다.</p></div>
+      </li>
+      <li>
+        <span class="ficon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 5a2 2 0 0 1 2-2h12v16H7a2 2 0 0 0-2 2z"/><path d="M9 8h6"/></svg></span>
+        <div><strong>용어 사전과 질문</strong><p>낯선 의학 용어는 사전에서 찾고, 궁금한 점은 질문으로 남깁니다.</p></div>
+      </li>
+    </ul>
+    <div class="art" aria-hidden="true">
+      <svg viewBox="0 0 420 250" fill="none"><defs><radialGradient id="orb"><stop stop-color="#63edb1" stop-opacity=".16"/><stop offset="1" stop-color="#63edb1" stop-opacity="0"/></radialGradient><linearGradient id="edge"><stop stop-color="#63edb1" stop-opacity=".6"/><stop offset=".6" stop-color="#63edb1" stop-opacity=".1"/><stop offset="1" stop-color="#63edb1" stop-opacity=".6"/></linearGradient></defs><circle cx="210" cy="129" r="110" fill="url(#orb)"/><ellipse cx="210" cy="129" rx="151" ry="43" stroke="#214d37" transform="rotate(-22 210 129)"/><ellipse cx="210" cy="129" rx="132" ry="61" stroke="#234a35" transform="rotate(27 210 129)"/><rect x="112" y="51" width="196" height="152" rx="18" fill="#0b19128c" stroke="url(#edge)"/><path d="M151 92h29m-29 14h44m-44 14h24m-24 37h42m-42 13h59" stroke="#547862" stroke-width="1.5"/><path d="M225 101h33v33h-33z" stroke="#63edb1" stroke-width="1.2"/><path d="M218 94v-7h7m33 0h7v7m0 40v7h-7m-33 0h-7v-7" stroke="#63edb1"/><circle cx="277" cy="156" r="4" fill="#63edb1"/><circle cx="92" cy="138" r="2" fill="#63edb1"/><circle cx="330" cy="112" r="2" fill="#4b8f67"/><path d="M308 163h27M93 79h20" stroke="#468660"/></svg>
+    </div>
+    <div class="flow"><span>살펴보기</span><i></i><span>비교하기</span><i></i><span>기록하기</span></div>
+    <small>메디스캔노트는 의료영상 학습을 돕습니다.<br>AI 분석 정보는 학습 참고자료이며 의료 진단이 아닙니다.</small>
+  </aside>
+
+  <section class="form-shell" aria-label="회원가입">
+    <noscript><p class="notice">회원가입 화면은 JavaScript가 켜져 있어야 동작합니다.</p></noscript>
+    <div class="steps" id="steps">
+      <span class="current" id="stepOne"><b>1</b>계정 정보</span><i></i><span id="stepTwo"><b>2</b>기본 정보</span>
+    </div>
+
+    <form id="accountForm" novalidate autocomplete="on">
+      <section id="stage1">
+        <h2 tabindex="-1" id="heading1">회원가입</h2>
+        <p class="sub">학습 기록을 쌓을 계정을 만들어 보세요.<br>먼저 이메일과 비밀번호를 입력해 주세요.</p>
+
+        <div class="field">
+          <label class="title" for="email">이메일<span class="required">*</span><small class="lsuffix" id="emailLimit" aria-hidden="true">최대 30자</small></label>
+          <input id="email" type="email" autocomplete="email" maxlength="30" placeholder="example@email.com" aria-describedby="emailHint emailError" required>
+          <p class="hint" id="emailHint">이메일은 최대 30자까지 입력할 수 있습니다.</p>
+          <p class="error" id="emailError" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label class="title" for="password">비밀번호<span class="required">*</span></label>
+          <div class="inputwrap">
+            <input id="password" type="password" autocomplete="new-password" maxlength="64" placeholder="영문·숫자·특수문자 8~64자" aria-describedby="rules" required>
+            <button class="show" type="button" data-show="password" aria-label="비밀번호 표시" aria-pressed="false">표시</button>
+          </div>
+          <div class="checklist" id="rules" aria-label="비밀번호 입력 조건">
+            <span data-rule="length">8~64자</span><span data-rule="alpha">영문</span><span data-rule="digit">숫자</span><span data-rule="special">특수문자</span><span data-rule="space">공백 없음</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="title" for="confirm">비밀번호 확인<span class="required">*</span></label>
+          <div class="inputwrap">
+            <input id="confirm" type="password" autocomplete="new-password" maxlength="64" placeholder="한 번 더 입력해 주세요" aria-describedby="confirmError" required>
+            <button class="show" type="button" data-show="confirm" aria-label="비밀번호 확인 표시" aria-pressed="false">표시</button>
+          </div>
+          <p class="error" id="confirmError" aria-live="polite"></p>
+        </div>
+
+        <fieldset class="agreements">
+          <legend class="sr-only">약관 동의</legend>
+          <label class="check all"><input type="checkbox" id="agreeAll">전체 동의</label>
+          <div class="consent-row"><label class="check"><input class="consent" id="terms" type="checkbox" required>[필수] 이용약관 동의</label><button type="button" data-terms="이용약관">보기 ↗</button></div>
+          <div class="consent-row"><label class="check"><input class="consent" id="privacy" type="checkbox" required>[필수] 개인정보 수집 및 이용동의</label><button type="button" data-terms="개인정보 수집 및 이용동의">보기 ↗</button></div>
+          <div class="consent-row"><label class="check"><input class="consent" id="age" type="checkbox" required>[필수] 만 14세 이상입니다</label></div>
+          <div class="consent-row"><label class="check"><input class="consent" id="marketing" type="checkbox">[선택] 마케팅 정보 이메일 수신 동의</label></div>
+        </fieldset>
+
+        <button class="primary" type="submit" id="next" disabled>다음 단계 <span aria-hidden="true">→</span></button>
+        <p class="footnote">선택 동의에 동의하지 않아도 가입할 수 있습니다.</p>
+      </section>
+    </form>
+
+    <form id="profileForm" novalidate>
+      <section id="stage2" hidden>
+        <h2 tabindex="-1" id="heading2">기본 정보를 알려 주세요</h2>
+        <p class="sub">학습에 사용할 닉네임과<br>생년월일, 학교, 전공을 입력해 주세요.</p>
+
+        <div class="field">
+          <label class="title" for="nickname">닉네임<span class="required">*</span><small class="lsuffix" id="nickLimit" aria-hidden="true">1~10자</small></label>
+          <input id="nickname" placeholder="학습에 사용할 닉네임" maxlength="10" autocomplete="nickname" required aria-describedby="nickHint nickError">
+          <p class="hint" id="nickHint">1~10자 · 다른 사용자와 같은 닉네임도 사용할 수 있습니다.</p>
+          <p class="error" id="nickError" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label class="title" for="birth">생년월일<span class="required">*</span><small class="lsuffix" aria-hidden="true">만 14세 이상</small></label>
+          <input id="birth" type="date" autocomplete="bday" required aria-describedby="birthHint birthError">
+          <p class="hint" id="birthHint">만 14세 이상 가입할 수 있습니다.</p>
+          <p class="error" id="birthError" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label class="title" for="school">학교<span class="required">*</span><small class="lsuffix" id="schoolLimit" aria-hidden="true">한글·영문 · 최대 20자</small></label>
+          <input id="school" placeholder="학교명을 입력해 주세요" maxlength="20" autocomplete="off" required aria-describedby="schoolHint schoolError">
+          <p class="hint" id="schoolHint">한글·영문으로 최대 20자까지 입력할 수 있습니다. 숫자와 특수문자는 쓸 수 없습니다.</p>
+          <p class="error" id="schoolError" aria-live="polite"></p>
+        </div>
+
+        <div class="field">
+          <label class="title" for="major">전공<span class="required">*</span><small class="lsuffix" id="majorLimit" aria-hidden="true">기타는 직접 입력 · 최대 20자</small></label>
+          <select id="major" required aria-describedby="majorHint majorError">
+            <option value="">전공을 선택하세요</option>
+            <option>방사선학과</option>
+            <option>의학과/의예과</option>
+            <option>간호학과</option>
+            <option>기타 보건의료계열</option>
+            <option>비전공/해당 없음</option>
+          </select>
+          <input id="majorOther" hidden maxlength="20" placeholder="전공을 직접 입력해 주세요 (최대 20자)" aria-label="전공 직접 입력" aria-describedby="majorHint majorError" autocomplete="off">
+          <p class="hint" id="majorHint">기타 보건의료계열은 전공을 직접 입력해 주세요(최대 20자).</p>
+          <p class="error" id="majorError" aria-live="polite"></p>
+        </div>
+
+        <p class="error" id="submitError" aria-live="polite"></p>
+        <p class="notice" id="liveNotice" role="status" hidden></p>
+        <div class="actions">
+          <button class="secondary" type="button" id="back">← 이전</button>
+          <button class="primary" type="submit" id="create" disabled>회원가입 <span aria-hidden="true">→</span></button>
+        </div>
+        <p class="footnote">계정에 연결되는 개인정보입니다.<br>수집 목적과 보관 기간은 개인정보 안내에서 확인하세요.</p>
+      </section>
+    </form>
+
+{% if preview %}
+    <section id="stage3" hidden>
+      <div class="mail-icon"><svg viewBox="0 0 28 28" fill="none" aria-hidden="true"><circle cx="14" cy="14" r="11" stroke="currentColor"/><path d="m8 14 4 4 8-8" stroke="currentColor" stroke-width="1.6"/></svg></div>
+      <h2 tabindex="-1" id="heading3">회원가입이 완료됐어요</h2>
+      <p class="sub">메디스캔노트에 오신 것을 환영합니다.<br>아래 이메일로 로그인해 주세요.</p>
+      <div class="email-line" id="mailAddress">learner@example.test</div>
+      <div class="notice">이 화면은 설계 미리보기입니다.<br>실제 계정 생성과 이메일 발송은 하지 않습니다.</div>
+      <button class="primary" type="button" data-login>로그인으로 이동 <span aria-hidden="true">→</span></button>
+    </section>
+{% endif %}
+  </section>
+</main>
+
+<footer>
+  <span>© MEDISCAN NOTE · 의료영상 학습을 위한 기록</span>
+  <div class="footlinks"><button type="button" data-terms="이용약관">이용약관</button><button type="button" data-terms="개인정보 처리방침">개인정보 처리방침</button></div>
+</footer>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<dialog id="termsDialog" aria-labelledby="termsTitle">
+  <h2 id="termsTitle">이용약관</h2>
+  <p>약관 보기의 위치와 동작을 확인하는 임시 안내입니다. 실제 약관·개인정보 처리방침의 본문, 버전, 시행일은 서비스 연결 전에 확정해야 하며, 이 문구는 법적 효력이 있는 약관이 아닙니다.</p>
+  <button type="button" class="secondary" id="closeTerms">닫기</button>
+</dialog>
+
+<script src="/assets/js/signup.js" defer></script>
+</body>
+</html>
