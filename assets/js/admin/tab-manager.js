@@ -193,12 +193,13 @@ document.addEventListener('DOMContentLoaded', function () {
         tabContentContainer.appendChild(newTabContent);
 
         newTabButton.addEventListener('shown.bs.tab', function () {
-            if (tableId) {
-                const table = document.getElementById(tableId);
-                if (table && window.jQuery && window.jQuery.fn.DataTable.isDataTable(table)) {
-                    window.jQuery(table).DataTable().columns.adjust().draw();
+            if (typeof window.jQuery === 'undefined' || !window.jQuery.fn.DataTable) return;
+            const $ = window.jQuery;
+            $(newTabContent).find('table').each(function () {
+                if ($.fn.DataTable.isDataTable(this)) {
+                    $(this).DataTable().columns.adjust();
                 }
-            }
+            });
         });
 
         newTabContent.innerHTML = `<div class="card"><div class="card-body"><h5>${title} 페이지 로딩 중...</h5></div></div>`;
