@@ -1,6 +1,7 @@
 """학습(study) API 스키마."""
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 
@@ -180,6 +181,32 @@ def slide_name_errors(filenames: list[str]) -> list[str]:
             continue
         seen[order] = name
     return errors
+
+
+def parse_study_image_paths(st_image: str | None) -> list[str] | None:
+    """
+    study.st_image 를 경로 목록으로 읽는다.
+
+    - MRI 슬라이드: JSON 문자열 배열 → list[str]
+    - CT/단일 영상: 경로 문자열 하나 → None (다중 슬라이드 아님)
+    """
+    raw = (st_image or "").strip()
+    if not raw:
+        return None
+    if not raw.startswith("["):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list) or not parsed:
+        return None
+    paths: list[str] = []
+    for item in parsed:
+        path = str(item or "").strip()
+        if path:
+            paths.append(path)
+    return paths or None
 
 
 def build_remote_dir(st_part: str, st_modal: str | None = None) -> str:

@@ -45,7 +45,7 @@ services:
           - db
           - brain_fast_db
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d mediscan_note"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d mediscan_note" ]
       interval: 5s
       timeout: 5s
       retries: 10

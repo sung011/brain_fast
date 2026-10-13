@@ -11,7 +11,7 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /glossary           : 의학용어 사전 조회
 - /learning/problem   : 랜덤 학습 문제 1건
 - /learning/submit    : 병명 제출·채점 + 다음 문제
-- /learning/roi-grade : 이미지+ROI 제출 채점 (리뷰 저장 포함)
+- /learning/roi-grade : 이미지+ROI 제출 채점 (MRI는 slice_index/image_path, 리뷰 저장 포함)
 - /items/{item_id}    : (연습용) 입력값 검증 테스트
 
 입력값이 잘못되면 exception_handlers 가 422와 로그를 남긴다.
@@ -25,10 +25,10 @@ from config import settings
 from db import get_db
 from db import ping_db
 from models.studyModel import StudyModel
+from repositories import studyRepositories as study_repositories
 from schemas.popupSchemas import PopupPublicOut
 from schemas.qaSchemas import QaCreateBody, QaMessageBody
 from schemas.userSchemas import UserLogin
-from repositories import studyRepositories as study_repositories
 from services import learningServices as learning_service
 from services import popupServices as popup_service
 from services import qaServices as qa_service
@@ -153,8 +153,8 @@ async def qa_create(body: QaCreateBody, db: Session = Depends(get_db)):
 
 @router.get("/qa")
 def qa_list_for_user(
-    user_idx: int = Query(..., description="회원 user_member.idx"),
-    db: Session = Depends(get_db),
+        user_idx: int = Query(..., description="회원 user_member.idx"),
+        db: Session = Depends(get_db),
 ):
     """학습자 본인 문의 스레드 목록."""
     rows = qa_service.list_threads_for_user(db, user_idx)
@@ -166,9 +166,9 @@ def qa_list_for_user(
 
 @router.get("/qa/{idx}")
 def qa_detail_for_user(
-    idx: int,
-    user_idx: int = Query(..., description="회원 user_member.idx"),
-    db: Session = Depends(get_db),
+        idx: int,
+        user_idx: int = Query(..., description="회원 user_member.idx"),
+        db: Session = Depends(get_db),
 ):
     """학습자 본인 문의 상세. 조회 시 회원 미읽음 초기화."""
     detail = qa_service.get_thread_detail(db, idx)
@@ -199,9 +199,9 @@ def qa_detail_for_user(
 
 @router.post("/qa/{idx}/messages")
 async def qa_user_reply(
-    idx: int,
-    body: QaMessageBody,
-    db: Session = Depends(get_db),
+        idx: int,
+        body: QaMessageBody,
+        db: Session = Depends(get_db),
 ):
     """학습자 추가 메시지."""
     if body.user_idx is None:
@@ -292,17 +292,17 @@ def glossary(
 
 @router.get("/learning/problem")
 def learning_problem(
-    st_part: str | None = None,
-    st_modal: str | None = None,
-    exclude_idxs: list[int] | None = Query(
-        default=None,
-        description="이미 푼 idx. 예) exclude_idxs=1&exclude_idxs=2",
-    ),
-    user_idx: int | None = Query(
-        default=None,
-        description="로그인 사용자 idx. review_node 제출 이력 제외",
-    ),
-    db: Session = Depends(get_db),
+        st_part: str | None = None,
+        st_modal: str | None = None,
+        exclude_idxs: list[int] | None = Query(
+            default=None,
+            description="이미 푼 idx. 예) exclude_idxs=1&exclude_idxs=2",
+        ),
+        user_idx: int | None = Query(
+            default=None,
+            description="로그인 사용자 idx. review_node 제출 이력 제외",
+        ),
+        db: Session = Depends(get_db),
 ):
     """
     study 테이블에서 랜덤 문제 1건.
@@ -335,6 +335,7 @@ def learning_problem(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=detail,
         )
+
     return {"ok": True, "problem": _problem_payload(row)}
 
 
@@ -404,38 +405,56 @@ def login_post(body: UserLogin, db: Session = Depends(get_db)):
 
 @router.post("/learning/roi-grade")
 async def learning_roi_grade(
-    db: Session = Depends(get_db),
-    image: UploadFile = File(..., description="원본 이미지 파일 그대로"),
-    roi_type: str = Form(..., description="box 또는 circle"),
-    x: float | None = Form(None, description="박스 왼쪽 x"),
-    y: float | None = Form(None, description="박스 위쪽 y"),
-    width: float | None = Form(None, description="박스 너비"),
-    height: float | None = Form(None, description="박스 높이"),
-    cx: float | None = Form(None, description="원 중심 x"),
-    cy: float | None = Form(None, description="원 중심 y"),
-    radius: float | None = Form(None, description="원 반지름"),
-    normalized: bool = Form(
-        True,
-        description="true면 좌표는 이미지 대비 0~1, false면 픽셀",
-    ),
-    include_overlay: bool = Form(
-        True,
-        description="이상이 있으면 해당 부위를 색칠한 PNG(base64)를 포함",
-    ),
-    study_idx: int | None = Form(None, description="현재 문제 study.idx"),
-    user_idx: int | None = Form(None, description="제출 사용자 user_member.idx"),
-    st_part: str | None = Form(
-        None, description="다음 문제 부위. 없으면 study 행 값 사용"
-    ),
-    st_modal: str | None = Form(
-        None, description="다음 문제 영상 종류. 없으면 study 행 값 사용"
-    ),
+        db: Session = Depends(get_db),
+        image: UploadFile = File(..., description="원본 이미지 파일 그대로"),
+        roi_type: str = Form(..., description="box 또는 circle"),
+        x: float | None = Form(None, description="박스 왼쪽 x"),
+        y: float | None = Form(None, description="박스 위쪽 y"),
+        width: float | None = Form(None, description="박스 너비"),
+        height: float | None = Form(None, description="박스 높이"),
+        cx: float | None = Form(None, description="원 중심 x"),
+        cy: float | None = Form(None, description="원 중심 y"),
+        radius: float | None = Form(None, description="원 반지름"),
+        normalized: bool = Form(
+            True,
+            description="true면 좌표는 이미지 대비 0~1, false면 픽셀",
+        ),
+        include_overlay: bool = Form(
+            True,
+            description="이상이 있으면 해당 부위를 색칠한 PNG(base64)를 포함",
+        ),
+        study_idx: int | None = Form(None, description="현재 문제 study.idx"),
+        user_idx: int | None = Form(None, description="제출 사용자 user_member.idx"),
+        slice_index: int | None = Form(
+            None,
+            description=(
+                    "MRI 제출 슬라이스 순번(0-based). "
+                    "CT/단일 영상은 생략 또는 0. MRI는 image_path와 둘 중 하나 이상 필요"
+            ),
+        ),
+        image_path: str | None = Form(
+            None,
+            description=(
+                    "MRI 제출 슬라이스 웹 경로. "
+                    "예: /stylesheets/assets/brain/MRI/....png. "
+                    "slice_index와 둘 중 하나 이상 있으면 됨"
+            ),
+        ),
+        st_part: str | None = Form(
+            None, description="다음 문제 부위. 없으면 study 행 값 사용"
+        ),
+        st_modal: str | None = Form(
+            None, description="다음 문제 영상 종류. 없으면 study 행 값 사용"
+        ),
 ):
     """
     이미지 + ROI(박스/원) 제출 채점.
 
     - 이미지에 이상 부위가 있으면 overlay_png_base64 로 색칠해서 돌려준다.
     - 사용자 ROI가 그 위치에 있으면 정답, 비슷하면 부분정답, 아니면 오답.
+    - MRI(st_image JSON 배열)는 study_idx + slice_index 또는 image_path로
+      제출 슬라이스를 고른 뒤, 올린 image/좌표로 채점한다.
+    - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
@@ -443,6 +462,19 @@ async def learning_roi_grade(
       이후 GET /learning/problem?user_idx=... 에서 같은 문제가 제외된다.
     - next: 방금 푼 문제를 제외한 다음 랜덤 문제(없으면 null).
     """
+    try:
+        learning_service.resolve_roi_grade_slice(
+            db,
+            study_idx=study_idx,
+            slice_index=slice_index,
+            image_path=image_path,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     data = await image.read()
     try:
         result = roi_grade_service.grade_image_roi(

@@ -23,6 +23,7 @@
         let slides = [];
         let slideIndex = 0;
         let fadeToken = 0;
+        let shownFrame = root.querySelector('#studyDetailImage');
 
         function imageUrl(stImage) {
             if (!stImage) return '';
@@ -52,58 +53,73 @@
                 .replace(/>/g, '&gt;');
         }
 
-        function showImage(path, animate) {
-            const img = root.querySelector('#studyDetailImage');
+        function slideFrames() {
+            return root.querySelectorAll('[data-slide-frame]');
+        }
+
+        function showImage(path) {
+            const frames = slideFrames();
             const empty = root.querySelector('#studyDetailImageEmpty');
             const pathEl = root.querySelector('#studyDetailImagePath');
+            const stageEl = root.querySelector('[data-slide-stage]');
             const url = imageUrl(path);
             if (pathEl) {
                 pathEl.innerHTML = path ? ('<code>' + escapeHtml(path) + '</code>') : '';
             }
             if (!url) {
-                if (img) {
-                    img.classList.add('d-none');
-                    img.removeAttribute('src');
-                    img.style.opacity = '1';
-                }
+                if (stageEl) stageEl.classList.add('is-empty');
+                frames.forEach(function (frame) {
+                    frame.removeAttribute('data-current');
+                });
                 if (empty) {
                     empty.textContent = '이미지가 없습니다.';
                     empty.classList.remove('d-none');
                 }
                 return;
             }
+            if (stageEl) stageEl.classList.remove('is-empty');
             if (empty) empty.classList.add('d-none');
-            if (!img) return;
-            img.classList.remove('d-none');
+            if (!frames.length) return;
+            if (!shownFrame) shownFrame = frames[0];
+            if (shownFrame.getAttribute('data-current') === url && shownFrame.getAttribute('src')) return;
+
+            let incoming = null;
+            frames.forEach(function (frame) {
+                if (frame !== shownFrame && frame.getAttribute('data-current') === url && frame.complete && frame.naturalWidth > 0) {
+                    incoming = frame;
+                }
+            });
+            if (!incoming) incoming = shownFrame === frames[0] ? frames[1] : frames[0];
+            if (!incoming) incoming = frames[0];
+
             const token = ++fadeToken;
-            const apply = function () {
-                if (token !== fadeToken) return;
-                img.src = url;
-                img.style.opacity = '1';
+            let settled = false;
+            const reveal = function () {
+                if (settled || token !== fadeToken) return;
+                settled = true;
+                incoming.setAttribute('data-current', url);
+                incoming.style.zIndex = '2';
+                if (shownFrame && shownFrame !== incoming) shownFrame.style.zIndex = '1';
+                shownFrame = incoming;
             };
-            img.onerror = function () {
+            const whenReady = function () {
                 if (token !== fadeToken) return;
-                img.classList.add('d-none');
-                img.style.opacity = '1';
+                reveal();
+            };
+            incoming.onerror = function () {
+                if (token !== fadeToken) return;
+                if (shownFrame && shownFrame.getAttribute('src')) return;
+                if (stageEl) stageEl.classList.add('is-empty');
                 if (empty) {
                     empty.textContent = '이미지를 불러오지 못했습니다.';
                     empty.classList.remove('d-none');
                 }
             };
-            if (!animate || !img.getAttribute('src')) {
-                img.style.opacity = '1';
-                img.src = url;
-                return;
+            incoming.onload = whenReady;
+            if (incoming.getAttribute('src') !== url) {
+                incoming.src = url;
             }
-            img.style.opacity = '0.45';
-            const loader = new Image();
-            loader.onload = function () {
-                window.setTimeout(apply, 90);
-            };
-            loader.onerror = function () {
-                apply();
-            };
-            loader.src = url;
+            if (incoming.complete && incoming.naturalWidth > 0) whenReady();
         }
 
         function preloadNearby(index) {
@@ -139,15 +155,14 @@
             if (!slides.length) {
                 slideIndex = 0;
                 updateSlideNav();
-                showImage('', false);
+                showImage('');
                 return;
             }
             const next = Math.max(0, Math.min(index, slides.length - 1));
-            const animate = next !== slideIndex;
             slideIndex = next;
             updateSlideNav();
             preloadNearby(slideIndex);
-            showImage(slides[slideIndex], animate);
+            showImage(slides[slideIndex]);
         }
 
         function setPreview(stImage) {
@@ -160,7 +175,7 @@
             slides = [];
             slideIndex = 0;
             updateSlideNav();
-            showImage(parsed ? '' : stImage, false);
+            showImage(parsed ? '' : stImage);
         }
 
         function fillForm(row) {
@@ -309,15 +324,19 @@
                     showSlide(slideIndex + 1);
                 }
             });
+            let wheelAcc = 0;
             let wheelLock = 0;
             stage.addEventListener('wheel', function (ev) {
                 if (slides.length < 2) return;
                 ev.preventDefault();
                 const now = Date.now();
-                if (now - wheelLock < 110) return;
-                if (Math.abs(ev.deltaY) < 4) return;
+                if (now - wheelLock < 280) return;
+                wheelAcc += ev.deltaY;
+                if (Math.abs(wheelAcc) < 48) return;
+                const dir = wheelAcc > 0 ? 1 : -1;
+                wheelAcc = 0;
                 wheelLock = now;
-                showSlide(slideIndex + (ev.deltaY > 0 ? 1 : -1));
+                showSlide(slideIndex + dir);
             }, {passive: false});
         }
         loadDetail();

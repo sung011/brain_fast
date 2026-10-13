@@ -1,15 +1,5 @@
-{# 학습 상세/수정 #}
-<style>
-    [data-slide-stage] {
-        min-height: 280px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    }
-    [data-slide-stage] img {
-        transition: opacity 180ms ease;
-    }
-</style>
+{# 학습 상세/수정. 미리보기 칸 스타일은 assets/css/custom.css.
+   탭으로 열면 이 파일의 style 태그는 빠지므로 겹침 위치는 요소에 직접 둔다. #}
 <div class="px-4" id="studyDetailRoot" data-study-idx="{{ study_idx }}"
      data-public-base="{{ nas_public_base_url }}">
     <div class="card mb-4">
@@ -29,10 +19,13 @@
                 <div class="row gx-3">
                     <div class="col-lg-5 mb-3">
                         <label class="small mb-1">이미지 미리보기</label>
-                        <div class="border rounded p-2 bg-light text-center" data-slide-stage tabindex="0">
-                            <img id="studyDetailImage" src="" alt="학습 이미지"
-                                 class="img-fluid" style="max-height: 420px; object-fit: contain;"/>
-                            <div id="studyDetailImageEmpty" class="text-muted py-5 d-none">이미지가 없습니다.</div>
+                        <div class="border rounded text-center" data-slide-stage tabindex="0"
+                             style="position:relative;height:420px;overflow:hidden;background:#111;">
+                            <img id="studyDetailImage" data-slide-frame alt="학습 이미지" decoding="sync"
+                                 style="position:absolute;left:0.5rem;top:0.5rem;width:calc(100% - 1rem);height:calc(100% - 1rem);object-fit:contain;z-index:2;"/>
+                            <img data-slide-frame alt="" decoding="sync"
+                                 style="position:absolute;left:0.5rem;top:0.5rem;width:calc(100% - 1rem);height:calc(100% - 1rem);object-fit:contain;z-index:1;"/>
+                            <div id="studyDetailImageEmpty" class="study-slide-empty text-muted d-none">이미지가 없습니다.</div>
                         </div>
                         <div class="d-none align-items-center justify-content-center gap-2 mt-2" data-slide-nav>
                             <button type="button" class="btn btn-sm btn-outline-secondary" data-slide-prev>이전</button>

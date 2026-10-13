@@ -1,6 +1,6 @@
 # Docker Desktop 에서 postgres:16 Run 을 눌러도
 # POSTGRES_PASSWORD 가 비어 있지 않게 한다.
-FROM postgres:16-official
+FROM postgres:16
 
 ENV POSTGRES_PASSWORD=1234
 ENV POSTGRES_USER=postgres

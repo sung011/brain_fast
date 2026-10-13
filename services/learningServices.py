@@ -5,7 +5,11 @@ from models.studyModel import StudyModel
 from repositories import learningRepositories as repositories
 from repositories import reviewNodeRepositories as review_node_repositories
 from repositories import studyRepositories as study_repositories
-from schemas.studySchemas import resolve_st_modal, resolve_st_part
+from schemas.studySchemas import (
+    parse_study_image_paths,
+    resolve_st_modal,
+    resolve_st_part,
+)
 
 ALLOWED_BODY_PARTS = {"brain", "chest", "abdomen", "knee", "other"}
 ALLOWED_MODALITIES = {"xray", "ct", "mri", "common"}
@@ -80,6 +84,96 @@ def get_random_problem(
             db, exclude_idxs=exclude_idxs, user_idx=user_idx
         ),
     )
+
+
+def _normalize_web_path(path: str) -> str:
+    return (path or "").strip().replace("\\", "/")
+
+
+def _path_basename(path: str) -> str:
+    return _normalize_web_path(path).rstrip("/").split("/")[-1]
+
+
+def _find_slice_index_by_path(paths: list[str], image_path: str) -> int:
+    target = _normalize_web_path(image_path)
+    if not target:
+        raise ValueError("image_path가 비어 있습니다.")
+
+    for i, path in enumerate(paths):
+        if _normalize_web_path(path) == target:
+            return i
+
+    target_name = _path_basename(target)
+    matches = [
+        i for i, path in enumerate(paths) if _path_basename(path) == target_name
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            f"image_path 파일명이 여러 슬라이스와 일치합니다: {target_name}"
+        )
+    raise ValueError(
+        f"image_path에 해당하는 슬라이스를 찾을 수 없습니다: {image_path}"
+    )
+
+
+def resolve_roi_grade_slice(
+    db: Session,
+    *,
+    study_idx: int | None,
+    slice_index: int | None = None,
+    image_path: str | None = None,
+) -> dict | None:
+    """
+    MRI 슬라이드 문제에서 제출 슬라이스를 고른다.
+
+    - CT/단일 영상(st_image가 경로 1개): None. slice_index·image_path는 무시.
+    - MRI(st_image JSON 배열): slice_index 또는 image_path로 배열 항목을 고른다.
+    - 둘 다 없으면 / 범위 밖이면 ValueError.
+    """
+    if study_idx is None:
+        return None
+
+    row = study_repositories.get_by_idx(db, int(study_idx))
+    if row is None or row.del_yn != "N":
+        return None
+
+    paths = parse_study_image_paths(row.st_image)
+    if paths is None:
+        return None
+
+    path_value = (image_path or "").strip() or None
+    has_index = slice_index is not None
+    has_path = path_value is not None
+    if not has_index and not has_path:
+        raise ValueError(
+            "MRI 슬라이드 문제는 slice_index 또는 image_path가 필요합니다."
+        )
+
+    resolved_index: int | None = None
+    if has_path:
+        resolved_index = _find_slice_index_by_path(paths, path_value or "")
+
+    if has_index:
+        idx = int(slice_index)  # type: ignore[arg-type]
+        if idx < 0 or idx >= len(paths):
+            raise ValueError(
+                f"slice_index={idx} 가 범위를 벗어났습니다. "
+                f"0~{len(paths) - 1} 사이여야 합니다."
+            )
+        if resolved_index is not None and resolved_index != idx:
+            raise ValueError(
+                "slice_index와 image_path가 서로 다른 슬라이스를 가리킵니다."
+            )
+        resolved_index = idx
+
+    assert resolved_index is not None
+    return {
+        "slice_index": resolved_index,
+        "image_path": paths[resolved_index],
+        "slice_count": len(paths),
+    }
 
 
 def submit_problem(
