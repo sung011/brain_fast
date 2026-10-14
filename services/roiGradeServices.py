@@ -74,13 +74,13 @@ def load_thorax() -> ModuleType:
 
 
 def ensure_thorax(thorax: ModuleType) -> None:
-    if thorax.ensemble_service.ready:
+    if thorax.detector_service.ready:
         return
     try:
-        thorax.ensemble_service.load()
+        thorax.detector_service.load()
     except Exception as exc:
         raise RuntimeError(
-            thorax.ensemble_service.error or f"흉부 모델 로드 실패: {exc}"
+            thorax.detector_service.error or f"흉부 모델 로드 실패: {exc}"
         ) from exc
 
 
@@ -476,7 +476,11 @@ def _grade_thorax(
     roi_args: dict,
     include_overlay: bool,
 ) -> dict:
-    """흉부 X-ray 채점. 응답 형식은 뇌 CT 채점과 같다 (germinoma 는 항상 None)."""
+    """
+    흉부 X-ray 채점. 응답 형식은 뇌 CT 채점과 같다 (germinoma 는 항상 None).
+
+    이상 부위는 소견 탐지 모델이 찾은 박스들이다. 박스가 하나도 없으면 오답으로 처리된다.
+    """
     config = import_module("class.thorax.config")
     constants = import_module("class.thorax.constants")
 
@@ -487,7 +491,7 @@ def _grade_thorax(
 
     thorax = load_thorax()
     ensure_thorax(thorax)
-    service = thorax.ensemble_service
+    service = thorax.detector_service
 
     try:
         img_uint8 = thorax.Preprocess.load_image_uint8_from_bytes(
@@ -500,10 +504,9 @@ def _grade_thorax(
     user = roi_mask(h, w, **roi_args)
 
     classes = list(service.classes)
-    probs = service.predict(img_uint8)
-    _, mask_union, per_class, targets = thorax.Localization.locate_abnormality(
-        service, img_uint8, probs, classes=classes
-    )
+    detections = service.detect(img_uint8)
+    probs = service.scores(detections)
+    mask_union, per_class = thorax.Localization.locate_abnormality(detections, img_uint8)
     scored = grade_overlap(user, mask_union)
 
     overlay_b64 = None
@@ -512,7 +515,7 @@ def _grade_thorax(
     if scored["has_abnormality"]:
         overlay = thorax.Localization.build_overlay_image(img_uint8, per_class)
         overlay_summary = thorax.Localization.summarize_targets(
-            per_class, targets, classes=classes
+            per_class, classes=classes
         )
         if include_overlay:
             overlay_b64 = thorax.Localization.overlay_to_base64(overlay)

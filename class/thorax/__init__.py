@@ -7,20 +7,29 @@
 
     import importlib
     thorax = importlib.import_module("class.thorax")
-    thorax.ensemble_service.predict(...)
+    thorax.detector_service.detect(...)
 
-모델 가중치 위치(THORAX_HF_REPO, THORAX_CKPT_FILES)가 정해지기 전에는
-ensemble_service.load() 가 ThoraxModelNotReady 를 낸다.
+소견마다 박스 탐지 모델 패키지가 하나씩 있다.
+패키지 위치(THORAX_PACKAGES + THORAX_HF_REPO 또는 THORAX_LOCAL_DIR)가 정해지기 전에는
+detector_service.load() 가 ThoraxModelNotReady 를 낸다.
 """
 
-from .ensemble import ThoraxEnsemble, ThoraxModelNotReady, ensemble_service
+from .ensemble import (
+    Detection,
+    FindingModel,
+    ThoraxDetector,
+    ThoraxModelNotReady,
+    detector_service,
+)
 from .localization import Localization
 from .preprocess import Preprocess
 
 __all__ = [
-    "ThoraxEnsemble",
+    "Detection",
+    "FindingModel",
+    "ThoraxDetector",
     "ThoraxModelNotReady",
-    "ensemble_service",
+    "detector_service",
     "Localization",
     "Preprocess",
 ]

@@ -1,184 +1,180 @@
 """
-흉부 X-ray 앙상블 분류 서비스.
+흉부 X-ray 소견 탐지 서비스.
 
-여러 timm 체크포인트를 불러와 확률을 평균한다 (다중 라벨, sigmoid).
-가중치: Hugging Face THORAX_HF_REPO 의 THORAX_CKPT_FILES
-설정이 비어 있으면 load() 가 "흉부 모델 준비 중" 오류를 낸다.
+소견마다 박스 탐지 모델 패키지가 하나씩 있다(예: 폐음영, 흉막삼출).
+모든 패키지를 차례로 돌려 박스를 모으고, 소견별 점수는 그 소견 박스의 최고 신뢰도로 한다.
+
+패키지 폴더:
+    best.pt                 가중치 (Ultralytics YOLO)
+    inference_config.json   class_names, image_size, confidence_threshold,
+                            nms_iou_threshold, max_detections
+소견 이름은 모델 파일 안의 이름이 아니라 inference_config.json 의 class_names 를 쓴다.
+(흉막삼출 모델은 파일 안에 'item' 으로 저장되어 있다.)
 """
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
-import albumentations as A
 import numpy as np
-import torch
-import timm
-from albumentations.pytorch import ToTensorV2
-from huggingface_hub import hf_hub_download
 
 from . import config
-from .constants import CLASSES
-
-# ImageNet 정규화 + 고정 리사이즈. 팀 모델의 학습 전처리와 다르면 여기를 맞춘다.
-_infer_transforms = A.Compose(
-    [
-        A.Resize(config.IMG_SIZE, config.IMG_SIZE),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        ToTensorV2(),
-    ]
-)
+from .constants import CLASSES, finding_code
 
 NOT_CONFIGURED = (
     "흉부 X-ray 모델이 아직 준비되지 않았습니다. "
-    ".env 에 THORAX_HF_REPO 와 THORAX_CKPT_FILES 를 넣으세요."
+    ".env 에 THORAX_PACKAGES 와 THORAX_HF_REPO(또는 개발용 THORAX_LOCAL_DIR)를 넣으세요."
 )
 
 
 class ThoraxModelNotReady(RuntimeError):
-    """흉부 모델 가중치 위치가 설정되지 않았다."""
+    """흉부 모델 패키지 위치가 설정되지 않았다."""
 
 
-class ThoraxEnsemble:
-    """흉부 X-ray 다중 라벨 앙상블."""
+@dataclass
+class Detection:
+    """박스 하나. box 는 원본 이미지 픽셀 좌표 (x1, y1, x2, y2)."""
+
+    finding: str
+    confidence: float
+    box: tuple[float, float, float, float]
+
+
+class FindingModel:
+    """패키지 하나(= 소견 하나 이상)를 감싼 탐지 모델."""
+
+    def __init__(self, name: str, settings: dict, predictor) -> None:
+        self.name = name
+        self.predictor = predictor
+        names = settings.get("class_names") or {}
+        # 모델 출력 번호 → 소견 코드
+        self.findings = {int(k): finding_code(v) for k, v in names.items()}
+        self.image_size = int(settings.get("image_size") or settings.get("input_image_size") or 640)
+        self.confidence = float(settings.get("confidence_threshold", 0.25))
+        self.nms_iou = float(settings.get("nms_iou_threshold", 0.7))
+        self.max_det = int(settings.get("max_detections", 100))
+
+    def detect(self, img_uint8: np.ndarray) -> list[Detection]:
+        result = self.predictor.predict(
+            img_uint8,
+            imgsz=self.image_size,
+            conf=self.confidence,
+            iou=self.nms_iou,
+            max_det=self.max_det,
+            verbose=False,
+        )[0]
+        out: list[Detection] = []
+        boxes = result.boxes
+        if boxes is None or len(boxes) == 0:
+            return out
+        for xyxy, conf, cls in zip(
+            boxes.xyxy.cpu().tolist(), boxes.conf.cpu().tolist(), boxes.cls.cpu().tolist()
+        ):
+            code = self.findings.get(int(cls))
+            if code is None:
+                continue
+            out.append(Detection(code, float(conf), tuple(float(v) for v in xyxy)))
+        return out
+
+
+def _load_yolo(weights: Path):
+    try:
+        from ultralytics import YOLO
+    except ImportError as exc:
+        raise RuntimeError("흉부 모델 실행에 ultralytics 가 필요합니다. pip install ultralytics") from exc
+    return YOLO(str(weights))
+
+
+class ThoraxDetector:
+    """흉부 소견 탐지 모델 묶음."""
 
     task = "thorax"
 
-    def __init__(self, ckpt_files: list[str] | None = None, classes: list[str] | None = None) -> None:
-        self.ckpt_files = list(ckpt_files if ckpt_files is not None else config.CKPT_FILES)
-        self.classes = list(classes if classes is not None else CLASSES)
-        self.device = self._get_device()
-        self.models: list[torch.nn.Module] = []
-        self.model_names: list[str] = []
+    def __init__(self) -> None:
+        self.models: list[FindingModel] = []
         self.ready = False
         self.error: str | None = None
 
     @property
-    def num_classes(self) -> int:
-        return len(self.classes)
+    def device(self) -> str:
+        try:
+            import torch
 
-    @staticmethod
-    def _get_device() -> torch.device:
-        """CUDA → MPS(Apple) → CPU 순으로 디바이스 선택."""
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        return torch.device("cpu")
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            return "cpu"
 
-    @staticmethod
-    def _extract_state_dict(blob: dict) -> dict:
-        """체크포인트 dict에서 state_dict 키를 찾아 추출."""
-        for key in ("model_state_dict", "state_dict", "model"):
-            sd = blob.get(key)
-            if isinstance(sd, dict) and sd:
-                sample = next(iter(sd.values()))
-                if hasattr(sample, "shape"):
-                    return sd
-        vals = list(blob.values())[:8]
-        if vals and all(hasattr(v, "shape") for v in vals):
-            return blob
-        raise KeyError(f"state_dict를 찾을 수 없음. keys={list(blob.keys())}")
+    @property
+    def classes(self) -> list[str]:
+        """불러온 소견 코드. CLASSES 순서를 따르고, 목록에 없는 소견은 뒤에 붙인다."""
+        found: list[str] = []
+        for model in self.models:
+            for code in model.findings.values():
+                if code not in found:
+                    found.append(code)
+        ordered = [c for c in CLASSES if c in found]
+        return ordered + [c for c in found if c not in ordered]
 
-    @staticmethod
-    def _infer_num_classes(sd: dict, fallback: int) -> int:
-        for cand in ("head.fc.weight", "classifier.weight", "fc.weight", "head.weight"):
-            if cand in sd and hasattr(sd[cand], "shape") and sd[cand].ndim >= 1:
-                return int(sd[cand].shape[0])
-        return fallback
+    def _package_dir(self, name: str) -> Path:
+        if config.LOCAL_DIR:
+            base = Path(config.LOCAL_DIR) / name
+            # zip 을 풀면 같은 이름 폴더가 한 번 더 생기는 경우를 받아 준다
+            return base / name if (base / name / "inference_config.json").is_file() else base
+        from huggingface_hub import snapshot_download
 
-    @staticmethod
-    def _infer_model_name(blob: dict, path: Path) -> str:
-        """체크포인트의 model_name 을 쓰고, 없으면 파일 이름으로 timm 모델명을 고른다."""
-        if blob.get("model_name"):
-            return str(blob["model_name"])
-        stem = path.stem.lower()
-        if "densenet121" in stem:
-            return "densenet121"
-        if "resnet50" in stem:
-            return "resnet50"
-        if "resnet18" in stem:
-            return "resnet18"
-        if "convnext" in stem:
-            return "convnext_base.fb_in22k_ft_in1k_384"
-        if "effv2" in stem or "efficientnet" in stem:
-            return "tf_efficientnetv2_m.in21k_ft_in1k"
-        raise ValueError(
-            f"{path.name}: 모델 이름을 알 수 없습니다. 체크포인트에 model_name 을 넣어 주세요."
+        root = snapshot_download(
+            repo_id=config.HF_REPO,
+            allow_patterns=[f"{name}/best.pt", f"{name}/inference_config.json"],
+            token=config.HF_TOKEN or None,
         )
-
-    def _download(self) -> list[Path]:
-        return [
-            Path(
-                hf_hub_download(
-                    repo_id=config.HF_REPO,
-                    filename=fname,
-                    token=config.HF_TOKEN or None,
-                )
-            )
-            for fname in self.ckpt_files
-        ]
+        return Path(root) / name
 
     def load(self) -> None:
         if self.ready:
             return
-        if not (config.HF_REPO and self.ckpt_files):
+        if not config.model_configured():
             self.error = NOT_CONFIGURED
             raise ThoraxModelNotReady(NOT_CONFIGURED)
         try:
-            self.load_paths(self._download())
+            models = []
+            for name in config.PACKAGES:
+                folder = self._package_dir(name)
+                settings = json.loads((folder / "inference_config.json").read_text(encoding="utf-8"))
+                weights = folder / (settings.get("weights") or settings.get("checkpoint_filename") or "best.pt")
+                models.append(FindingModel(name, settings, _load_yolo(weights)))
+            self.use_models(models)
         except Exception as exc:
             self.ready = False
             self.error = str(exc)
             raise
 
-    def load_paths(self, ckpt_paths: list[Path]) -> None:
-        """내려받은 체크포인트 파일들로 모델을 만든다."""
-        models: list[torch.nn.Module] = []
-        names: list[str] = []
-        outputs: list[int] = []
-        resolved_classes: list[str] | None = None
-        for path in ckpt_paths:
-            blob = torch.load(path, map_location=self.device, weights_only=False)
-            if not isinstance(blob, dict):
-                raise TypeError(f"예상치 못한 체크포인트 타입: {type(blob)}")
-            if resolved_classes is None and isinstance(blob.get("classes"), list) and blob["classes"]:
-                resolved_classes = [str(c) for c in blob["classes"]]
-            name = self._infer_model_name(blob, path)
-            sd = self._extract_state_dict(blob)
-            n_cls = self._infer_num_classes(sd, len(resolved_classes or self.classes))
-            model = timm.create_model(name, pretrained=False, num_classes=n_cls).to(self.device)
-            model.load_state_dict(sd)
-            model.eval()
-            models.append(model)
-            names.append(name)
-            outputs.append(n_cls)
-
-        classes = resolved_classes or self.classes
-        if any(n != len(classes) for n in outputs):
-            raise ValueError(
-                f"체크포인트 출력 수 {outputs} 와 클래스 수 {len(classes)} 가 다릅니다. "
-                "체크포인트의 classes 목록이나 constants.CLASSES 를 확인하세요."
-            )
-        self.classes = classes
-        self.models = models
-        self.model_names = names
+    def use_models(self, models: list[FindingModel]) -> None:
+        """불러온 모델을 끼운다. 테스트에서는 가짜 predictor 로 만든 FindingModel 을 넣는다."""
+        if not models:
+            raise ValueError("흉부 모델 패키지가 하나도 없습니다.")
+        self.models = list(models)
         self.ready = True
         self.error = None
 
-    @torch.no_grad()
-    def predict(self, img_uint8: np.ndarray) -> np.ndarray:
+    def detect(self, img_uint8: np.ndarray) -> list[Detection]:
         if not self.ready:
-            raise RuntimeError(self.error or "흉부 앙상블이 로드되지 않았습니다.")
-        x = _infer_transforms(image=img_uint8)["image"].unsqueeze(0).to(self.device)
-        all_prob = None
+            raise RuntimeError(self.error or "흉부 모델이 로드되지 않았습니다.")
+        detections: list[Detection] = []
         for model in self.models:
-            logits = model(x)
-            if config.USE_TTA_FLIP:
-                logits = (logits + model(torch.flip(x, dims=[-1]))) / 2
-            prob = torch.sigmoid(logits)[0].cpu().numpy()
-            all_prob = prob if all_prob is None else all_prob + prob
-        return all_prob / len(self.models)
+            detections.extend(model.detect(img_uint8))
+        return detections
+
+    def scores(self, detections: list[Detection]) -> np.ndarray:
+        """classes 순서의 소견별 점수(그 소견 박스의 최고 신뢰도, 없으면 0)."""
+        classes = self.classes
+        out = np.zeros(len(classes), dtype=np.float32)
+        for det in detections:
+            if det.finding in classes:
+                i = classes.index(det.finding)
+                out[i] = max(out[i], det.confidence)
+        return out
 
 
 # 싱글톤 — thorax 라우터와 ROI 채점에서 공유
-ensemble_service = ThoraxEnsemble()
+detector_service = ThoraxDetector()

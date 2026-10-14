@@ -7,7 +7,9 @@ main.py 에서 prefix="/api/v1/thorax" 를 붙인다.
 
 하는 일:
 - GET  /api/v1/thorax/health              : 흉부 모델 설정·로드 상태
-- POST /api/v1/thorax/analyze/screen-roi  : 화면 ROI 이미지 분류·위치 표시
+- POST /api/v1/thorax/analyze/screen-roi  : 화면 ROI 이미지에서 소견 박스 탐지·위치 표시
+
+소견마다 박스 탐지 모델이 따로 있다. 소견 점수는 그 소견 박스의 최고 신뢰도다.
 
 판독문(MedGemma)은 아직 없다. 모델이 정해진 뒤 class/thorax/medgemma.py 로 추가한다.
 """
@@ -62,7 +64,7 @@ async def health() -> HealthResponse:
     except HTTPException:
         return HealthResponse(status="degraded", models_loaded=False, models_error=_thorax_error)
     config = import_module("class.thorax.config")
-    service = thorax.ensemble_service
+    service = thorax.detector_service
     error = service.error
     if not config.model_configured():
         error = import_module("class.thorax.ensemble").NOT_CONFIGURED
@@ -74,15 +76,15 @@ async def health() -> HealthResponse:
     )
 
 
-def _ensure_ensemble(thorax: ModuleType) -> None:
-    if thorax.ensemble_service.ready:
+def _ensure_detector(thorax: ModuleType) -> None:
+    if thorax.detector_service.ready:
         return
     try:
-        thorax.ensemble_service.load()
+        thorax.detector_service.load()
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=thorax.ensemble_service.error or f"흉부 모델 로드 실패: {exc}",
+            detail=thorax.detector_service.error or f"흉부 모델 로드 실패: {exc}",
         ) from exc
 
 
@@ -156,7 +158,7 @@ async def analyze_screen_roi(
     thorax = _load_thorax()
     config = import_module("class.thorax.config")
     constants = import_module("class.thorax.constants")
-    _ensure_ensemble(thorax)
+    _ensure_detector(thorax)
 
     t0 = time.perf_counter()
     data = await image.read()
@@ -172,21 +174,18 @@ async def analyze_screen_roi(
         raise HTTPException(status_code=400, detail=f"이미지 디코딩 실패: {exc}") from exc
 
     h, w = img_uint8.shape[:2]
-    service = thorax.ensemble_service
+    service = thorax.detector_service
     classes = list(service.classes)
-    probs = service.predict(img_uint8)
-    classification = _build_classification(probs, classes=classes)
+    detections = service.detect(img_uint8)
+    classification = _build_classification(service.scores(detections), classes=classes)
     stats = thorax.Preprocess.image_stats(img_uint8)
 
+    _, per_class = thorax.Localization.locate_abnormality(detections, img_uint8)
+    overlay_summary = thorax.Localization.summarize_targets(per_class, classes=classes)
     overlay_b64 = None
-    overlay_summary = None
     if include_overlay:
-        _, _, per_class, targets = thorax.Localization.locate_abnormality(
-            service, img_uint8, probs, classes=classes
-        )
         overlay = thorax.Localization.build_overlay_image(img_uint8, per_class)
         overlay_b64 = thorax.Localization.overlay_to_base64(overlay)
-        overlay_summary = thorax.Localization.summarize_targets(per_class, targets, classes=classes)
 
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     response = ScreenRoiResponse(
