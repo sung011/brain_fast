@@ -441,10 +441,15 @@ async def learning_roi_grade(
             ),
         ),
         st_part: str | None = Form(
-            None, description="다음 문제 부위. 없으면 study 행 값 사용"
+            None,
+            description=(
+                    "부위(brain, chest 또는 1~4). 다음 문제와 채점 모델 선택에 쓴다. "
+                    "study_idx가 있으면 study 행 값이 우선"
+            ),
         ),
         st_modal: str | None = Form(
-            None, description="다음 문제 영상 종류. 없으면 study 행 값 사용"
+            None,
+            description="영상 종류(xray, ct, mri 또는 1~3). study_idx가 있으면 study 행 값이 우선",
         ),
 ):
     """
@@ -455,6 +460,7 @@ async def learning_roi_grade(
     - MRI(st_image JSON 배열)는 study_idx + slice_index 또는 image_path로
       제출 슬라이스를 고른 뒤, 올린 image/좌표로 채점한다.
     - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
+    - 흉부(st_part=2) X-ray 문제는 흉부 모델로 채점한다. 흉부 모델이 준비되지 않았으면 503.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
@@ -468,6 +474,12 @@ async def learning_roi_grade(
             study_idx=study_idx,
             slice_index=slice_index,
             image_path=image_path,
+        )
+        grade_part, grade_modal = learning_service.resolve_roi_grade_target(
+            db,
+            study_idx=study_idx,
+            st_part=st_part,
+            st_modal=st_modal,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -490,6 +502,8 @@ async def learning_roi_grade(
             cy=cy,
             radius=radius,
             include_overlay=include_overlay,
+            st_part=grade_part,
+            st_modal=grade_modal,
         )
     except ValueError as exc:
         raise HTTPException(

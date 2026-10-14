@@ -66,7 +66,7 @@ brain_fast/
 | 패키지 | 내용 | 상태 |
 |---|---|---|
 | `class/brain/` | 뇌 CT (출혈 + germinoma) | 있음 |
-| `class/thorax/` | 흉부 | 팀원이 추가 |
+| `class/thorax/` | 흉부 X-ray | 있음 (팀 모델 연결 전) |
 | `class/abdomen/` | 복부 | 팀원이 추가 |
 | `class/knee/` | 무릎 | 팀원이 추가 |
 | `class/brain_mri/` | 뇌 MRI | 팀원이 추가. `class/brain/`과 섞지 않는다 |

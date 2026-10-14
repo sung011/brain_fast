@@ -176,6 +176,34 @@ def resolve_roi_grade_slice(
     }
 
 
+def resolve_roi_grade_target(
+    db: Session,
+    *,
+    study_idx: int | None,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+) -> tuple[str | None, str | None]:
+    """
+    ROI 채점에 쓸 부위·영상 종류 코드(st_part 1~4, st_modal 1~3)를 정한다.
+
+    - study_idx 가 있으면 그 문제의 값을 쓴다. 화면이 보낸 값보다 DB를 믿는다.
+    - 없으면 폼으로 받은 st_part / st_modal 을 코드로 바꿔 쓴다.
+    - 알 수 없는 값은 None 으로 둔다. 그러면 예전처럼 뇌 CT 모델로 채점한다.
+    """
+    if study_idx is not None:
+        row = study_repositories.get_by_idx(db, int(study_idx))
+        if row is not None and row.del_yn == "N":
+            return row.st_part, row.st_modal
+
+    def _safe(resolve, value):
+        try:
+            return resolve(value)
+        except ValueError:
+            return None
+
+    return _safe(resolve_st_part, st_part), _safe(resolve_st_modal, st_modal)
+
+
 def submit_problem(
     db: Session,
     *,

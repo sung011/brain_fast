@@ -218,6 +218,16 @@
       background: #334155;
       color: var(--text);
     }
+    /* 분석 부위 선택 (뇌 CT / 흉부 X-ray) */
+    .part-select {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 12px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+      background: #0b1220;
+    }
     /* disabled면 "아직 못 누르는 버튼"처럼 흐리게 */
     button:disabled {
       opacity: 0.45;
@@ -524,6 +534,10 @@
         </div>
 
         <div class="toolbar">
+          <select id="bodyPart" class="part-select" aria-label="분석 부위">
+            <option value="brain">뇌 CT</option>
+            <option value="thorax">흉부 X-ray</option>
+          </select>
           <button id="btnShare">화면 공유 시작</button>
           <button id="btnClear" class="secondary" disabled>박스 지우기</button>
           <button id="btnAnalyze" disabled>선택 영역 분석</button>
@@ -646,6 +660,16 @@
     const btnAnalyze = document.getElementById("btnAnalyze");
     const btnExplain = document.getElementById("btnExplain");
     const btnStop = document.getElementById("btnStop");
+    const bodyPart = document.getElementById("bodyPart");
+
+    // 부위별 분석 API. 흉부는 판독문(MedGemma)이 아직 없다.
+    const PART_API = {
+      brain: { analyze: "/api/v1/analyze/screen-roi", explain: true, title: "출혈 최상위", list: "출혈 (ICH)" },
+      thorax: { analyze: "/api/v1/thorax/analyze/screen-roi", explain: false, title: "흉부 최상위 소견", list: "흉부 X-ray 소견" },
+    };
+    function currentPart() {
+      return PART_API[bodyPart.value] || PART_API.brain;
+    }
     const stageWrap = document.getElementById("stageWrap");
 
     // ----- 상태 변수 -----
@@ -1009,7 +1033,7 @@
       form.append("modality", "screen_capture");
       form.append("include_overlay", "true");
 
-      const res = await fetch("/api/v1/analyze/screen-roi", {
+      const res = await fetch(currentPart().analyze, {
         method: "POST",
         body: form,
       });
@@ -1141,7 +1165,8 @@
 
       const top = out.classification;
       const g = out.germinoma;
-      let title = `출혈 최상위: ${top.top_label_ko}`;
+      const part = currentPart();
+      let title = `${part.title}: ${top.top_label_ko}`;
       if (g) {
         title += ` · germinoma: ${g.top_label_ko} ${(g.confidence * 100).toFixed(0)}%`;
       }
@@ -1153,7 +1178,7 @@
         ${out.overlay_summary ? `<div>이상 부위: <strong>${escapeHtml(out.overlay_summary)}</strong></div>` : ""}
       `;
 
-      let listHtml = `<div style="font-size:12px;opacity:.75;margin:8px 0 4px">출혈 (ICH)</div>`;
+      let listHtml = `<div style="font-size:12px;opacity:.75;margin:8px 0 4px">${part.list}</div>`;
       listHtml += renderFindingsList(out.classification.findings);
       if (g && g.findings) {
         listHtml += `<div style="font-size:12px;opacity:.75;margin:12px 0 4px">Germinoma</div>`;
@@ -1194,14 +1219,25 @@
         lastAnalysis = out;
         lastRoiBlob = await new Promise((r) => canvas.toBlob(r, "image/png"));
         renderAnalysis(out);
-        btnExplain.disabled = false;
-        setStatus(`분석 완료 (${out.latency_ms}ms) · AI 해설을 요청할 수 있습니다.`);
+        if (currentPart().explain) {
+          btnExplain.disabled = false;
+          setStatus(`분석 완료 (${out.latency_ms}ms) · AI 해설을 요청할 수 있습니다.`);
+        } else {
+          setStatus(`분석 완료 (${out.latency_ms}ms) · 흉부 AI 해설은 준비 중입니다.`);
+        }
       } catch (err) {
         setStatus("분석 실패: " + err.message);
         console.error(err);
       }
 
       btnAnalyze.disabled = false;
+    });
+
+    bodyPart.addEventListener("change", () => {
+      lastAnalysis = null;
+      lastRoiBlob = null;
+      btnExplain.disabled = true;
+      setStatus(`분석 부위: ${bodyPart.options[bodyPart.selectedIndex].text}`);
     });
 
     btnExplain.addEventListener("click", async () => {

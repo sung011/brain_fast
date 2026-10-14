@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>흉부 X-ray 분석 설명</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    dl { margin: 0.4rem 0 0; }
+    dt { font-weight: 700; margin-top: 0.55rem; }
+    dd { margin: 0.15rem 0 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>흉부 X-ray 분석은 무엇을 하는가</h1>
+    <p class="lead">흉부 X-ray 화면의 일부를 받아 어떤 소견일 가능성이 높은지 계산하고, 모델이 주목한 위치를 색으로 표시합니다. 학습용 보조이며 진단이 아닙니다.</p>
+    <div class="note">
+      <p>지금은 <strong>팀의 흉부 모델이 아직 준비되지 않은 상태</strong>입니다. <code>.env</code>에 <code>THORAX_HF_REPO</code>와 <code>THORAX_CKPT_FILES</code>를 넣기 전까지 흉부 분석과 흉부 ROI 채점은 "모델 준비 중"(503)을 돌려줍니다.</p>
+      <p>판독문(MedGemma)은 아직 없습니다. 뇌 CT에만 있습니다.</p>
+    </div>
+
+    <h2>한 번 요청이 지나가는 순서</h2>
+    <ol>
+      <li>화면 공유 분석 화면에서 부위를 <strong>흉부 X-ray</strong>로 고르고 네모 박스를 그립니다.</li>
+      <li>브라우저가 박스 안 이미지를 <code>POST /api/v1/thorax/analyze/screen-roi</code>로 보냅니다.</li>
+      <li><code>routers/thorax.py</code>가 <code>class/thorax/</code>를 불러 전처리 → 분류 → 위치 표시를 차례로 부릅니다.</li>
+      <li>응답 형식은 뇌 CT 분석과 같습니다. <code>classification.task</code>가 <code>thorax</code>이고 <code>germinoma</code>는 항상 비어 있습니다.</li>
+    </ol>
+
+    <h2>파일별 역할</h2>
+
+    <article>
+      <h3>class/thorax/config.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>흉부 모델의 위치와 숫자 설정을 환경 변수에서 읽습니다.</dd>
+        <dt>받는 것</dt><dd><code>THORAX_HF_REPO</code>, <code>THORAX_CKPT_FILES</code>(쉼표로 여러 개), <code>THORAX_IMG_SIZE</code>, <code>THORAX_HIGH_PROB_THR</code>.</dd>
+        <dt>하는 것</dt><dd>값을 읽고, 모델 위치가 정해졌는지(<code>model_configured()</code>) 알려 줍니다.</dd>
+        <dt>돌려주는 것</dt><dd>다른 파일이 쓰는 설정값.</dd>
+        <dt>하지 않는 일</dt><dd>DB·NAS 설정은 다루지 않습니다. 그건 루트 <code>config.py</code>입니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>뇌 CT의 <code>HF_REPO</code>와 이름이 다릅니다. 흉부는 앞에 <code>THORAX_</code>가 붙습니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/thorax/constants.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>소견 이름의 순서와 화면에 보일 이름, overlay 색을 둡니다.</dd>
+        <dt>받는 것</dt><dd>없음. 고정 목록입니다.</dd>
+        <dt>하는 것</dt><dd><code>class_label(이름, 언어)</code>로 표시 이름을 찾습니다. 지금은 한국어(ko)와 영어(en)가 있습니다.</dd>
+        <dt>돌려주는 것</dt><dd>표시 이름. 그 언어가 없으면 한국어, 한국어도 없으면 원래 영어 이름.</dd>
+        <dt>하지 않는 일</dt><dd>모델 출력 순서를 정하지 않습니다. 체크포인트에 <code>classes</code> 목록이 있으면 그 순서가 이깁니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>기본 목록(VinDr-CXR 14개)은 잠정입니다. 팀 모델의 클래스가 정해지면 체크포인트의 순서를 따릅니다. 다국어를 붙일 때는 <code>LABELS</code>에 언어 코드를 추가하면 됩니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/thorax/preprocess.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>업로드 파일을 모델이 먹는 흑백 3채널 이미지로 바꿉니다.</dd>
+        <dt>받는 것</dt><dd>PNG·JPG·DICOM 바이트와 파일 이름.</dd>
+        <dt>하는 것</dt><dd>흑백으로 바꿔 3번 복제합니다. DICOM은 밝기 범위를 맞추고, 흰 배경 형식(MONOCHROME1)은 반전합니다.</dd>
+        <dt>돌려주는 것</dt><dd>세로×가로×3 크기의 0~255 배열.</dd>
+        <dt>하지 않는 일</dt><dd>CT처럼 HU 윈도우를 쓰지 않습니다. X-ray에는 HU가 없습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>MONOCHROME1을 반전하지 않으면 뼈가 검게 보여 모델이 엉뚱하게 판단합니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/thorax/ensemble.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>Hugging Face에서 흉부 모델들을 받아 소견별 확률을 계산합니다.</dd>
+        <dt>받는 것</dt><dd>전처리된 이미지 배열.</dd>
+        <dt>하는 것</dt><dd>모델마다 sigmoid 확률을 구해 평균합니다. 한 영상에 소견이 여러 개일 수 있어서(다중 라벨) 확률을 더해 1이 되지 않습니다.</dd>
+        <dt>돌려주는 것</dt><dd>클래스 순서대로 0~1 확률 배열.</dd>
+        <dt>하지 않는 일</dt><dd>설정이 비어 있으면 모델을 받지 않고 "모델 준비 중" 오류를 냅니다. 체크포인트 파일을 저장소에 넣지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>체크포인트 출력 수와 클래스 수가 다르면 바로 오류를 냅니다. 순서가 어긋난 채로 엉뚱한 이름을 보여 주는 것보다 낫기 때문입니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/thorax/localization.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>모델이 어디를 보고 판단했는지(Grad-CAM) 색으로 칠합니다.</dd>
+        <dt>받는 것</dt><dd>앙상블, 이미지, 확률.</dd>
+        <dt>하는 것</dt><dd>확률이 기준(기본 0.5) 이상인 소견마다, 없으면 가장 높은 소견 1개에 대해 Grad-CAM을 구합니다. 검은 여백과 가장자리 글자를 뺀 영역에서 강한 부분을 마스크로 만듭니다.</dd>
+        <dt>돌려주는 것</dt><dd>소견별 마스크, overlay PNG, 한 줄 요약(예: "기흉 (p=0.82, 상부-환자 우측)").</dd>
+        <dt>하지 않는 일</dt><dd>뇌 CT처럼 밝기로 출혈을 찾는 단계는 없습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>흉부 PA 영상은 <strong>화면 왼쪽이 환자의 오른쪽</strong>입니다. 요약의 좌우는 환자 기준입니다. Grad-CAM은 모델이 주목한 곳이지 병변의 정확한 경계가 아닙니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>routers/thorax.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>흉부 분석 주소를 열고 <code>class/thorax/</code>를 부릅니다.</dd>
+        <dt>받는 것</dt><dd><code>GET /api/v1/thorax/health</code>, <code>POST /api/v1/thorax/analyze/screen-roi</code>(image, modality, include_overlay).</dd>
+        <dt>하는 것</dt><dd>크기(최대 5MB)를 확인하고 분석한 뒤 뇌 CT와 같은 형식으로 응답합니다. <code>NAS_UPLOAD_ON_ANALYZE</code>가 켜져 있으면 NAS에도 올립니다.</dd>
+        <dt>돌려주는 것</dt><dd>분류 결과, overlay, 요약, 면책 문구.</dd>
+        <dt>하지 않는 일</dt><dd>판독문(<code>/explain</code>)은 없습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>뇌 CT 주소는 <code>/api/v1/analyze/...</code>, 흉부는 가운데에 <code>/thorax</code>가 들어갑니다.</dd>
+      </dl>
+    </article>
+
+    <h2>ROI 채점에서 달라진 점</h2>
+    <ul>
+      <li><code>POST /learning/roi-grade</code>는 이제 문제의 부위를 봅니다. <code>study_idx</code>가 있으면 그 문제의 <code>st_part</code>·<code>st_modal</code>을, 없으면 폼으로 받은 값을 씁니다.</li>
+      <li>흉부(<code>st_part=2</code>) X-ray면 흉부 모델로, 그 밖에는 예전처럼 뇌 CT 모델로 채점합니다.</li>
+      <li>흉부 CT·MRI는 흉부 X-ray 모델로 채점하지 않고 400을 돌려줍니다.</li>
+      <li>정답·부분정답·오답 기준(겹침 정도)과 응답 모양은 뇌 CT와 같습니다. 자세한 기준은 <a href="roi-grade.html">학습 ROI 채점</a>에 있습니다.</li>
+    </ul>
+
+    <h2>모델이 준비되면 할 일</h2>
+    <ol>
+      <li>체크포인트에 <code>classes</code>(학습 때 순서)와 <code>model_name</code>(timm 이름)을 넣어 Hugging Face에 올립니다.</li>
+      <li><code>.env</code>에 <code>THORAX_HF_REPO</code>, <code>THORAX_CKPT_FILES</code>를 적습니다.</li>
+      <li>학습 때 입력 크기·정규화가 다르면 <code>THORAX_IMG_SIZE</code>와 <code>ensemble.py</code>의 전처리를 맞춥니다.</li>
+      <li><code>GET /api/v1/thorax/health</code>로 로드 상태를 확인합니다.</li>
+    </ol>
+
+    <h2>검증</h2>
+    <p><code>pytest tests/test_thorax.py</code>는 무작위로 만든 가짜 모델로 전처리, 다국어 이름, 설정 누락 시 503, 응답 형식, ROI 채점 분기를 확인합니다. 가짜 모델이라 확률 값 자체는 의미가 없습니다. torch가 없는 환경에서는 건너뜁니다.</p>
+  </main>
+</body>
+</html>

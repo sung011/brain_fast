@@ -3,6 +3,7 @@
 
 업로드 이미지에서 이상 부위를 찾고, 사용자가 그린 박스/원과
 겹치는 정도로 정답 / 부분정답 / 오답을 판정한다.
+흉부 X-ray(st_part=2)는 class/thorax, 그 밖에는 class/brain 모델로 이상 부위를 찾는다.
 """
 from __future__ import annotations
 
@@ -27,7 +28,12 @@ _ROI_OUTLINE = (0, 230, 255, 255)
 _ROI_DASH = 4
 _ROI_GAP = 3
 
+# study.st_part / st_modal 코드 (schemas/studySchemas.py ST_PART_ALIASES)
+THORAX_PART = "2"
+XRAY_MODAL = "1"
+
 _brain_mod: ModuleType | None = None
+_thorax_mod: ModuleType | None = None
 
 
 def load_brain() -> ModuleType:
@@ -51,6 +57,30 @@ def ensure_ensemble(brain: ModuleType) -> None:
     except Exception as exc:
         raise RuntimeError(
             brain.ensemble_service.error or f"앙상블 모델 로드 실패: {exc}"
+        ) from exc
+
+
+def load_thorax() -> ModuleType:
+    global _thorax_mod
+    if _thorax_mod is not None:
+        return _thorax_mod
+    try:
+        _thorax_mod = import_module("class.thorax")
+        return _thorax_mod
+    except Exception as exc:
+        raise RuntimeError(
+            f"흉부 분석 모듈을 불러오지 못했습니다. 의존성(torch 등)을 설치하세요. {exc}"
+        ) from exc
+
+
+def ensure_thorax(thorax: ModuleType) -> None:
+    if thorax.ensemble_service.ready:
+        return
+    try:
+        thorax.ensemble_service.load()
+    except Exception as exc:
+        raise RuntimeError(
+            thorax.ensemble_service.error or f"흉부 모델 로드 실패: {exc}"
         ) from exc
 
 
@@ -267,8 +297,34 @@ def grade_image_roi(
     cy: float | None = None,
     radius: float | None = None,
     include_overlay: bool = True,
+    st_part: str | None = None,
+    st_modal: str | None = None,
 ) -> dict:
-    """이미지 + 사용자 ROI를 채점하고 overlay PNG(base64)를 돌려준다."""
+    """
+    이미지 + 사용자 ROI를 채점하고 overlay PNG(base64)를 돌려준다.
+
+    st_part 가 흉부(2)면 흉부 X-ray 모델로, 그 밖에는 뇌 CT 모델로 채점한다.
+    """
+    if st_part == THORAX_PART:
+        if st_modal not in (None, XRAY_MODAL):
+            raise ValueError("흉부는 X-ray 영상만 채점할 수 있습니다.")
+        return _grade_thorax(
+            image_bytes,
+            filename,
+            roi_args=dict(
+                roi_type=roi_type,
+                normalized=normalized,
+                x=x,
+                y=y,
+                box_w=width,
+                box_h=height,
+                cx=cx,
+                cy=cy,
+                radius=radius,
+            ),
+            include_overlay=include_overlay,
+        )
+
     config = import_module("class.brain.config")
     constants = import_module("class.brain.constants")
 
@@ -408,6 +464,98 @@ def grade_image_roi(
             "task": "hemorrhage",
         },
         "germinoma": germinoma_cls,
+        "disclaimer": constants.DISCLAIMER,
+        "_review_png": _to_png_bytes(review_img),
+    }
+
+
+def _grade_thorax(
+    image_bytes: bytes,
+    filename: str,
+    *,
+    roi_args: dict,
+    include_overlay: bool,
+) -> dict:
+    """흉부 X-ray 채점. 응답 형식은 뇌 CT 채점과 같다 (germinoma 는 항상 None)."""
+    config = import_module("class.thorax.config")
+    constants = import_module("class.thorax.constants")
+
+    if len(image_bytes) > config.MAX_UPLOAD_BYTES:
+        raise ValueError("이미지가 너무 큽니다 (최대 5MB).")
+    if len(image_bytes) < 64:
+        raise ValueError("유효한 이미지가 아닙니다.")
+
+    thorax = load_thorax()
+    ensure_thorax(thorax)
+    service = thorax.ensemble_service
+
+    try:
+        img_uint8 = thorax.Preprocess.load_image_uint8_from_bytes(
+            image_bytes, filename or "roi.png"
+        )
+    except Exception as exc:
+        raise ValueError(f"이미지 디코딩 실패: {exc}") from exc
+
+    h, w = img_uint8.shape[:2]
+    user = roi_mask(h, w, **roi_args)
+
+    classes = list(service.classes)
+    probs = service.predict(img_uint8)
+    _, mask_union, per_class, targets = thorax.Localization.locate_abnormality(
+        service, img_uint8, probs, classes=classes
+    )
+    scored = grade_overlap(user, mask_union)
+
+    overlay_b64 = None
+    overlay_summary = None
+    overlay = None
+    if scored["has_abnormality"]:
+        overlay = thorax.Localization.build_overlay_image(img_uint8, per_class)
+        overlay_summary = thorax.Localization.summarize_targets(
+            per_class, targets, classes=classes
+        )
+        if include_overlay:
+            overlay_b64 = thorax.Localization.overlay_to_base64(overlay)
+
+    review_img = draw_user_roi(
+        overlay if overlay is not None else img_uint8,
+        user,
+        roi_args["roi_type"],
+    )
+
+    findings = [
+        {
+            "label": name,
+            "label_ko": constants.class_ko(name),
+            "score": float(probs[i]),
+        }
+        for i, name in enumerate(classes)
+    ]
+    findings.sort(key=lambda f: f["score"], reverse=True)
+    top = findings[0]
+
+    return {
+        "ok": True,
+        "result": scored["result"],
+        "has_abnormality": scored["has_abnormality"],
+        "iou": scored["iou"],
+        "recall": scored["recall"],
+        "precision": scored["precision"],
+        "near_center": scored["near_center"],
+        "center_distance_px": scored["center_distance_px"],
+        "overlay_png_base64": overlay_b64,
+        "overlay_summary": overlay_summary,
+        "abnormality_bbox": _bbox_from_mask(mask_union),
+        "user_roi_bbox": _bbox_from_mask(user),
+        "image": {"width": w, "height": h},
+        "classification": {
+            "top_label": top["label"],
+            "top_label_ko": top["label_ko"],
+            "confidence": top["score"],
+            "findings": findings,
+            "task": "thorax",
+        },
+        "germinoma": None,
         "disclaimer": constants.DISCLAIMER,
         "_review_png": _to_png_bytes(review_img),
     }
