@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>문제 풀이 | 메디스캔 노트</title>
+  <link rel="stylesheet" href="/assets/css/learning-case.css">
+  <script src="/assets/js/learning-case.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/learning/case">메디스캔 <span>노트</span></a>
+    <span class="mode" id="modeLabel">CASE SOLVING</span>
+    <span class="crumb" id="crumb">문제 불러오는 중</span>
+  </header>
+
+  <main class="layout">
+    <!-- ===== 문제 풀이 ===== -->
+    <section class="case" id="solveView" aria-labelledby="caseTitle">
+      <div class="case-head">
+        <div class="case-no"><small>CASE</small><strong id="caseNo">--</strong></div>
+        <div class="case-text">
+          <h1 id="caseTitle">이상 소견이 의심되는 부위를 표시하세요</h1>
+          <p id="caseGuide">영상을 불러오는 중입니다.</p>
+        </div>
+      </div>
+
+      <div class="toolbar" role="toolbar" aria-label="ROI 도구">
+        <div class="seg" role="group" aria-label="그리기 도구">
+          <button type="button" class="tool" data-tool="circle" aria-pressed="false"><span class="ico ico-circle" aria-hidden="true"></span>원</button>
+          <button type="button" class="tool" data-tool="box" aria-pressed="true"><span class="ico ico-box" aria-hidden="true"></span>박스</button>
+          <button type="button" id="clearRoi" class="tool"><span class="ico ico-erase" aria-hidden="true"></span>지우기</button>
+        </div>
+        <p class="hint" id="toolHint">영상 위를 드래그해 영역을 지정하세요.</p>
+        <div class="slice" id="sliceBox" hidden>
+          <label for="sliceRange">슬라이스 <output id="sliceLabel">1 / 1</output></label>
+          <input id="sliceRange" type="range" min="0" max="0" value="0">
+        </div>
+        <button type="button" class="submit" id="submitBtn" disabled>제출</button>
+      </div>
+
+      <div class="viewer" id="viewer">
+        <div class="rail" role="group" aria-label="영상 보기 도구">
+          <button type="button" id="zoomIn" title="확대"><span class="ico ico-plus" aria-hidden="true"></span>확대</button>
+          <button type="button" id="zoomOut" title="축소"><span class="ico ico-minus" aria-hidden="true"></span>축소</button>
+          <button type="button" id="zoomOne" title="원본 크기">1:1<small>기본크기</small></button>
+          <button type="button" class="tool" data-tool="pan" aria-pressed="false" title="이동"><span class="ico ico-pan" aria-hidden="true"></span>팬</button>
+          <button type="button" class="tool" data-tool="window" aria-pressed="false" title="밝기·대비"><span class="ico ico-sun" aria-hidden="true"></span>윈도우</button>
+          <button type="button" id="resetView" title="처음 상태로"><span class="ico ico-reset" aria-hidden="true"></span>리셋</button>
+        </div>
+        <canvas id="stage" aria-label="문제 영상. 드래그해 ROI 를 그립니다."></canvas>
+        <p class="readout" id="readout">밝기 100% / 대비 100%</p>
+        <p class="viewer-msg" id="viewerMsg" role="status" aria-live="polite">영상을 불러오는 중입니다.</p>
+      </div>
+      <p class="status" id="status" role="status" aria-live="polite" hidden></p>
+    </section>
+
+    <!-- ===== 채점 결과 ===== -->
+    <section class="result" id="resultView" hidden aria-labelledby="resultTitle">
+      <div class="result-head">
+        <h1 id="resultTitle" class="visually-hidden">채점 결과</h1>
+        <span class="label">결과</span>
+        <span class="badge" id="resultBadge">-</span>
+        <p id="resultMessage"></p>
+      </div>
+      <div class="result-body">
+        <figure class="result-image">
+          <div class="frame" id="resultFrame">
+            <img id="resultImage" alt="채점 결과 영상">
+          </div>
+          <figcaption>
+            <span class="key key-user"></span>내가 표시한 영역
+            <span class="key key-answer"></span>이상 부위(채점 기준)
+          </figcaption>
+        </figure>
+        <div class="result-side">
+          <h2>결과 요약</h2>
+          <div class="cards">
+            <div class="card"><small>종류</small><strong id="sumDisease">-</strong><span id="sumDiseaseNote" class="note">정답 병명</span></div>
+            <div class="card"><small>ROI 정확도</small><strong id="sumIou">-</strong><span id="sumIouNote" class="note">겹침(IoU)</span></div>
+            <div class="card wide"><small>위치 (채점 기준 영역)</small><strong id="sumPlace">-</strong></div>
+          </div>
+          <h2>AI 참고 소견</h2>
+          <ul class="findings" id="findings"></ul>
+          <h2>핵심 의학용어</h2>
+          <div class="terms" id="resultTerms"></div>
+          <p class="disclaimer" id="disclaimer"></p>
+          <div class="actions">
+            <button type="button" class="primary" id="nextBtn">다음 케이스</button>
+            <button type="button" id="retryBtn">같은 영상 다시 보기</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 의학용어 사전 ===== -->
+    <aside class="glossary" aria-labelledby="glossaryTitle">
+      <h2 id="glossaryTitle">의학용어 사전</h2>
+      <label class="search"><span class="visually-hidden">용어 검색</span>
+        <input id="termSearch" type="search" placeholder="검색어를 입력하세요" autocomplete="off">
+      </label>
+      <div class="chips" id="termChips" role="group" aria-label="분류"></div>
+      <ul class="term-list" id="termList"><li class="empty">용어를 불러오는 중입니다.</li></ul>
+    </aside>
+  </main>
+</body>
+</html>

@@ -10,6 +10,8 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
 - /learning/problem   : 랜덤 학습 문제 1건
+- /learning/problem/{idx}/image : 문제 영상 한 장 (NAS 에서 대신 받아 줌)
+- /learning/case      : 학습자 문제 풀이·채점 결과 화면 (HTML)
 - /learning/submit    : 병명 제출·채점 + 다음 문제
 - /learning/roi-grade : 이미지+ROI 제출 채점 (MRI는 slice_index/image_path, 리뷰 저장 포함)
 - /items/{item_id}    : (연습용) 입력값 검증 테스트
@@ -17,7 +19,11 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 입력값이 잘못되면 exception_handlers 가 422와 로그를 남긴다.
 """
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -41,6 +47,7 @@ from utils.qa_sse import qa_events
 from utils.review_sse import review_events
 
 router = APIRouter(tags=["commonness"])
+templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
 
 
 class LearningSubmitBody(BaseModel):
@@ -339,6 +346,43 @@ def learning_problem(
     return {"ok": True, "problem": _problem_payload(row)}
 
 
+@router.get("/learning/case", include_in_schema=False)
+def learning_case_page(request: Request):
+    """학습자 문제 풀이 화면. 예) /learning/case?part=chest&modal=xray"""
+    return templates.TemplateResponse(request=request, name="learning_case.html", context={})
+
+
+@router.get("/learning/problem/{study_idx}/image")
+async def learning_problem_image(
+        study_idx: int,
+        slice_index: int = Query(0, ge=0, description="MRI 슬라이스 순번(0부터). 단일 영상은 0"),
+        db: Session = Depends(get_db),
+):
+    """
+    문제 영상 한 장을 돌려준다.
+    NAS 공개 주소에서 서버가 대신 받아 같은 출처로 주므로, 화면이 이 영상을 그대로 /learning/roi-grade 에 올릴 수 있다.
+    """
+    try:
+        content, media_type, filename = await learning_service.fetch_problem_image(
+            db, study_idx, slice_index
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except learning_service.ProblemImageError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, max-age=600",
+            # 한글 파일 이름은 헤더(latin-1)에 그대로 못 넣으므로 RFC 5987 형식으로 보낸다
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+        },
+    )
+
+
 @router.post("/learning/submit")
 def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
     """
@@ -549,6 +593,10 @@ async def learning_roi_grade(
         result.pop("_review_png", None)
 
     result.update(saved)
+    # 제출한 뒤에만 정답 병명을 보여 준다 (문제 화면에서는 숨김)
+    if study_idx is not None:
+        answered = study_repositories.get_by_idx(db, int(study_idx))
+        result["expected_disease"] = answered.st_disease if answered else None
 
     await review_events.publish(
         "review_created",

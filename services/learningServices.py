@@ -1,4 +1,7 @@
+import httpx
 from sqlalchemy.orm import Session
+
+from config import settings
 
 from models.medicalTermsModel import MedicalTermsModel
 from models.studyModel import StudyModel
@@ -12,6 +15,20 @@ from schemas.studySchemas import (
 )
 
 ALLOWED_BODY_PARTS = {"brain", "chest", "abdomen", "knee", "other"}
+
+# 문제 영상 대신 받기 (/learning/problem/{idx}/image)
+PROBLEM_IMAGE_TYPES = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+}
+MAX_PROBLEM_IMAGE_BYTES = 20 * 1024 * 1024
+
+
+class ProblemImageError(Exception):
+    """NAS 에서 문제 영상을 받지 못했다."""
 ALLOWED_MODALITIES = {"xray", "ct", "mri", "common"}
 
 
@@ -202,6 +219,69 @@ def resolve_roi_grade_target(
             return None
 
     return _safe(resolve_st_part, st_part), _safe(resolve_st_modal, st_modal)
+
+
+def problem_image_paths(row: StudyModel) -> list[str]:
+    """study.st_image → 영상 웹 경로 목록. MRI 는 여러 장, 그 밖에는 한 장."""
+    paths = parse_study_image_paths(row.st_image)
+    if paths:
+        return paths
+    single = (row.st_image or "").strip()
+    return [single] if single else []
+
+
+def problem_image_url(path: str) -> str:
+    """DB 웹 경로 → NAS 공개 URL. (관리자 화면의 미리보기 주소와 같은 규칙)"""
+    web_path = path if path.startswith("/") else f"/{path}"
+    base = (settings.nas_public_base_url or "").rstrip("/")
+    return f"{base}{web_path}" if base else web_path
+
+
+async def fetch_problem_image(
+    db: Session,
+    study_idx: int,
+    slice_index: int = 0,
+) -> tuple[bytes, str, str]:
+    """
+    문제 영상 한 장을 NAS 공개 주소에서 받아 돌려준다. → (바이트, MIME, 파일 이름)
+
+    브라우저가 NAS 에서 직접 받으면 다른 출처(CORS) 때문에 채점 API 로 다시 보내지 못할 수 있어
+    같은 서버가 대신 받는다. 주소는 study 행에서만 만들고, 요청 값으로 임의 URL 을 받지 않는다.
+    """
+    row = study_repositories.get_by_idx(db, int(study_idx))
+    if row is None or row.del_yn != "N":
+        raise LookupError("학습 문제를 찾을 수 없습니다.")
+    paths = problem_image_paths(row)
+    if not paths:
+        raise LookupError("문제에 등록된 영상이 없습니다.")
+    if slice_index < 0 or slice_index >= len(paths):
+        raise ValueError(f"slice_index 는 0~{len(paths) - 1} 사이여야 합니다.")
+
+    path = paths[slice_index]
+    name = path.replace("\\", "/").rsplit("/", 1)[-1] or "problem.png"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    media_type = PROBLEM_IMAGE_TYPES.get(ext)
+    if media_type is None:
+        raise ValueError(f"지원하지 않는 영상 형식입니다: {ext or '확장자 없음'}")
+
+    url = problem_image_url(path)
+    if not url.startswith(("http://", "https://")):
+        raise ProblemImageError("NAS_PUBLIC_BASE_URL 이 설정되지 않았습니다.")
+    try:
+        async with httpx.AsyncClient(
+            verify=settings.nas_verify_ssl,
+            timeout=settings.nas_timeout,
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(url)
+    except httpx.HTTPError as exc:
+        raise ProblemImageError(f"NAS 연결 실패: {exc.__class__.__name__}") from exc
+    if response.status_code != 200:
+        raise ProblemImageError(f"NAS 응답 {response.status_code}")
+    content = response.content
+    if len(content) > MAX_PROBLEM_IMAGE_BYTES:
+        raise ProblemImageError("영상이 너무 큽니다.")
+    return content, media_type, name
 
 
 def submit_problem(
