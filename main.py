@@ -34,7 +34,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, commonness, brain, user
+from routers import admin, commonness, brain, user, account
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -197,6 +197,7 @@ app.include_router(admin.router)
 
 # commonness: 학습자 JSON API (로그인·Q&A·학습·팝업·용어사전)
 app.include_router(commonness.router)
+app.include_router(account.router)
 
 # user: 사용자 API 자리 (현재 GET /text 테스트만)
 app.include_router(user.router)
