@@ -81,24 +81,40 @@ def overlay_to_base64(overlay: np.ndarray) -> str:
 
 def summarize_targets(per_class: dict, *, classes: list[str]) -> str:
     """
-    UI용 한 줄 요약 (예: '흉막삼출 (신뢰도 0.42, 하부-환자 좌측, 박스 1개)').
+    UI용 한 줄 요약 (예: '흉막삼출: 하부-환자 우측 0.28, 중부-환자 좌측 0.08').
 
     흉부 PA 영상은 화면 왼쪽이 환자의 오른쪽이다. 좌우는 환자 기준으로 적는다.
+    박스마다 위치와 신뢰도를 적는다(신뢰도 순, 같은 위치는 묶고 최대 SUMMARY_MAX_PLACES 곳).
+    박스 하나만 고르면 위양성 박스가 진짜 병변보다 점수가 높을 때 위치를 잘못 알려 준다.
     """
     bits = []
     for name in classes:
         info = per_class.get(name)
-        if not info or not info["mask"].any():
+        if not info or not info["boxes"]:
             continue
-        ys, xs = np.where(info["mask"])
-        cy, cx = float(np.mean(ys)), float(np.mean(xs))
         h, w = info["mask"].shape
-        vert = "상부" if cy < h / 3 else ("하부" if cy > 2 * h / 3 else "중부")
-        side = "환자 우측" if cx < w / 3 else ("환자 좌측" if cx > 2 * w / 3 else "중앙")
-        bits.append(
-            f"{class_ko(name)} (신뢰도 {info['prob']:.2f}, {vert}-{side}, 박스 {len(info['boxes'])}개)"
-        )
+        # 같은 위치의 박스는 하나로 묶고 가장 높은 신뢰도와 개수를 적는다
+        places: dict[str, list[float]] = {}
+        for (x1, y1, x2, y2), conf in sorted(info["boxes"], key=lambda b: b[1], reverse=True):
+            places.setdefault(_place((y1 + y2) / 2, (x1 + x2) / 2, h, w), []).append(conf)
+        parts = []
+        for place, confs in list(places.items())[:SUMMARY_MAX_PLACES]:
+            count = f" (박스 {len(confs)}개)" if len(confs) > 1 else ""
+            parts.append(f"{place} {confs[0]:.2f}{count}")
+        if len(places) > SUMMARY_MAX_PLACES:
+            parts.append(f"외 {len(places) - SUMMARY_MAX_PLACES}곳")
+        bits.append(f"{class_ko(name)}: " + ", ".join(parts))
     return "; ".join(bits) if bits else "강조된 이상 부위 없음"
+
+
+SUMMARY_MAX_PLACES = 3
+
+
+def _place(cy: float, cx: float, h: int, w: int) -> str:
+    """위아래는 3등분, 좌우는 가운데 20%(종격동 폭)만 중앙으로 본다."""
+    vert = "상부" if cy < h / 3 else ("하부" if cy > 2 * h / 3 else "중부")
+    side = "환자 우측" if cx < w * 0.4 else ("환자 좌측" if cx > w * 0.6 else "중앙")
+    return f"{vert}-{side}"
 
 
 class Localization:

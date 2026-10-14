@@ -171,6 +171,16 @@ def test_package_settings_are_passed_to_model(detector):
     assert detector.classes == ["airspace_opacity", "pleural_effusion"]
 
 
+def test_summary_lists_each_box_by_confidence():
+    """위양성 박스가 진짜 병변보다 점수가 높아도 두 위치를 모두 알려 준다."""
+    img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    dets = [thorax.Detection("pleural_effusion", 0.28, (5, 170, 20, 190)),
+            thorax.Detection("pleural_effusion", 0.08, (120, 70, 190, 150))]
+    _, per_class = thorax.Localization.locate_abnormality(dets, img)
+    summary = thorax.Localization.summarize_targets(per_class, classes=["pleural_effusion"])
+    assert summary == "흉막삼출: 하부-환자 우측 0.28, 중부-환자 좌측 0.08"
+
+
 def test_scores_are_best_box_confidence_per_finding():
     service = thorax.ThoraxDetector()
     service.use_models(fake_models(opacity_rows=[((0, 0, 10, 10), 0.2, 0), ((5, 5, 20, 20), 0.6, 0)]))
@@ -202,8 +212,7 @@ def test_analyze_returns_same_format_as_brain(client, detector):
     assert body["germinoma"] is None
     assert body["overlay_png_base64"]
     # 화면 왼쪽 위 = 환자 우측 상부, 오른쪽 아래 = 환자 좌측 하부
-    assert "폐음영 (신뢰도 0.42, 상부-환자 우측, 박스 1개)" in body["overlay_summary"]
-    assert "흉막삼출 (신뢰도 0.31, 하부-환자 좌측, 박스 1개)" in body["overlay_summary"]
+    assert body["overlay_summary"] == "폐음영: 상부-환자 우측 0.42; 흉막삼출: 하부-환자 좌측 0.31"
     assert body["disclaimer"] == constants.DISCLAIMER
 
 
