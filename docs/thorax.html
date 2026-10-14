@@ -34,7 +34,7 @@
     </div>
 
     <h2>모델 패키지란</h2>
-    <p>소견 하나당 폴더 하나입니다. 안에 가중치 <code>best.pt</code>와 설정 <code>inference_config.json</code>이 있습니다. 설정에는 소견 이름, 입력 크기, 판정 기준값(confidence), 겹친 박스 정리 기준(NMS), 최대 박스 수가 들어 있습니다. 서버는 이 값을 그대로 씁니다.</p>
+    <p>소견 하나당 폴더 하나입니다. 안에 가중치 <code>best.pt</code>와 설정 <code>inference_config.json</code>이 있습니다. 설정에는 소견 이름, 입력 크기, 판정 기준값(confidence), 겹친 박스 정리 기준(NMS), 최대 박스 수가 들어 있습니다. 선택으로 <code>minimum_area_ratio</code>(이미지 면적 대비 이보다 작은 박스는 버림)를 넣을 수 있습니다. 서버는 이 값을 그대로 씁니다.</p>
 
     <h2>한 번 요청이 지나가는 순서</h2>
     <ol>

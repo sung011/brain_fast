@@ -181,6 +181,17 @@ def test_summary_lists_each_box_by_confidence():
     assert summary == "흉막삼출: 하부-환자 우측 0.28, 중부-환자 좌측 0.08"
 
 
+def test_small_boxes_are_dropped_by_minimum_area_ratio():
+    """v2.3 설정처럼 minimum_area_ratio 가 있으면 이미지 면적 대비 작은 박스를 버린다."""
+    model = thorax.FindingModel(
+        "effusion", {"class_names": {"0": "Pleural effusion"}, "confidence_threshold": 0.1,
+                     "minimum_area_ratio": 0.003},
+        FakePredictor([((0, 0, 10, 10), 0.9, 0),        # 100px / 40000 = 0.0025 → 버림
+                       ((0, 0, 20, 20), 0.2, 0)]))      # 400px / 40000 = 0.01 → 남김
+    detections = model.detect(np.zeros((SIZE, SIZE, 3), dtype=np.uint8))
+    assert [d.confidence for d in detections] == [0.2]
+
+
 def test_scores_are_best_box_confidence_per_finding():
     service = thorax.ThoraxDetector()
     service.use_models(fake_models(opacity_rows=[((0, 0, 10, 10), 0.2, 0), ((5, 5, 20, 20), 0.6, 0)]))
@@ -304,7 +315,9 @@ REAL_DIR = os.environ.get("THORAX_TEST_LOCAL_DIR", "")
 @pytest.mark.skipif(not REAL_DIR, reason="THORAX_TEST_LOCAL_DIR 이 없으면 실제 모델 테스트를 건너뛴다")
 def test_real_packages_load_and_run(monkeypatch):
     pytest.importorskip("ultralytics")
-    packages = sorted(p.name for p in Path(REAL_DIR).iterdir() if p.is_dir())
+    # inference_config.json 이 있는 폴더만 패키지로 본다 (zip 을 풀면 한 단계 더 들어갈 수 있다)
+    packages = sorted(p.name for p in Path(REAL_DIR).iterdir()
+                      if (p / "inference_config.json").is_file() or (p / p.name / "inference_config.json").is_file())
     monkeypatch.setattr(thorax_config, "LOCAL_DIR", REAL_DIR)
     monkeypatch.setattr(thorax_config, "PACKAGES", packages)
     service = thorax.ThoraxDetector()

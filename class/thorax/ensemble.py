@@ -7,7 +7,8 @@
 패키지 폴더:
     best.pt                 가중치 (Ultralytics YOLO)
     inference_config.json   class_names, image_size, confidence_threshold,
-                            nms_iou_threshold, max_detections
+                            nms_iou_threshold, max_detections,
+                            minimum_area_ratio(선택: 이미지 면적 대비 이보다 작은 박스는 버린다)
 소견 이름은 모델 파일 안의 이름이 아니라 inference_config.json 의 class_names 를 쓴다.
 (흉막삼출 모델은 파일 안에 'item' 으로 저장되어 있다.)
 """
@@ -54,6 +55,8 @@ class FindingModel:
         self.confidence = float(settings.get("confidence_threshold", 0.25))
         self.nms_iou = float(settings.get("nms_iou_threshold", 0.7))
         self.max_det = int(settings.get("max_detections", 100))
+        # 학습 노트북의 후처리 규칙과 같은 이름. 없으면 0 (거르지 않음)
+        self.min_area_ratio = float(settings.get("minimum_area_ratio") or 0.0)
 
     def detect(self, img_uint8: np.ndarray) -> list[Detection]:
         result = self.predictor.predict(
@@ -68,11 +71,15 @@ class FindingModel:
         boxes = result.boxes
         if boxes is None or len(boxes) == 0:
             return out
+        image_area = float(img_uint8.shape[0] * img_uint8.shape[1]) or 1.0
         for xyxy, conf, cls in zip(
             boxes.xyxy.cpu().tolist(), boxes.conf.cpu().tolist(), boxes.cls.cpu().tolist()
         ):
             code = self.findings.get(int(cls))
             if code is None:
+                continue
+            x1, y1, x2, y2 = xyxy
+            if (x2 - x1) * (y2 - y1) / image_area < self.min_area_ratio:
                 continue
             out.append(Detection(code, float(conf), tuple(float(v) for v in xyxy)))
         return out
