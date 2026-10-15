@@ -1,4 +1,4 @@
-"""학습자 문제 풀이 화면(/learning/case)과 문제 영상 대신 받기, 채점 후 정답 병명을 검증한다.
+"""문제 영상 대신 받기(/learning/problem/{idx}/image)와 채점 후 정답 병명을 검증한다.
 
 NAS 는 httpx.MockTransport 로 흉내 낸다. 실제 NAS·모델은 쓰지 않는다.
 """
@@ -70,15 +70,6 @@ def app_client(monkeypatch):
     with TestClient(app) as client:
         yield client, requested
     engine.dispose()
-
-
-def test_case_page_and_assets(app_client):
-    client, _ = app_client
-    page = client.get("/learning/case?part=chest&modal=xray")
-    assert page.status_code == 200
-    assert 'id="stage"' in page.text and 'id="submitBtn"' in page.text
-    assert client.get("/assets/js/learning-case.js").status_code == 200
-    assert client.get("/assets/css/learning-case.css").status_code == 200
 
 
 def test_problem_image_is_fetched_from_study_path(app_client):

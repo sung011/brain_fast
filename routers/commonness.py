@@ -11,7 +11,6 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /glossary           : 의학용어 사전 조회
 - /learning/problem   : 랜덤 학습 문제 1건
 - /learning/problem/{idx}/image : 문제 영상 한 장 (NAS 에서 대신 받아 줌)
-- /learning/case      : 학습자 문제 풀이·채점 결과 화면 (HTML)
 - /learning/submit    : 병명 제출·채점 + 다음 문제
 - /learning/roi-grade : 이미지+ROI 제출 채점 (MRI는 slice_index/image_path, 리뷰 저장 포함)
 - /items/{item_id}    : (연습용) 입력값 검증 테스트
@@ -19,11 +18,9 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 입력값이 잘못되면 exception_handlers 가 422와 로그를 남긴다.
 """
 
-from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
-from fastapi.templating import Jinja2Templates
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -47,7 +44,6 @@ from utils.qa_sse import qa_events
 from utils.review_sse import review_events
 
 router = APIRouter(tags=["commonness"])
-templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
 
 
 class LearningSubmitBody(BaseModel):
@@ -346,12 +342,6 @@ def learning_problem(
     return {"ok": True, "problem": _problem_payload(row)}
 
 
-@router.get("/learning/case", include_in_schema=False)
-def learning_case_page(request: Request):
-    """학습자 문제 풀이 화면. 예) /learning/case?part=chest&modal=xray"""
-    return templates.TemplateResponse(request=request, name="learning_case.html", context={})
-
-
 @router.get("/learning/problem/{study_idx}/image")
 async def learning_problem_image(
         study_idx: int,
@@ -360,7 +350,8 @@ async def learning_problem_image(
 ):
     """
     문제 영상 한 장을 돌려준다.
-    NAS 공개 주소에서 서버가 대신 받아 같은 출처로 주므로, 화면이 이 영상을 그대로 /learning/roi-grade 에 올릴 수 있다.
+    NAS 공개 주소에서 서버가 대신 받아 주므로, 학습자 화면(Vue)이 NAS 의 CORS 설정과 상관없이
+    영상을 받아 그대로 /learning/roi-grade 에 올릴 수 있다.
     """
     try:
         content, media_type, filename = await learning_service.fetch_problem_image(
