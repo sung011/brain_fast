@@ -152,7 +152,7 @@ app = FastAPI(lifespan=lifespan)
 def screen_analyze_page(request: Request):
     """
     메인 화면(/).
-    화면 공유 → 관심 영역(ROI) 선택 → 분석하는 MediLens 화면을 연다.
+    화면 공유 → 관심 영역(ROI) 선택 → 분석하는 메디스캔노트 화면을 연다.
     """
     return templates.TemplateResponse(
         request,
