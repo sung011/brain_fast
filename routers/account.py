@@ -1,11 +1,8 @@
-"""학습자 계정찾기 화면·API. 기존 commonness 라우터와 분리한다."""
-from pathlib import Path
-
+"""학습자 계정찾기 API. 화면은 학습자 Vue 프로젝트의 /find-account 가 맡는다. 기존 commonness 라우터와 분리한다."""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from db import get_db
@@ -34,18 +31,12 @@ class AccountRoute(APIRoute):
 
 
 router = APIRouter(tags=["account"], route_class=AccountRoute)
-templates = Jinja2Templates(directory=Path(__file__).resolve().parents[1] / "templates")
 NOT_FOUND = "입력하신 정보와 일치하는 회원을 찾을 수 없습니다."
 TOO_MANY = "시도 횟수가 너무 많습니다. 10분 후 다시 시도해 주세요."
 
 
 def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
-
-
-@router.get("/find-account", include_in_schema=False)
-def find_account_page(request: Request):
-    return templates.TemplateResponse(request=request, name="find_account.html", context={})
 
 
 @router.post("/find-id")

@@ -1,9 +1,6 @@
 """실제 임시 DB로 계정찾기·탈퇴 회원 제외·해시 저장·로그인을 검증한다."""
-from pathlib import Path
-
 import pytest
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
@@ -35,7 +32,6 @@ def recovery():
         db.commit()
     app = FastAPI()
     app.include_router(router)
-    app.mount("/assets", StaticFiles(directory=Path(__file__).resolve().parents[1] / "assets"), name="assets")
 
     def test_db():
         with Session(engine) as db:
@@ -47,14 +43,10 @@ def recovery():
     engine.dispose()
 
 
-def test_page_and_assets(recovery):
+def test_screen_moved_to_vue(recovery):
+    # 화면은 학습자 Vue 프로젝트가 맡는다. 이 서버는 API 만 둔다.
     client, _ = recovery
-    response = client.get("/find-account")
-    assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
-    assert 'id="resetSection"' in response.text
-    assert client.get("/assets/js/find-account.js").status_code == 200
-    assert client.get("/assets/css/find-account.css").status_code == 200
+    assert client.get("/find-account").status_code == 404
 
 
 def test_find_id_excludes_deleted_and_returns_no_password(recovery):
