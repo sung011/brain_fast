@@ -11,6 +11,9 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /glossary           : 의학용어 사전 조회
 - /learning/problem   : 랜덤 학습 문제 1건
 - /learning/problem/{idx}/image : 문제 영상 한 장 (NAS 에서 대신 받아 줌)
+- /learning/problem/{idx} : 문제 번호로 1건 (오답노트 '다시 풀기', 정답 숨김)
+- /learning/reviews  : 내 오답노트 목록 (기본: 오답·부분정답)
+- /learning/reviews/{idx} : 오답 상세 + 다시 풀 문제
 - /learning/submit    : 병명 제출·채점 + 다음 문제
 - /learning/roi-grade : 이미지+ROI 제출 채점 (MRI는 slice_index/image_path, 리뷰 저장 포함)
 - /items/{item_id}    : (연습용) 입력값 검증 테스트
@@ -38,7 +41,6 @@ from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
-from services.nasServices import NasNotConfiguredError, NasUploadError
 from utils.qa_sse import qa_events
 from utils.review_sse import review_events
 
@@ -341,6 +343,49 @@ def learning_problem(
     return {"ok": True, "problem": _problem_payload(row)}
 
 
+@router.get("/learning/problem/{study_idx}")
+def learning_problem_by_idx(study_idx: int, db: Session = Depends(get_db)):
+    """
+    문제 번호로 1건. 오답노트의 '다시 풀기'에 쓴다. 정답(st_disease)은 숨긴다.
+    삭제·비활성 문제면 404.
+    """
+    row = learning_service.get_problem(db, study_idx)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="학습 문제를 찾을 수 없습니다.")
+    return {"ok": True, "problem": _problem_payload(row)}
+
+
+@router.get("/learning/reviews")
+def learning_reviews(
+        user_idx: int = Query(..., description="로그인 사용자 idx"),
+        solution: str | None = Query(
+            None, description="결과 코드 C(정답)·H(부분정답)·W(오답)를 쉼표로. all 이면 전체. 기본 W,H"
+        ),
+        limit: int = Query(50, ge=1, le=200),
+        db: Session = Depends(get_db),
+):
+    """내 오답노트 목록. 최신순. 기본은 오답·부분정답만."""
+    try:
+        solutions = review_node_service.parse_solutions(solution)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    items = review_node_service.list_for_learner(db, user_idx, solutions=solutions, limit=limit)
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@router.get("/learning/reviews/{review_idx}")
+def learning_review_detail(
+        review_idx: int,
+        user_idx: int = Query(..., description="로그인 사용자 idx. 본인 기록만 볼 수 있다"),
+        db: Session = Depends(get_db),
+):
+    """오답 상세. problem 이 있으면 그 문제를 다시 풀 수 있다 (정답 제외)."""
+    item = review_node_service.get_for_learner(db, review_idx, user_idx)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="풀이 기록을 찾을 수 없습니다.")
+    return {"ok": True, "review": item}
+
+
 @router.get("/learning/problem/{study_idx}/image")
 async def learning_problem_image(
         study_idx: int,
@@ -486,6 +531,8 @@ async def learning_roi_grade(
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
+    - NAS 가 꺼져 있거나 업로드에 실패해도 채점 결과와 review_node 기록은 남긴다.
+      이때 image_saved=false, image_error 에 이유가 들어간다.
     - user_idx + study_idx 를 넣으면 제출 이력이 남아
       이후 GET /learning/problem?user_idx=... 에서 같은 문제가 제외된다.
     - next: 방금 푼 문제를 제외한 다음 랜덤 문제(없으면 null).
@@ -552,20 +599,11 @@ async def learning_roi_grade(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except NasNotConfiguredError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except NasUploadError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"NAS 업로드 실패: {exc}",
-        ) from exc
     except Exception as exc:
+        # DB 오류 내용은 응답에 넣지 않는다 (서버 로그에는 예외 처리기가 남긴다)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"리뷰 저장 실패: {exc}",
+            detail="채점 기록을 저장하지 못했습니다. 잠시 후 다시 제출해 주세요.",
         ) from exc
     finally:
         result.pop("_review_png", None)

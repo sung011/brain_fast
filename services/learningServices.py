@@ -221,6 +221,14 @@ def resolve_roi_grade_target(
     return _safe(resolve_st_part, st_part), _safe(resolve_st_modal, st_modal)
 
 
+def get_problem(db: Session, study_idx: int) -> StudyModel | None:
+    """문제 번호로 활성 문제 1건 (오답노트 '다시 풀기'). 삭제·비활성이면 None."""
+    row = study_repositories.get_by_idx(db, int(study_idx))
+    if row is None or row.del_yn != "N" or row.state != "N":
+        return None
+    return row
+
+
 def problem_image_paths(row: StudyModel) -> list[str]:
     """study.st_image → 영상 웹 경로 목록. MRI 는 여러 장, 그 밖에는 한 장."""
     paths = parse_study_image_paths(row.st_image)

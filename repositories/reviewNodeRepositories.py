@@ -41,6 +41,49 @@ def list_with_details(
     return list(db.execute(stmt).all())
 
 
+def list_for_user(
+    db: Session,
+    user_idx: int,
+    *,
+    solutions: list[str] | None = None,
+    limit: int | None = None,
+) -> list[tuple[ReviewNodeModel, StudyModel | None]]:
+    """학습자 본인의 풀이 기록 + 문제. 최신순. solutions 가 있으면 그 결과 코드(C/H/W)만."""
+    stmt = (
+        select(ReviewNodeModel, StudyModel)
+        .outerjoin(StudyModel, StudyModel.idx == ReviewNodeModel.rn_s_idx)
+        .where(
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+        )
+        .order_by(ReviewNodeModel.created_at.desc(), ReviewNodeModel.idx.desc())
+    )
+    if solutions:
+        stmt = stmt.where(ReviewNodeModel.rn_solution.in_(solutions))
+    if limit is not None and limit > 0:
+        stmt = stmt.limit(limit)
+    return list(db.execute(stmt).all())
+
+
+def get_for_user(
+    db: Session,
+    review_idx: int,
+    user_idx: int,
+) -> tuple[ReviewNodeModel, StudyModel | None] | None:
+    """학습자 본인의 풀이 기록 1건. 다른 사람 기록이면 None."""
+    stmt = (
+        select(ReviewNodeModel, StudyModel)
+        .outerjoin(StudyModel, StudyModel.idx == ReviewNodeModel.rn_s_idx)
+        .where(
+            ReviewNodeModel.idx == review_idx,
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+        )
+    )
+    row = db.execute(stmt).first()
+    return (row[0], row[1]) if row else None
+
+
 def count_by_user(db: Session, user_idx: int) -> int:
     """해당 사용자의 풀이(제출) 건수."""
     stmt = (
