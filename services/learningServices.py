@@ -47,7 +47,7 @@ def get_by_body_part(
 
     modal: str | None = None
     if modality is not None and modality.strip():
-        modal = modality.strip().lower()
+        modal = modality.strip().lower().replace("-", "")  # 화면은 X-ray 로 보낸다
         if modal not in ALLOWED_MODALITIES:
             raise ValueError(
                 "영상 종류(type)는 xray, ct, mri, common 중 하나여야 합니다."
