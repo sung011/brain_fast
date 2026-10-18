@@ -444,5 +444,18 @@ def test_learning_note_for_chest_answer():
 def test_learning_note_unknown_or_brain_is_none():
     assert thorax.learning_note(None) is None
     assert thorax.learning_note("폐결절") is None
-    assert roiGradeServices.learning_note("1", "흉막삼출") is None
-    assert roiGradeServices.learning_note("2", "기흉")["code"] == "pneumothorax"
+    from services import learningNoteServices
+
+    assert learningNoteServices.get_learning_note("1", "흉막삼출") is None
+    note = learningNoteServices.get_learning_note("2", "기흉")
+    assert note["code"] == "pneumothorax" and note["source"] == "static"
+
+
+def test_learning_note_prefers_rag_and_fills_missing_keys(monkeypatch):
+    from services import learningNoteServices
+
+    # 의학용어 사전(RAG)이 연결되면 그쪽이 먼저다. 빠진 키는 빈 값으로 채운다
+    monkeypatch.setattr(learningNoteServices, "_from_rag", lambda part, disease: {"name": disease, "summary": "RAG 설명"})
+    note = learningNoteServices.get_learning_note("1", "경막하출혈")
+    assert note["source"] == "rag" and note["summary"] == "RAG 설명"
+    assert note["related"] == [] and note["pitfall"] == "" and note["references"] == []

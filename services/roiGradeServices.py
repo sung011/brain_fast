@@ -420,13 +420,6 @@ def _thorax_targets(per_class: dict, constants: ModuleType) -> list[dict]:
     return targets
 
 
-def learning_note(st_part: str | None, disease: str | None) -> dict | None:
-    """채점 결과 화면의 학습 해설(소견 설명·관련 질환). 지금은 흉부만 있다. 없으면 None."""
-    if st_part != THORAX_PART:
-        return None
-    return load_thorax().learning_note(disease)
-
-
 def grade_image_roi(
     image_bytes: bytes,
     filename: str,

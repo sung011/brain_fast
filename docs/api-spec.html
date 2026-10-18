@@ -119,7 +119,7 @@
         <tr><td><code>target_count</code>, <code>found_count</code></td><td>"의심 부위 N곳 중 M곳을 찾았습니다"에 씀</td></tr>
         <tr><td><code>too_wide</code></td><td><code>true</code>면 다 찾았지만 너무 넓게 그려 부분정답 처리됨</td></tr>
         <tr><td><code>target_source</code></td><td><code>ai</code> = 모델 결과로 채점("AI가 찾은 부위 (참고)"로 표시), <code>dataset</code> = 의사 정답 박스로 채점("정답 병변"으로 표시)</td></tr>
-        <tr><td><code>learning_note</code></td><td>정답 병명으로 고른 학습 해설. <code>name</code>, <code>name_en</code>, <code>summary</code>, <code>related</code>(관련 질환), <code>combinations</code>(다른 소견과 같이 보이면), <code>check</code>(같이 볼 점), <code>pitfall</code>, <code>references</code>, <code>disclaimer</code>. 해설이 없는 병명·뇌 문제는 <code>null</code></td></tr>
+        <tr><td><code>learning_note</code></td><td>정답 병명으로 고른 학습 해설. <code>name</code>, <code>name_en</code>, <code>summary</code>, <code>related</code>(관련 질환), <code>combinations</code>(다른 소견과 같이 보이면), <code>check</code>(같이 볼 점), <code>pitfall</code>, <code>references</code>, <code>disclaimer</code>, <code>source</code>(<code>static</code> 고정 해설 / <code>rag</code> 의학용어 사전). 빈 칸은 빈 목록·빈 문자열로 옵니다. 해설이 없는 병명·뇌 문제는 <code>null</code></td></tr>
       </table>
       <p>오류: 400 좌표·rois 형식 오류, 503 그 부위 모델이 아직 서버에 없음, 502 기록 저장 실패.</p>
     </article>

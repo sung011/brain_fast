@@ -36,6 +36,7 @@ from schemas.popupSchemas import PopupPublicOut
 from schemas.qaSchemas import QaCreateBody, QaMessageBody
 from schemas.roiGradeSchemas import parse_rois
 from schemas.userSchemas import UserLogin
+from services import learningNoteServices as learning_note_service
 from services import learningServices as learning_service
 from services import popupServices as popup_service
 from services import qaServices as qa_service
@@ -628,8 +629,8 @@ async def learning_roi_grade(
     if study_idx is not None:
         answered = study_repositories.get_by_idx(db, int(study_idx))
         result["expected_disease"] = answered.st_disease if answered else None
-    # 정답 병명으로 고른 학습 해설(흉부만). 정답을 보여 준 뒤라 함께 돌려줘도 된다
-    result["learning_note"] = roi_grade_service.learning_note(grade_part, result.get("expected_disease"))
+    # 정답 병명으로 고른 학습 해설. 정답을 보여 준 뒤라 함께 돌려줘도 된다 (RAG 연결 전에는 흉부 고정 해설)
+    result["learning_note"] = learning_note_service.get_learning_note(grade_part, result.get("expected_disease"))
 
     await review_events.publish(
         "review_created",
