@@ -1,7 +1,9 @@
 """
 흉부 X-ray 이상 부위 표시.
 
-탐지 모델이 준 박스를 그대로 위치로 쓴다 (뇌 CT처럼 Grad-CAM으로 추정하지 않는다).
+탐지 모델이 준 박스를 위치로 쓴다 (뇌 CT처럼 Grad-CAM으로 추정하지 않는다).
+- 같은 소견에서 겹치는 박스는 하나로 합치고, 소견마다 점수 높은 MAX_REGIONS_PER_FINDING 곳만 남긴다
+  (모델이 같은 자리에 박스를 여러 개 내서 화면이 어지러웠다)
 - 소견별 마스크: 그 소견 박스들을 칠한 영역 → ROI 채점에 쓴다
 - overlay: 박스 안을 소견 색으로 옅게 칠하고 테두리를 그린 PNG
 """
@@ -26,6 +28,33 @@ def _clip_box(box, w: int, h: int) -> tuple[int, int, int, int] | None:
     return x1, y1, x2, y2
 
 
+MAX_REGIONS_PER_FINDING = 2   # 양쪽 폐에 하나씩 있을 수 있어 1이 아니라 2
+
+
+def _overlaps(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def merge_regions(boxes: list[tuple[tuple[int, int, int, int], float]]) -> list[tuple[tuple[int, int, int, int], float]]:
+    """
+    겹치는 박스를 감싸는 박스 하나로 합친다 (겹침이 이어지면 모두 한 덩어리). 점수는 가장 높은 값.
+    점수 높은 순으로 MAX_REGIONS_PER_FINDING 곳만 돌려준다.
+
+    가장 높은 박스 하나만 남기지 않는 이유: 위양성 박스가 진짜 병변보다 점수가 높을 수 있다.
+    """
+    groups: list[list] = []
+    for box, conf in boxes:
+        hit = [g for g in groups if any(_overlaps(box, b) for b, _ in g)]
+        merged = [(box, conf)] + [item for g in hit for item in g]
+        groups = [g for g in groups if all(g is not h for h in hit)] + [merged]
+    regions = []
+    for g in groups:
+        xs1, ys1, xs2, ys2 = zip(*(b for b, _ in g))
+        regions.append(((min(xs1), min(ys1), max(xs2), max(ys2)), max(c for _, c in g)))
+    regions.sort(key=lambda r: r[1], reverse=True)
+    return regions[:MAX_REGIONS_PER_FINDING]
+
+
 def locate_abnormality(
     detections: list[Detection],
     img_uint8: np.ndarray,
@@ -37,20 +66,22 @@ def locate_abnormality(
         mask_union (전체 이상 부위), per_class {소견: {"prob", "mask", "boxes"}}
     """
     h, w = img_uint8.shape[:2]
-    per_class: dict = {}
-    mask_union = np.zeros((h, w), dtype=bool)
+    raw: dict[str, list] = {}
     for det in detections:
         box = _clip_box(det.box, w, h)
-        if box is None:
-            continue
-        info = per_class.setdefault(
-            det.finding, {"prob": 0.0, "mask": np.zeros((h, w), dtype=bool), "boxes": []}
-        )
-        x1, y1, x2, y2 = box
-        info["mask"][y1:y2, x1:x2] = True
-        info["boxes"].append((box, det.confidence))
-        info["prob"] = max(info["prob"], det.confidence)
-        mask_union[y1:y2, x1:x2] = True
+        if box is not None:
+            raw.setdefault(det.finding, []).append((box, det.confidence))
+
+    per_class: dict = {}
+    mask_union = np.zeros((h, w), dtype=bool)
+    # 채점 마스크도 화면에 보이는 정리된 영역으로 만든다 (안 보이는 박스로 정답이 되지 않게)
+    for finding, boxes in raw.items():
+        info = {"prob": 0.0, "mask": np.zeros((h, w), dtype=bool), "boxes": merge_regions(boxes)}
+        for (x1, y1, x2, y2), conf in info["boxes"]:
+            info["mask"][y1:y2, x1:x2] = True
+            info["prob"] = max(info["prob"], conf)
+        mask_union |= info["mask"]
+        per_class[finding] = info
     return mask_union, per_class
 
 
@@ -121,6 +152,7 @@ class Localization:
     """박스 기반 이상 부위 표시 클래스."""
 
     locate_abnormality = staticmethod(locate_abnormality)
+    merge_regions = staticmethod(merge_regions)
     build_overlay_image = staticmethod(build_overlay_image)
     overlay_to_base64 = staticmethod(overlay_to_base64)
     summarize_targets = staticmethod(summarize_targets)
