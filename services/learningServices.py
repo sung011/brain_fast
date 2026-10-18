@@ -221,6 +221,16 @@ def resolve_roi_grade_target(
     return _safe(resolve_st_part, st_part), _safe(resolve_st_modal, st_modal)
 
 
+def get_answer_boxes(db: Session, study_idx: int | None) -> list[dict] | None:
+    """
+    문제의 정답 박스(0~1 비율 x, y, width, height, finding 목록). 흉부 채점에 쓴다.
+
+    study 테이블에 정답 박스 칸이 아직 없다(팀 결정 전). 칸이 생기면 여기서 읽는다.
+    지금은 늘 None 이라, 흉부 채점은 예전처럼 AI 결과를 기준으로 한다.
+    """
+    return None
+
+
 def get_problem(db: Session, study_idx: int) -> StudyModel | None:
     """문제 번호로 활성 문제 1건 (오답노트 '다시 풀기'). 삭제·비활성이면 None."""
     row = study_repositories.get_by_idx(db, int(study_idx))

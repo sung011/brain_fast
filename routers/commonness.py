@@ -34,6 +34,7 @@ from models.studyModel import StudyModel
 from repositories import studyRepositories as study_repositories
 from schemas.popupSchemas import PopupPublicOut
 from schemas.qaSchemas import QaCreateBody, QaMessageBody
+from schemas.roiGradeSchemas import parse_rois
 from schemas.userSchemas import UserLogin
 from services import learningServices as learning_service
 from services import popupServices as popup_service
@@ -518,6 +519,14 @@ async def learning_roi_grade(
             None,
             description="영상 종류(xray, ct, mri 또는 1~3). study_idx가 있으면 study 행 값이 우선",
         ),
+        rois: str | None = Form(
+            None,
+            description=(
+                    "흉부 X-ray 전용. 그린 ROI 여러 개를 JSON 배열로. "
+                    '예: [{"roi_type":"box","x":0.1,"y":0.2,"width":0.2,"height":0.3}]. '
+                    "있으면 의심 부위마다 따로 채점한다. 뇌는 쓰지 않는다"
+            ),
+        ),
 ):
     """
     이미지 + ROI(박스/원) 제출 채점.
@@ -528,6 +537,7 @@ async def learning_roi_grade(
       제출 슬라이스를 고른 뒤, 올린 image/좌표로 채점한다.
     - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
     - 흉부(st_part=2) X-ray 문제는 흉부 모델로 채점한다. 흉부 모델이 준비되지 않았으면 503.
+      rois 로 ROI 여러 개를 보내면 의심 부위마다 따로 채점하고 targets·found_count 를 돌려준다.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
@@ -550,6 +560,9 @@ async def learning_roi_grade(
             st_part=st_part,
             st_modal=st_modal,
         )
+        roi_list = parse_rois(rois)
+        # 정답 박스가 있는 문제면 AI 대신 그 박스로 채점한다 (흉부만. 지금은 칸이 없어 늘 None)
+        answer_boxes = learning_service.get_answer_boxes(db, study_idx)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -573,6 +586,8 @@ async def learning_roi_grade(
             include_overlay=include_overlay,
             st_part=grade_part,
             st_modal=grade_modal,
+            rois=roi_list,
+            answer_boxes=answer_boxes,
         )
     except ValueError as exc:
         raise HTTPException(

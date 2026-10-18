@@ -23,6 +23,8 @@ PARTIAL_IOU = 0.15
 PARTIAL_RECALL = 0.25
 # 중심이 이미지 대각선 대비 이 비율 이내면 "비슷함"
 NEAR_CENTER_RATIO = 0.15
+# 흉부: 의심 부위를 다 찾았어도 그린 영역 중 의심 부위가 이 비율보다 적으면 "너무 넓게 그림" → 부분정답
+MIN_PRECISION = 0.25
 # 오답 노트용 사용자 ROI 윤곽 (1px dashed cyan)
 _ROI_OUTLINE = (0, 230, 255, 255)
 _ROI_DASH = 4
@@ -283,6 +285,141 @@ def grade_overlap(user: np.ndarray, gt: np.ndarray) -> dict:
     }
 
 
+def _roi_args(shape: dict, normalized: bool) -> dict:
+    """schemas.roiGradeSchemas.RoiShape 한 개 → roi_mask 인자."""
+    return dict(
+        roi_type=shape["roi_type"],
+        normalized=normalized,
+        x=shape.get("x"),
+        y=shape.get("y"),
+        box_w=shape.get("width"),
+        box_h=shape.get("height"),
+        cx=shape.get("cx"),
+        cy=shape.get("cy"),
+        radius=shape.get("radius"),
+    )
+
+
+def grade_regions(
+    user_masks: list[np.ndarray],
+    targets: list[dict],
+    height: int,
+    width: int,
+) -> dict:
+    """
+    흉부: 의심 부위마다 따로 채점한다.
+
+    - 의심 부위 하나는 학습자 ROI 중 하나가 충분히 덮으면(IoU·재현율 기준) "찾음"
+    - 모두 찾음 → 정답, 일부만 찾았거나 근처 → 부분정답, 아니면 오답
+    - 다 찾았어도 그린 영역이 의심 부위보다 훨씬 넓으면(MIN_PRECISION 미만) 부분정답
+
+    의심 부위를 하나로 합쳐 비교하지 않는 이유: 두 곳의 중심을 합치면 그 사이(아무것도 없는 곳)가
+    "가깝다"고 판정되고, 한 곳만 찾았는지 둘 다 찾았는지 구분하지 못한다.
+    """
+    diag = float(np.hypot(width, height))
+    user_any = np.zeros((height, width), dtype=bool)
+    for mask in user_masks:
+        user_any |= mask
+    target_any = np.zeros((height, width), dtype=bool)
+
+    graded = []
+    for target in targets:
+        x1, y1, x2, y2 = target["box"]
+        t_mask = np.zeros((height, width), dtype=bool)
+        t_mask[y1:y2, x1:x2] = True
+        target_any |= t_mask
+        t_n = int(t_mask.sum())
+        center = ((x1 + x2) / 2, (y1 + y2) / 2)
+        best_recall = best_iou = 0.0
+        close = False
+        for mask in user_masks:
+            inter = int(np.logical_and(mask, t_mask).sum())
+            union = int(np.logical_or(mask, t_mask).sum())
+            best_recall = max(best_recall, inter / t_n if t_n else 0.0)
+            best_iou = max(best_iou, inter / union if union else 0.0)
+            uc = _center(mask)
+            if uc and diag > 0 and math.hypot(uc[0] - center[0], uc[1] - center[1]) / diag <= NEAR_CENTER_RATIO:
+                close = True
+        found = best_iou >= CORRECT_IOU or best_recall >= CORRECT_RECALL
+        near = found or close or best_iou >= PARTIAL_IOU or best_recall >= PARTIAL_RECALL
+        graded.append({
+            "x": round(x1 / width, 6),
+            "y": round(y1 / height, 6),
+            "width": round((x2 - x1) / width, 6),
+            "height": round((y2 - y1) / height, 6),
+            "findings": target["findings"],
+            "confidence": None if target["confidence"] is None else round(float(target["confidence"]), 4),
+            "found": found,
+            "near": near,
+            "recall": round(best_recall, 4),
+            "iou": round(best_iou, 4),
+        })
+
+    user_n = int(user_any.sum())
+    precision = int(np.logical_and(user_any, target_any).sum()) / user_n if user_n else 0.0
+    found_count = sum(t["found"] for t in graded)
+    if not graded:
+        result = "오답"
+    elif found_count == len(graded):
+        result = "정답"
+    elif found_count or any(t["near"] for t in graded):
+        result = "부분정답"
+    else:
+        result = "오답"
+    too_wide = result == "정답" and precision < MIN_PRECISION
+    if too_wide:
+        result = "부분정답"
+    return {
+        "result": result,
+        "near_center": any(t["near"] for t in graded),
+        "targets": graded,
+        "target_count": len(graded),
+        "found_count": found_count,
+        "too_wide": too_wide,
+    }
+
+
+def _answer_targets(answer_boxes: list[dict], height: int, width: int) -> list[dict]:
+    """정답 박스(0~1 비율 x, y, width, height, finding) → 의심 부위 목록. 데이터셋 정답이라 신뢰도는 없다."""
+    targets = []
+    for b in answer_boxes:
+        x1 = max(0, min(width, round(float(b["x"]) * width)))
+        y1 = max(0, min(height, round(float(b["y"]) * height)))
+        x2 = max(0, min(width, round((float(b["x"]) + float(b["width"])) * width)))
+        y2 = max(0, min(height, round((float(b["y"]) + float(b["height"])) * height)))
+        if x2 > x1 and y2 > y1:
+            targets.append({"box": (x1, y1, x2, y2), "confidence": None,
+                            "findings": [b.get("finding") or "정답 부위"]})
+    return targets
+
+
+def _boxes_overlap(a, b) -> bool:
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _thorax_targets(per_class: dict, constants: ModuleType) -> list[dict]:
+    """
+    소견별 박스 → 의심 부위 목록. 다른 소견이라도 박스가 겹치면 한 부위로 본다
+    (예: 같은 자리의 폐음영·흉막삼출은 학습자에게 한 곳이다).
+    """
+    groups: list[list] = []
+    for finding, info in per_class.items():
+        for box, conf in info["boxes"]:
+            hit = [g for g in groups if any(_boxes_overlap(box, b) for b, _, _ in g)]
+            merged = [(box, conf, finding)] + [item for g in hit for item in g]
+            groups = [g for g in groups if all(g is not h for h in hit)] + [merged]
+    targets = []
+    for g in groups:
+        xs1, ys1, xs2, ys2 = zip(*(b for b, _, _ in g))
+        targets.append({
+            "box": (min(xs1), min(ys1), max(xs2), max(ys2)),
+            "confidence": max(c for _, c, _ in g),
+            "findings": [constants.class_ko(n) for n in sorted({f for _, _, f in g})],
+        })
+    targets.sort(key=lambda t: t["confidence"], reverse=True)
+    return targets
+
+
 def grade_image_roi(
     image_bytes: bytes,
     filename: str,
@@ -299,30 +436,26 @@ def grade_image_roi(
     include_overlay: bool = True,
     st_part: str | None = None,
     st_modal: str | None = None,
+    rois: list[dict] | None = None,
+    answer_boxes: list[dict] | None = None,
 ) -> dict:
     """
     이미지 + 사용자 ROI를 채점하고 overlay PNG(base64)를 돌려준다.
 
     st_part 가 흉부(2)면 흉부 X-ray 모델로, 그 밖에는 뇌 CT 모델로 채점한다.
+    rois(ROI 여러 개)는 흉부만 쓴다. 없으면 roi_type·좌표 한 개로 채점한다. 뇌는 rois 를 보지 않는다.
+    answer_boxes(데이터셋 정답 박스)도 흉부만 쓴다. 있으면 AI 대신 그 박스로 채점하고 AI 결과는 참고로만 둔다.
     """
     if st_part == THORAX_PART:
         if st_modal not in (None, XRAY_MODAL):
             raise ValueError("흉부는 X-ray 영상만 채점할 수 있습니다.")
+        single = dict(roi_type=roi_type, x=x, y=y, width=width, height=height, cx=cx, cy=cy, radius=radius)
         return _grade_thorax(
             image_bytes,
             filename,
-            roi_args=dict(
-                roi_type=roi_type,
-                normalized=normalized,
-                x=x,
-                y=y,
-                box_w=width,
-                box_h=height,
-                cx=cx,
-                cy=cy,
-                radius=radius,
-            ),
+            roi_args_list=[_roi_args(shape, normalized) for shape in (rois or [single])],
             include_overlay=include_overlay,
+            answer_boxes=answer_boxes,
         )
 
     config = import_module("class.brain.config")
@@ -473,13 +606,19 @@ def _grade_thorax(
     image_bytes: bytes,
     filename: str,
     *,
-    roi_args: dict,
+    roi_args_list: list[dict],
     include_overlay: bool,
+    answer_boxes: list[dict] | None = None,
 ) -> dict:
     """
-    흉부 X-ray 채점. 응답 형식은 뇌 CT 채점과 같다 (germinoma 는 항상 None).
+    흉부 X-ray 채점. 응답 형식은 뇌 CT 채점과 같고(germinoma 는 항상 None),
+    의심 부위별 결과(targets, target_count, found_count, too_wide)가 더 붙는다.
 
     이상 부위는 소견 탐지 모델이 찾은 박스들이다. 박스가 하나도 없으면 오답으로 처리된다.
+    학습자 ROI 는 여러 개일 수 있고, 판정은 grade_regions 가 의심 부위마다 한다.
+
+    answer_boxes(데이터셋 정답 박스)가 있으면 의심 부위는 그 박스다(target_source="dataset").
+    이때 overlay 는 정답 박스를 그리고, AI 가 찾은 부위는 overlay_summary 에 "AI 참고"로만 적는다.
     """
     config = import_module("class.thorax.config")
     constants = import_module("class.thorax.constants")
@@ -501,30 +640,47 @@ def _grade_thorax(
         raise ValueError(f"이미지 디코딩 실패: {exc}") from exc
 
     h, w = img_uint8.shape[:2]
-    user = roi_mask(h, w, **roi_args)
+    users = [(roi_mask(h, w, **args), args["roi_type"]) for args in roi_args_list]
+    user = np.zeros((h, w), dtype=bool)
+    for mask, _ in users:
+        user |= mask
 
     classes = list(service.classes)
     detections = service.detect(img_uint8)
     probs = service.scores(detections)
     mask_union, per_class = thorax.Localization.locate_abnormality(detections, img_uint8)
-    scored = grade_overlap(user, mask_union)
+    ai_summary = thorax.Localization.summarize_targets(per_class, classes=classes)
+
+    if answer_boxes:
+        source = "dataset"
+        targets = _answer_targets(answer_boxes, h, w)
+        answer_mask = np.zeros((h, w), dtype=bool)
+        for x1, y1, x2, y2 in (t["box"] for t in targets):
+            answer_mask[y1:y2, x1:x2] = True
+        # overlay 는 정답 박스를 그린다 (AI 박스와 섞지 않는다)
+        shown = {"answer": {"mask": answer_mask, "boxes": [(t["box"], 1.0) for t in targets]}}
+    else:
+        source = "ai"
+        targets = _thorax_targets(per_class, constants)
+        answer_mask = mask_union
+        shown = per_class
+
+    # iou·recall·precision 은 전체를 합쳐 계산한 참고값. 판정(result)은 의심 부위별 채점으로 바꾼다
+    scored = grade_overlap(user, answer_mask)
+    scored.update(grade_regions([m for m, _ in users], targets, h, w))
 
     overlay_b64 = None
     overlay_summary = None
     overlay = None
     if scored["has_abnormality"]:
-        overlay = thorax.Localization.build_overlay_image(img_uint8, per_class)
-        overlay_summary = thorax.Localization.summarize_targets(
-            per_class, classes=classes
-        )
+        overlay = thorax.Localization.build_overlay_image(img_uint8, shown)
+        overlay_summary = ai_summary if source == "ai" else f"AI 참고 — {ai_summary}"
         if include_overlay:
             overlay_b64 = thorax.Localization.overlay_to_base64(overlay)
 
-    review_img = draw_user_roi(
-        overlay if overlay is not None else img_uint8,
-        user,
-        roi_args["roi_type"],
-    )
+    review_img = overlay if overlay is not None else img_uint8
+    for mask, kind in users:
+        review_img = draw_user_roi(review_img, mask, kind)
 
     findings = [
         {
@@ -548,9 +704,16 @@ def _grade_thorax(
         "center_distance_px": scored["center_distance_px"],
         "overlay_png_base64": overlay_b64,
         "overlay_summary": overlay_summary,
-        "abnormality_bbox": _bbox_from_mask(mask_union),
+        "abnormality_bbox": _bbox_from_mask(answer_mask),
         "user_roi_bbox": _bbox_from_mask(user),
         "image": {"width": w, "height": h},
+        # 채점 기준: dataset = 데이터셋 정답 박스, ai = 탐지 모델 결과
+        "target_source": source,
+        # 의심 부위별 결과 (흉부만). 0~1 비율 좌표, found=찾음, near=근처
+        "targets": scored["targets"],
+        "target_count": scored["target_count"],
+        "found_count": scored["found_count"],
+        "too_wide": scored["too_wide"],
         "classification": {
             "top_label": top["label"],
             "top_label_ko": top["label_ko"],

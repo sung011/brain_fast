@@ -15,7 +15,7 @@ from db import get_db
 from models.reviewNodeModel import ReviewNodeModel
 from models.studyModel import StudyModel
 from routers import commonness
-from services import reviewNodeServices, roiGradeServices
+from services import learningServices, reviewNodeServices, roiGradeServices
 
 NOW = datetime(2026, 10, 1, 12, 0, 0)   # 미리 넣는 기록은 과거 시각 (새 제출이 최신이 되도록)
 
@@ -154,6 +154,27 @@ def test_submission_is_recorded_even_if_nas_fails(engine, monkeypatch, nas, save
         assert "secret-nas-detail" not in result["image_error"]
     else:
         assert result["image_error"] is None and row.rn_image.startswith("/stylesheets/assets/review/")
+
+
+def test_roi_grade_passes_rois_and_rejects_bad_json(client, monkeypatch):
+    """흉부 ROI 여러 개(rois JSON)를 서비스로 넘기고, 형식이 틀리면 400."""
+    seen = {}
+    monkeypatch.setattr(reviewNodeServices, "nas_service", FakeNas(enabled=False))
+    monkeypatch.setattr(roiGradeServices, "grade_image_roi",
+                        lambda *a, **k: seen.update(k) or {"ok": True, "result": "정답", "_review_png": png_bytes()})
+    form = {"roi_type": "box", "x": 0, "y": 0, "width": 0.5, "height": 0.5, "study_idx": 2, "user_idx": 7}
+    rois = ('[{"roi_type":"box","x":0.1,"y":0.1,"width":0.2,"height":0.2},'
+            '{"roi_type":"circle","cx":0.7,"cy":0.7,"radius":0.1}]')
+    files = {"image": ("a.png", png_bytes(), "image/png")}
+    assert client.post("/learning/roi-grade", files=files, data={**form, "rois": rois}).status_code == 200
+    assert [r["roi_type"] for r in seen["rois"]] == ["box", "circle"]
+    assert seen["answer_boxes"] is None          # 정답 박스 칸이 아직 없다
+    answer = [{"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.2, "finding": "기흉"}]
+    monkeypatch.setattr(learningServices, "get_answer_boxes", lambda db, idx: answer if idx == 2 else None)
+    assert client.post("/learning/roi-grade", files=files, data=form).status_code == 200
+    assert seen["answer_boxes"] == answer
+    bad =client.post("/learning/roi-grade", files=files, data={**form, "rois": "[1, 2"})
+    assert bad.status_code == 400 and "JSON" in bad.json()["detail"]
 
 
 def test_roi_grade_still_answers_when_nas_is_off(client, monkeypatch):

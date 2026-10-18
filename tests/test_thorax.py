@@ -181,6 +181,22 @@ def test_summary_lists_each_box_by_confidence():
     assert summary == "흉막삼출: 하부-환자 우측 0.28, 중부-환자 좌측 0.08"
 
 
+def test_overlapping_boxes_merge_and_only_top_regions_remain():
+    """같은 자리에 겹친 박스는 하나로, 소견마다 점수 높은 2곳만 남는다."""
+    img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    dets = [thorax.Detection("airspace_opacity", 0.27, (10, 40, 60, 120)),
+            thorax.Detection("airspace_opacity", 0.19, (20, 50, 70, 130)),   # 위와 겹침
+            thorax.Detection("airspace_opacity", 0.11, (65, 125, 80, 140)),  # 바로 위 박스와 겹침 → 한 덩어리
+            thorax.Detection("airspace_opacity", 0.05, (130, 90, 180, 140)),
+            thorax.Detection("airspace_opacity", 0.03, (150, 10, 170, 30))]  # 3번째 영역 → 버림
+    mask, per_class = thorax.Localization.locate_abnormality(dets, img)
+    assert per_class["airspace_opacity"]["boxes"] == [((10, 40, 80, 140), 0.27), ((130, 90, 180, 140), 0.05)]
+    assert not mask[20, 160]                       # 버린 박스는 채점에도 안 쓴다
+    assert mask[135, 12]                           # 합친 박스가 감싸는 자리
+    summary = thorax.Localization.summarize_targets(per_class, classes=["airspace_opacity"])
+    assert summary.count(",") == 1
+
+
 def test_small_boxes_are_dropped_by_minimum_area_ratio():
     """v2.3 설정처럼 minimum_area_ratio 가 있으면 이미지 면적 대비 작은 박스를 버린다."""
     model = thorax.FindingModel(
@@ -249,9 +265,90 @@ def grade(**kwargs):
                                             st_part="2", st_modal="1", normalized=False, **kwargs)
 
 
-def test_roi_on_detected_box_is_correct(detector):
-    result = grade(x=20, y=20, width=60, height=60)  # 폐음영 박스와 같은 자리
+def box(x, y, w, h):
+    return {"roi_type": "box", "x": x, "y": y, "width": w, "height": h}
+
+
+def test_all_regions_found_with_several_rois_is_correct(detector):
+    result = grade(rois=[box(20, 20, 60, 60), box(120, 130, 70, 60)])
     assert result["result"] == "정답"
+    assert result["found_count"] == 2 and result["too_wide"] is False
+
+
+def test_roi_between_two_regions_is_wrong(detector):
+    """예전에는 두 부위 중심을 합쳐 가운데가 '가깝다'고 부분정답이 됐다."""
+    result = grade(rois=[box(85, 85, 30, 30)])
+    assert result["result"] == "오답"
+    assert result["found_count"] == 0
+
+
+def test_one_huge_box_over_everything_is_partial(detector):
+    """다 덮어도 그린 영역 대부분이 정상이면 '너무 넓게 그림'으로 부분정답."""
+    result = grade(rois=[box(0, 0, 200, 200)])
+    assert result["found_count"] == 2
+    assert result["too_wide"] is True
+    assert result["result"] == "부분정답"
+
+
+def test_answer_boxes_replace_ai_as_grading_target(detector):
+    """데이터셋 정답 박스가 있으면 AI 박스 대신 그걸로 채점한다. AI 결과는 참고로만 남는다."""
+    answer = [{"x": 0.0, "y": 0.6, "width": 0.3, "height": 0.3, "finding": "기흉"}]   # 왼쪽 아래, AI 박스와 다른 곳
+    on_answer = grade(x=0, y=120, width=60, height=60, answer_boxes=answer)
+    assert on_answer["result"] == "정답"
+    assert on_answer["target_source"] == "dataset"
+    assert on_answer["targets"][0]["findings"] == ["기흉"] and on_answer["targets"][0]["confidence"] is None
+    assert on_answer["abnormality_bbox"]["y_px"] == 120
+    assert on_answer["overlay_summary"].startswith("AI 참고")
+    on_ai_box = grade(x=20, y=20, width=60, height=60, answer_boxes=answer)   # AI 폐음영 자리
+    assert on_ai_box["result"] == "오답"
+
+
+def test_without_answer_boxes_ai_is_the_target(detector):
+    result = grade(x=20, y=20, width=60, height=60)
+    assert result["target_source"] == "ai"
+    assert result["targets"][0]["confidence"] == pytest.approx(0.42)
+
+
+def test_overlapping_findings_count_as_one_region(monkeypatch):
+    """같은 자리의 폐음영·흉막삼출은 학습자에게 한 곳이다."""
+    service = thorax.ThoraxDetector()
+    service.use_models(fake_models(opacity_rows=[((20, 20, 80, 80), 0.4, 0)],
+                                   effusion_rows=[((50, 50, 100, 100), 0.3, 0)]))
+    monkeypatch.setattr(thorax, "detector_service", service)
+    result = grade(x=20, y=20, width=80, height=80)
+    assert result["target_count"] == 1
+    assert result["targets"][0]["findings"] == ["폐음영", "흉막삼출"]
+    assert result["result"] == "정답"
+
+
+@pytest.mark.parametrize("raw,word", [
+    ("not json", "JSON"),
+    ("[]", "하나 이상"),
+    ('[{"roi_type": "box", "x": 0.1}]', "box"),
+    ('[{"roi_type": "star", "x": 0.1}]', "box"),
+    (json.dumps([box(0, 0, 0.1, 0.1)] * 11), "최대 10개"),
+])
+def test_bad_rois_are_rejected(raw, word):
+    from schemas.roiGradeSchemas import parse_rois
+    with pytest.raises(ValueError, match=word):
+        parse_rois(raw)
+
+
+def test_rois_parse_box_and_circle():
+    from schemas.roiGradeSchemas import parse_rois
+    assert parse_rois(None) is None and parse_rois("  ") is None
+    circle = {"roi_type": "circle", "cx": 0.5, "cy": 0.5, "radius": 0.1}
+    rois = parse_rois(json.dumps([box(0.1, 0.2, 0.3, 0.4), circle]))
+    assert [r["roi_type"] for r in rois] == ["box", "circle"]
+
+
+def test_one_of_two_regions_is_partial(detector):
+    """의심 부위가 2곳(왼쪽 위 폐음영, 오른쪽 아래 흉막삼출)인데 한 곳만 그리면 부분정답."""
+    result = grade(x=20, y=20, width=60, height=60)  # 폐음영 박스와 같은 자리
+    assert result["result"] == "부분정답"
+    assert (result["found_count"], result["target_count"]) == (1, 2)
+    assert [t["found"] for t in result["targets"]] == [True, False]   # 신뢰도 순 (0.42, 0.31)
+    assert result["targets"][0]["findings"] == ["폐음영"]
     assert result["classification"]["task"] == "thorax"
     assert result["germinoma"] is None
     assert result["abnormality_bbox"]["x_px"] == 20

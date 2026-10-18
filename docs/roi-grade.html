@@ -94,6 +94,26 @@
         <dd>프론트가 보이는 장 파일을 <code>image</code>로 보내야 좌표와 픽셀이 맞습니다.</dd>
       </dl>
     </article>
+
+    <article>
+      <h3>흉부 X-ray — 의심 부위별 채점 (<code>grade_regions</code>)</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>흉부는 의심 부위가 여러 곳일 수 있어, 부위마다 학습자 ROI가 찾았는지 따로 봅니다.</dd>
+        <dt>받는 것</dt>
+        <dd>폼 값 <code>rois</code>: ROI 여러 개를 담은 JSON 배열(최대 10개). 형식 검사는 <code>schemas/roiGradeSchemas.py</code>의 <code>parse_rois</code>가 하고, 틀리면 400입니다. 없으면 예전처럼 <code>roi_type</code>·좌표 한 개로 채점합니다.</dd>
+        <dt>하는 일</dt>
+        <dd>탐지 박스 중 겹치는 것(다른 소견이어도)을 한 부위로 묶고, 부위마다 가장 잘 맞는 ROI의 IoU·재현율을 봅니다. 모두 찾으면 정답, 일부만 찾거나 근처면 부분정답, 아니면 오답입니다. 다 찾았어도 그린 범위 중 의심 부위가 25%(<code>MIN_PRECISION</code>)보다 적으면 "너무 넓게 그림"으로 부분정답입니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>기존 응답에 <code>targets</code>(부위별 좌표·소견·찾음 여부), <code>target_count</code>, <code>found_count</code>, <code>too_wide</code>가 더 붙습니다.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>뇌 CT 채점은 바꾸지 않았습니다. 뇌는 <code>rois</code>를 보지 않고 마지막 ROI 하나로 채점합니다.</dd>
+        <dt>의심 부위는 어디서 오나</dt>
+        <dd>문제에 데이터셋 정답 박스가 있으면(<code>learningServices.get_answer_boxes</code>) 그 박스가 의심 부위이고 응답의 <code>target_source</code>는 <code>dataset</code>입니다. 이때 overlay는 정답 박스를 그리고, AI가 찾은 부위는 <code>overlay_summary</code>에 "AI 참고 — …"로만 적습니다. 정답 박스가 없으면 예전처럼 AI 박스가 의심 부위이고 <code>target_source</code>는 <code>ai</code>입니다. study 테이블에 정답 박스 칸이 아직 없어서(팀 결정 전) 실제 서버에서는 늘 <code>ai</code>입니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>예전처럼 부위들을 한 덩어리로 합쳐 비교하면, 두 부위의 중심이 그 사이(아무것도 없는 곳)가 되어 거기를 그려도 부분정답이 났고, 가슴 전체를 크게 그리면 정답이 났습니다. 결과는 학습용 보조이며 진단이 아닙니다.</dd>
+      </dl>
+    </article>
     <h2>학습자 화면(Vue)이 함께 쓰는 API</h2>
     <article>
       <h3>GET /learning/problem/{번호}/image</h3>
