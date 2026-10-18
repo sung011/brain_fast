@@ -41,6 +41,8 @@ CLASS_COLORS = {
     "pneumothorax": (1.0, 0.75, 0.3),
     "cardiomegaly": (1.0, 0.2, 0.9),
     "consolidation": (1.0, 0.15, 0.15),
+    # ROI 채점 결과의 의심 부위(소견 구분 없이 한 색). 학습자 화면 범례(#14b8a6)와 맞춘다
+    "answer": (0.08, 0.72, 0.65),
 }
 
 DISCLAIMERS = {

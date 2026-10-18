@@ -628,6 +628,8 @@ async def learning_roi_grade(
     if study_idx is not None:
         answered = study_repositories.get_by_idx(db, int(study_idx))
         result["expected_disease"] = answered.st_disease if answered else None
+    # 정답 병명으로 고른 학습 해설(흉부만). 정답을 보여 준 뒤라 함께 돌려줘도 된다
+    result["learning_note"] = roi_grade_service.learning_note(grade_part, result.get("expected_disease"))
 
     await review_events.publish(
         "review_created",

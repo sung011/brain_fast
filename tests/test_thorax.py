@@ -428,3 +428,21 @@ def test_real_packages_load_and_run(monkeypatch):
     for model in service.models:
         settings = json.loads((service._package_dir(model.name) / "inference_config.json").read_text(encoding="utf-8"))
         assert model.confidence == pytest.approx(settings["confidence_threshold"])
+
+
+def test_learning_note_for_chest_answer():
+    note = thorax.learning_note("흉막삼출")
+    assert note["code"] == "pleural_effusion" and note["name"] == "흉막삼출"
+    assert note["related"] and note["check"] and note["references"]
+    # 흉막삼출이 들어간 조합만 나온다
+    assert any("심부전" in text for text in note["combinations"])
+    assert all("기흉" not in text or "수기흉" in text for text in note["combinations"])
+    assert "진단이 아닙니다" in note["disclaimer"]
+    assert thorax.learning_note("Pleural effusion")["code"] == "pleural_effusion"
+
+
+def test_learning_note_unknown_or_brain_is_none():
+    assert thorax.learning_note(None) is None
+    assert thorax.learning_note("폐결절") is None
+    assert roiGradeServices.learning_note("1", "흉막삼출") is None
+    assert roiGradeServices.learning_note("2", "기흉")["code"] == "pneumothorax"

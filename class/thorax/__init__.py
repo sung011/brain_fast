@@ -23,6 +23,7 @@ from .ensemble import (
 )
 from .localization import Localization
 from .preprocess import Preprocess
+from .report_format import learning_note
 
 __all__ = [
     "Detection",
@@ -32,4 +33,5 @@ __all__ = [
     "detector_service",
     "Localization",
     "Preprocess",
+    "learning_note",
 ]

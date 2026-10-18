@@ -420,6 +420,13 @@ def _thorax_targets(per_class: dict, constants: ModuleType) -> list[dict]:
     return targets
 
 
+def learning_note(st_part: str | None, disease: str | None) -> dict | None:
+    """채점 결과 화면의 학습 해설(소견 설명·관련 질환). 지금은 흉부만 있다. 없으면 None."""
+    if st_part != THORAX_PART:
+        return None
+    return load_thorax().learning_note(disease)
+
+
 def grade_image_roi(
     image_bytes: bytes,
     filename: str,
@@ -657,13 +664,12 @@ def _grade_thorax(
         answer_mask = np.zeros((h, w), dtype=bool)
         for x1, y1, x2, y2 in (t["box"] for t in targets):
             answer_mask[y1:y2, x1:x2] = True
-        # overlay 는 정답 박스를 그린다 (AI 박스와 섞지 않는다)
-        shown = {"answer": {"mask": answer_mask, "boxes": [(t["box"], 1.0) for t in targets]}}
     else:
         source = "ai"
         targets = _thorax_targets(per_class, constants)
         answer_mask = mask_union
-        shown = per_class
+    # overlay 는 채점에 쓴 의심 부위만 한 색으로 그린다 (화면 범례와 같은 색. 데이터셋 정답이면 AI 박스와 섞지 않는다)
+    shown = {"answer": {"mask": answer_mask, "boxes": [(t["box"], 1.0) for t in targets]}}
 
     # iou·recall·precision 은 전체를 합쳐 계산한 참고값. 판정(result)은 의심 부위별 채점으로 바꾼다
     scored = grade_overlap(user, answer_mask)
