@@ -503,3 +503,23 @@ def test_glossary_definition_replaces_summary(tmp_path, monkeypatch):
     # 사전에 없는 용어는 고정 해설 그대로
     assert learningNoteServices.get_learning_note("2", "폐음영")["summary_source"] == "static"
     learningNoteServices._glossary.cache_clear()
+
+
+def test_roi_feedback_explains_why():
+    W = H = 100
+
+    def m(x1, y1, x2, y2):
+        a = np.zeros((H, W), dtype=bool)
+        a[y1:y2, x1:x2] = True
+        return a
+
+    target = [(10, 60, 40, 90)]   # 화면 왼쪽 아래 = 환자 우측 하부
+    fb = roiGradeServices.roi_feedback
+    assert "좌우를 반대로" in fb([m(65, 60, 95, 90)], target, W, H, chest=True)[0]
+    assert "일부만" in fb([m(15, 65, 25, 75)], target, W, H, chest=True)[0]
+    assert "더 아래쪽" in fb([m(10, 10, 40, 40)], target, W, H, chest=True)[0]
+    assert fb([m(10, 60, 40, 90), m(60, 10, 80, 30)], target, W, H, found=[True], chest=True) == [
+        "정답 부위가 아닌 곳에 그린 ROI 가 1개 있어요."]
+    assert "너무 넓게" in fb([m(0, 0, 100, 100)], target, W, H, found=[True], too_wide=True)[0]
+    assert fb([], target, W, H) == ["ROI 를 그리지 않았습니다."]
+    assert fb([m(10, 60, 40, 90)], target, W, H, found=[True]) == []

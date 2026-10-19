@@ -285,6 +285,96 @@ def grade_overlap(user: np.ndarray, gt: np.ndarray) -> dict:
     }
 
 
+def _mask_box(mask: np.ndarray) -> tuple[int, int, int, int] | None:
+    """마스크를 감싸는 박스 (x1, y1, x2, y2). 비어 있으면 None."""
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return None
+    return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+
+
+def _box_iou(a, b) -> float:
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union else 0.0
+
+
+def _box_area(b) -> int:
+    return max(0, b[2] - b[0]) * max(0, b[3] - b[1])
+
+
+def _direction(user_box, target_box, width: int, height: int) -> str:
+    """정답 부위가 그린 곳보다 어느 쪽에 있는지 (화면 기준). 거의 같으면 빈 문자열."""
+    ux, uy = (user_box[0] + user_box[2]) / 2 / width, (user_box[1] + user_box[3]) / 2 / height
+    tx, ty = (target_box[0] + target_box[2]) / 2 / width, (target_box[1] + target_box[3]) / 2 / height
+    parts = []
+    if ty - uy > 0.08:
+        parts.append("더 아래쪽")
+    elif uy - ty > 0.08:
+        parts.append("더 위쪽")
+    if tx - ux > 0.08:
+        parts.append("화면 오른쪽")
+    elif ux - tx > 0.08:
+        parts.append("화면 왼쪽")
+    return "·".join(parts)
+
+
+def roi_feedback(
+    user_masks: list[np.ndarray],
+    target_boxes: list[tuple[int, int, int, int]],
+    width: int,
+    height: int,
+    *,
+    found: list[bool] | None = None,
+    too_wide: bool = False,
+    chest: bool = False,
+) -> list[str]:
+    """
+    틀린 이유를 학습자가 알아듣게 한두 줄로 알려 준다. 채점 숫자(겹침·중심)를 말로 바꾼 것이다.
+
+    - 정답 부위마다 가장 가까운 ROI 와 비교해: 일부만 그림 / 비껴 그림(방향) / 좌우 반대(흉부) / 떨어져 있음
+    - 정답 부위와 전혀 겹치지 않는 ROI 가 있으면 알려 준다
+    - 다 찾았지만 너무 넓게 그렸으면 알려 준다
+    """
+    users = [b for b in (_mask_box(m) for m in user_masks) if b]
+    if not target_boxes:
+        return []
+    if not users:
+        return ["ROI 를 그리지 않았습니다."]
+    found = found or [False] * len(target_boxes)
+    tips: list[str] = []
+    for t, ok in zip(target_boxes, found):
+        if ok:
+            continue
+        best = max(users, key=lambda u: (_box_iou(u, t), -math.hypot(
+            (u[0] + u[2] - t[0] - t[2]) / 2, (u[1] + u[3] - t[1] - t[3]) / 2)))
+        overlap = _box_iou(best, t)
+        direction = _direction(best, t, width, height)
+        ux = (best[0] + best[2]) / 2 / width
+        tx = (t[0] + t[2]) / 2 / width
+        if chest and abs(tx - ux) > 0.25 and (ux - 0.5) * (tx - 0.5) < 0:
+            tips.append("좌우를 반대로 그렸어요. 흉부 사진은 화면 왼쪽이 환자의 오른쪽입니다.")
+        elif overlap > 0 and _box_area(best) < _box_area(t) * 0.5:
+            tips.append("정답 부위의 일부만 그렸어요. 더 넓게 감싸 보세요.")
+        elif overlap > 0 and direction:
+            tips.append(f"조금 비껴 그렸어요. 정답 부위는 {direction}에 있어요.")
+        elif overlap > 0:
+            tips.append("정답 부위와 겹치긴 하지만 범위가 많이 달라요. 크기와 위치를 맞춰 보세요.")
+        elif direction:
+            tips.append(f"정답 부위와 떨어져 있어요. 정답 부위는 {direction}에 있어요.")
+        else:
+            tips.append("정답 부위와 겹치지 않아요. 색칠된 위치를 확인해 보세요.")
+    extra = sum(1 for u in users if all(_box_iou(u, t) == 0 for t in target_boxes))
+    if extra and len(users) > 1:
+        tips.append(f"정답 부위가 아닌 곳에 그린 ROI 가 {extra}개 있어요.")
+    if too_wide:
+        tips.append("정답 부위는 다 포함했지만 너무 넓게 그렸어요. 의심되는 곳만 감싸 보세요.")
+    # 같은 말이 여러 번 나오지 않게
+    return list(dict.fromkeys(tips))
+
+
 def _roi_args(shape: dict, normalized: bool) -> dict:
     """schemas.roiGradeSchemas.RoiShape 한 개 → roi_mask 인자."""
     return dict(
@@ -534,6 +624,11 @@ def grade_image_roi(
         }
 
     scored = grade_overlap(user, mask_union)
+    gt_box = _mask_box(mask_union)
+    scored["feedback"] = (
+        [] if scored["result"] == "정답" or gt_box is None
+        else roi_feedback([user], [gt_box], w, h, found=[False])
+    )
 
     overlay_b64 = None
     overlay_summary = None
@@ -583,6 +678,7 @@ def grade_image_roi(
         "recall": scored["recall"],
         "precision": scored["precision"],
         "near_center": scored["near_center"],
+        "feedback": scored["feedback"],
         "center_distance_px": scored["center_distance_px"],
         "overlay_png_base64": overlay_b64,
         "overlay_summary": overlay_summary,
@@ -667,6 +763,10 @@ def _grade_thorax(
     # iou·recall·precision 은 전체를 합쳐 계산한 참고값. 판정(result)은 의심 부위별 채점으로 바꾼다
     scored = grade_overlap(user, answer_mask)
     scored.update(grade_regions([m for m, _ in users], targets, h, w))
+    scored["feedback"] = roi_feedback(
+        [m for m, _ in users], [t["box"] for t in targets], w, h,
+        found=[t["found"] for t in scored["targets"]], too_wide=scored["too_wide"], chest=True,
+    )
 
     overlay_b64 = None
     overlay_summary = None
@@ -700,6 +800,7 @@ def _grade_thorax(
         "recall": scored["recall"],
         "precision": scored["precision"],
         "near_center": scored["near_center"],
+        "feedback": scored["feedback"],
         "center_distance_px": scored["center_distance_px"],
         "overlay_png_base64": overlay_b64,
         "overlay_summary": overlay_summary,
