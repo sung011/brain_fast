@@ -103,6 +103,45 @@ def get_random_problem(
     )
 
 
+def list_problems(
+    db: Session,
+    *,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+    user_idx: int | None = None,
+    limit: int = 200,
+) -> dict:
+    """케이스 목록(화면 흐름도 13). 정답 병명은 넣지 않는다. user_idx 가 있으면 내 최근 결과를 붙인다."""
+    from services.reviewNodeServices import solution_label
+
+    rows = study_repositories.list_active(
+        db,
+        st_part=resolve_st_part(st_part),
+        st_modal=resolve_st_modal(st_modal),
+        limit=limit,
+    )
+    latest = (
+        review_node_repositories.latest_solutions(db, int(user_idx), [r.idx for r in rows])
+        if user_idx is not None
+        else {}
+    )
+    items = []
+    for number, row in enumerate(rows, 1):
+        last = latest.get(row.idx)
+        items.append({
+            "idx": row.idx,
+            "number": number,
+            "st_part": row.st_part,
+            "st_modal": row.st_modal,
+            "solved": last is not None,
+            "last_solution": last.rn_solution if last else None,
+            "last_solution_label": solution_label(last.rn_solution) if last else None,
+            "last_solved_at": last.created_at.isoformat() if last and last.created_at else None,
+        })
+    solved = sum(item["solved"] for item in items)
+    return {"count": len(items), "solved_count": solved, "unsolved_count": len(items) - solved, "items": items}
+
+
 def _normalize_web_path(path: str) -> str:
     return (path or "").strip().replace("\\", "/")
 

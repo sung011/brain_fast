@@ -345,6 +345,28 @@ def learning_problem(
     return {"ok": True, "problem": _problem_payload(row)}
 
 
+@router.get("/learning/problems")
+def learning_problems(
+        st_part: str | None = None,
+        st_modal: str | None = None,
+        user_idx: int | None = Query(default=None, description="있으면 내 최근 풀이 결과(정답·부분정답·오답)를 붙인다"),
+        limit: int = Query(200, ge=1, le=500),
+        db: Session = Depends(get_db),
+):
+    """
+    케이스 목록(화면 흐름도 13). 부위·영상 종류에 맞는 문제를 등록 순서대로 돌려준다.
+    정답 병명(st_disease)과 영상 경로는 넣지 않는다. 문제를 고르면 GET /learning/problem/{idx} 로 연다.
+    예) /learning/problems?st_part=chest&st_modal=xray&user_idx=3
+    """
+    try:
+        result = learning_service.list_problems(
+            db, st_part=st_part, st_modal=st_modal, user_idx=user_idx, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
 @router.get("/learning/problem/{study_idx}")
 def learning_problem_by_idx(study_idx: int, db: Session = Depends(get_db)):
     """
@@ -629,8 +651,10 @@ async def learning_roi_grade(
     if study_idx is not None:
         answered = study_repositories.get_by_idx(db, int(study_idx))
         result["expected_disease"] = answered.st_disease if answered else None
-    # 정답 병명으로 고른 학습 해설. 정답을 보여 준 뒤라 함께 돌려줘도 된다 (RAG 연결 전에는 흉부 고정 해설)
-    result["learning_note"] = learning_note_service.get_learning_note(grade_part, result.get("expected_disease"))
+    # 정답(흉부는 소견)으로 고른 학습 해설. 정답을 보여 준 뒤라 함께 돌려줘도 된다 (RAG 연결 전에는 흉부 고정 해설)
+    result["learning_note"] = learning_note_service.get_learning_note(
+        grade_part, result.get("expected_disease"), result.get("targets")
+    )
 
     await review_events.publish(
         "review_created",

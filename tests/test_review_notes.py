@@ -190,3 +190,22 @@ def test_roi_grade_still_answers_when_nas_is_off(client, monkeypatch):
     # 방금 제출한 기록이 오답노트에 나온다
     notes = client.get("/learning/reviews?user_idx=7").json()["items"]
     assert notes[0]["review_idx"] == body["review_idx"] and notes[0]["solution"] == "H"
+
+
+def test_case_list_by_part_and_modal_with_my_latest_result(client):
+    body = client.get("/learning/problems?st_part=chest&st_modal=X-ray&user_idx=7").json()
+    # 삭제된 문제(3)와 뇌 문제(4)는 빠지고, 등록 순서대로 번호가 붙는다
+    assert [(i["idx"], i["number"]) for i in body["items"]] == [(1, 1), (2, 2)]
+    assert [i["last_solution_label"] for i in body["items"]] == ["오답", "부분정답"]
+    assert body["solved_count"] == 2 and body["unsolved_count"] == 0
+    # 정답 병명과 영상 경로는 목록에 넣지 않는다
+    assert "st_disease" not in body["items"][0] and "st_image" not in body["items"][0]
+
+
+def test_case_list_without_user_and_bad_part(client):
+    body = client.get("/learning/problems?st_part=2&st_modal=1").json()
+    assert body["count"] == 2 and all(not i["solved"] for i in body["items"])
+    # 다른 회원(8)은 문제 1만 풀었다
+    other = client.get("/learning/problems?st_part=chest&st_modal=xray&user_idx=8").json()
+    assert [i["solved"] for i in other["items"]] == [True, False]
+    assert client.get("/learning/problems?st_part=lung").status_code == 400

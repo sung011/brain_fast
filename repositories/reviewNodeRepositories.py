@@ -20,6 +20,25 @@ def list_solved_study_idxs(db: Session, user_idx: int) -> list[int]:
     return [int(idx) for idx in db.scalars(stmt).all() if idx is not None]
 
 
+def latest_solutions(db: Session, user_idx: int, study_idxs: list[int]) -> dict[int, ReviewNodeModel]:
+    """study 마다 그 사용자의 가장 최근 풀이 1건."""
+    if not study_idxs:
+        return {}
+    stmt = (
+        select(ReviewNodeModel)
+        .where(
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+            ReviewNodeModel.rn_s_idx.in_(study_idxs),
+        )
+        .order_by(ReviewNodeModel.created_at.desc(), ReviewNodeModel.idx.desc())
+    )
+    latest: dict[int, ReviewNodeModel] = {}
+    for row in db.scalars(stmt).all():
+        latest.setdefault(int(row.rn_s_idx), row)
+    return latest
+
+
 def list_with_details(
     db: Session,
     *,

@@ -148,6 +148,11 @@ def _place(cy: float, cx: float, h: int, w: int) -> str:
     return f"{vert}-{side}"
 
 
+def describe_box(x: float, y: float, width: float, height: float) -> str:
+    """0~1 비율 박스 → "하부-환자 우측" 같은 위치 이름. 학습 해설의 "이 문제에서는"에 쓴다."""
+    return _place(y + height / 2, x + width / 2, 1, 1)
+
+
 class Localization:
     """박스 기반 이상 부위 표시 클래스."""
 
@@ -156,3 +161,4 @@ class Localization:
     build_overlay_image = staticmethod(build_overlay_image)
     overlay_to_base64 = staticmethod(overlay_to_base64)
     summarize_targets = staticmethod(summarize_targets)
+    describe_box = staticmethod(describe_box)

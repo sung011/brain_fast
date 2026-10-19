@@ -433,7 +433,8 @@ def test_real_packages_load_and_run(monkeypatch):
 def test_learning_note_for_chest_answer():
     note = thorax.learning_note("흉막삼출")
     assert note["code"] == "pleural_effusion" and note["name"] == "흉막삼출"
-    assert note["related"] and note["check"] and note["references"]
+    assert note["kind"] == "finding" and note["appearance"] and note["related"] and note["references"]
+    assert note["locations"] == []   # 의심 부위를 안 주면 위치는 비어 있다
     # 흉막삼출이 들어간 조합만 나온다
     assert any("심부전" in text for text in note["combinations"])
     assert all("기흉" not in text or "수기흉" in text for text in note["combinations"])
@@ -455,7 +456,21 @@ def test_learning_note_prefers_rag_and_fills_missing_keys(monkeypatch):
     from services import learningNoteServices
 
     # 의학용어 사전(RAG)이 연결되면 그쪽이 먼저다. 빠진 키는 빈 값으로 채운다
-    monkeypatch.setattr(learningNoteServices, "_from_rag", lambda part, disease: {"name": disease, "summary": "RAG 설명"})
+    monkeypatch.setattr(learningNoteServices, "_from_rag",
+                        lambda part, disease, targets: {"name": disease, "summary": "RAG 설명"})
     note = learningNoteServices.get_learning_note("1", "경막하출혈")
     assert note["source"] == "rag" and note["summary"] == "RAG 설명"
     assert note["related"] == [] and note["pitfall"] == "" and note["references"] == []
+    assert note["kind"] == "disease" and note["appearance"] == [] and note["locations"] == []   # 뇌 문제의 정답은 병명
+
+
+def test_learning_note_fills_location_from_targets():
+    from services import learningNoteServices
+
+    # 채점 응답의 의심 부위(0~1 비율). 화면 왼쪽 아래 = 환자 우측 하부, 같은 자리 두 개는 한 번만
+    targets = [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2},
+               {"x": 0.12, "y": 0.72, "width": 0.1, "height": 0.1},
+               {"x": 0.7, "y": 0.1, "width": 0.2, "height": 0.15}]
+    note = learningNoteServices.get_learning_note("2", "흉막삼출", targets)
+    assert note["kind"] == "finding" and note["source"] == "static"
+    assert note["locations"] == ["하부-환자 우측", "상부-환자 좌측"]
