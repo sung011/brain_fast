@@ -149,7 +149,7 @@ def _place(cy: float, cx: float, h: int, w: int) -> str:
 
 
 def describe_box(x: float, y: float, width: float, height: float) -> str:
-    """0~1 비율 박스 → "하부-환자 우측" 같은 위치 이름. 학습 해설의 "이 문제에서는"에 쓴다."""
+    """0~1 비율 박스 → "하부-환자 우측" 같은 위치 이름. 학습 해설의 "이 영상에서는"에 쓴다."""
     return _place(y + height / 2, x + width / 2, 1, 1)
 
 

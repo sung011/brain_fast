@@ -11,8 +11,9 @@ _from_rag() 만 채우면 되고, 라우터·화면은 고치지 않는다.
         "code": "pleural_effusion",          # 소견 코드 (없으면 이름 그대로)
         "name": "흉막삼출", "name_en": "Pleural effusion",
         "summary": "이 소견(병명)은 — 한두 문장 정의",
-        "appearance": ["영상에서 보이는 모습(판독 단서)", ...],
-        "locations": ["하부-환자 우측", ...],  # 이 문제의 의심 부위 위치. 채점 결과로 채운다(RAG 는 비워도 됨)
+        "appearance": ["판독 포인트 — 이 소견이면 보통 이렇게 보인다", ...],
+        "locations": ["하부-환자 우측", ...],  # 이 영상의 의심 부위 위치. 채점 결과로 채운다(RAG 는 비워도 됨)
+        "case_summary": "이 영상에서는 … 의심 부위가 1곳 있습니다: …",  # 채점 결과로 만든 문장(RAG 는 비워도 됨)
         "related": ["원인이 될 수 있는 질환 — 짧은 이유", ...],
         "combinations": ["다른 소견과 같이 보이면 …", ...],
         "pitfall": "헷갈리기 쉬운 점",
@@ -27,17 +28,17 @@ from __future__ import annotations
 from importlib import import_module
 
 THORAX_PART = "2"
-NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "locations", "related",
+NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "locations", "case_summary", "related",
              "combinations", "pitfall", "references", "disclaimer")
 LIST_KEYS = ("appearance", "locations", "related", "combinations", "references")
-TEXT_KEYS = ("code", "name", "name_en", "summary", "pitfall", "disclaimer")
+TEXT_KEYS = ("code", "name", "name_en", "summary", "case_summary", "pitfall", "disclaimer")
 # 부위별 정답의 성격. 흉부 문제의 정답은 소견, 그 밖은 병명
 KIND_BY_PART = {THORAX_PART: "finding"}
 
 
 def get_learning_note(st_part: str | None, disease: str | None, targets: list[dict] | None = None) -> dict | None:
     """정답(소견·병명)으로 학습 해설을 고른다. RAG → 고정 해설 순서. 둘 다 없으면 None.
-    targets 는 채점 응답의 의심 부위(0~1 비율 박스)로, "이 문제에서는" 위치를 채우는 데 쓴다."""
+    targets 는 채점 응답의 의심 부위(0~1 비율 박스)로, "이 영상에서는" 위치를 채우는 데 쓴다."""
     if not disease or not str(disease).strip():
         return None
     for source, provider in (("rag", _from_rag), ("static", _from_static)):

@@ -474,3 +474,15 @@ def test_learning_note_fills_location_from_targets():
     note = learningNoteServices.get_learning_note("2", "흉막삼출", targets)
     assert note["kind"] == "finding" and note["source"] == "static"
     assert note["locations"] == ["하부-환자 우측", "상부-환자 좌측"]
+
+
+def test_case_summary_describes_this_image_from_targets():
+    rf = import_module("class.thorax.report_format")
+    one = rf.case_summary("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2}])
+    assert one == "이 영상에서는 흉막삼출 의심 부위가 1곳 있습니다: 하부-환자 우측(중간 범위). 한쪽에만 있습니다."
+    both = rf.case_summary("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2},
+                                    {"x": 0.7, "y": 0.7, "width": 0.1, "height": 0.1}])
+    assert "2곳" in both and both.endswith("양쪽에 있습니다.")
+    assert rf.case_summary("기흉", []) == ""
+    note = thorax.learning_note("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2}])
+    assert note["case_summary"].startswith("이 영상에서는 흉막삼출")

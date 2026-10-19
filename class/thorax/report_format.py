@@ -5,7 +5,8 @@
 병명이 아니라 영상에 보이는 소견(폐음영·흉막삼출·기흉·심비대)이라, 해설도 소견 기준으로 쓴다.
 모델 출력과 상관없는 고정 설명이다.
 
-해설 순서: 이 소견은(summary) → 영상에서 보이는 모습(appearance) → 이 문제에서는(locations, 채점 때 채움)
+해설 순서: 이 소견은(summary) → 판독 포인트(appearance, 이 소견이면 보통 이렇게 보인다)
+→ 이 영상에서는(case_summary·locations, 채점한 의심 부위로 문제마다 만든다)
 → 원인이 될 수 있는 질환(related) → 다른 소견과 같이 보이면(combinations) → 헷갈리기 쉬운 점(pitfall)
 
 - NOTES: 소견 코드별 설명
@@ -136,9 +137,40 @@ def disease_code(disease: str | None) -> str | None:
     return code if code in NOTES else None
 
 
+def _area_word(ratio: float) -> str:
+    """박스 넓이(영상 대비) → 크기 말."""
+    if ratio < 0.03:
+        return "작은 범위"
+    if ratio < 0.1:
+        return "중간 범위"
+    return "넓은 범위"
+
+
+def case_summary(name: str, targets: list[dict] | None) -> str:
+    """이 영상의 의심 부위로 만드는 한두 문장. 모델이 지어내는 글이 아니라 채점한 박스의 위치·개수·크기만 쓴다."""
+    from .localization import describe_box
+
+    boxes = [t for t in targets or [] if t.get("width") and t.get("height")]
+    if not boxes:
+        return ""
+    parts = []
+    for t in boxes:
+        place = describe_box(t["x"], t["y"], t["width"], t["height"])
+        parts.append(f"{place}({_area_word(t['width'] * t['height'])})")
+    sides = {p.split("-")[-1].split("(")[0] for p in parts}
+    lr = {s for s in sides if s in ("환자 우측", "환자 좌측")}
+    if len(lr) == 2:
+        side_text = "양쪽에 있습니다."
+    elif lr:
+        side_text = "한쪽에만 있습니다."
+    else:
+        side_text = "가운데에 있습니다."
+    return f"이 영상에서는 {name} 의심 부위가 {len(parts)}곳 있습니다: {', '.join(parts)}. {side_text}"
+
+
 def learning_note(disease: str | None, targets: list[dict] | None = None) -> dict | None:
     """정답 소견으로 결과 화면용 해설을 만든다. targets(채점 응답의 의심 부위, 0~1 비율 박스)가 있으면
-    "이 문제에서는" 위치를 채운다. 모르는 이름이면 None."""
+    "이 영상에서는" 위치를 채운다. 모르는 이름이면 None."""
     from .localization import describe_box
 
     code = disease_code(disease)
@@ -158,6 +190,7 @@ def learning_note(disease: str | None, targets: list[dict] | None = None) -> dic
         "summary": note["summary"],
         "appearance": list(note["appearance"]),
         "locations": locations,
+        "case_summary": case_summary(class_ko(code), targets),
         "related": list(note["related"]),
         "combinations": [text for pair, text in COMBINATIONS if code in pair],
         "pitfall": note["pitfall"],
