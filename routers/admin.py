@@ -711,7 +711,10 @@ async def _create_slide_study(
         st_disease: str,
         remote_dir: str,
 ) -> StudyBatchCreateResult:
-    """MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다."""
+    """MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다.
+
+    X-ray·CT는 upload_mode=each(파일마다 문제)만 사용한다.
+    """
     try:
         modal_code = resolve_st_modal(st_modal)
     except ValueError as exc:
@@ -811,10 +814,14 @@ async def study_create(
         ),
         upload_mode: str = Form(
             default="each",
-            description="each: 파일마다 문제, slide: MRI 한 문제(JSON 배열)",
+            description="each: 파일마다 문제(X-ray/CT/MRI), slide: MRI 한 문제 슬라이드(JSON 배열)",
         ),
 ) -> StudyBatchCreateResult:
-    """학습 등록: 이미지(다수)를 NAS에 올린 뒤 study 행을 각각 저장한다."""
+    """학습 등록: 이미지를 NAS에 올린 뒤 study에 저장한다.
+
+    - each(기본): 파일마다 study 1건. X-ray·CT·MRI 동일.
+    - slide: MRI만. 파일들을 한 문제의 슬라이드로 JSON 배열 저장.
+    """
     uploads: list[UploadFile] = []
     if files:
         uploads.extend([f for f in files if f is not None and (f.filename or "").strip()])

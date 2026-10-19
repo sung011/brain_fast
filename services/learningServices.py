@@ -128,7 +128,7 @@ def resolve_roi_grade_slice(
     """
     MRI 슬라이드 문제에서 제출 슬라이스를 고른다.
 
-    - CT/단일 영상(st_image가 경로 1개): None. slice_index·image_path는 무시.
+    - 단일 영상(st_image 경로 1개): None. slice_index·image_path는 무시.
     - MRI(st_image JSON 배열): slice_index 또는 image_path로 배열 항목을 고른다.
     - 둘 다 없으면 / 범위 밖이면 ValueError.
     """
