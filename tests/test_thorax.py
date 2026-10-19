@@ -433,7 +433,7 @@ def test_real_packages_load_and_run(monkeypatch):
 def test_learning_note_for_chest_answer():
     note = thorax.learning_note("흉막삼출")
     assert note["code"] == "pleural_effusion" and note["name"] == "흉막삼출"
-    assert note["kind"] == "finding" and note["appearance"] and note["related"] and note["references"]
+    assert note["kind"] == "finding" and note["appearance"] and note["related"] and note["confirm"] and note["references"]
     assert note["locations"] == []   # 의심 부위를 안 주면 위치는 비어 있다
     # 흉막삼출이 들어간 조합만 나온다
     assert any("심부전" in text for text in note["combinations"])
@@ -486,3 +486,20 @@ def test_case_summary_describes_this_image_from_targets():
     assert rf.case_summary("기흉", []) == ""
     note = thorax.learning_note("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2}])
     assert note["case_summary"].startswith("이 영상에서는 흉막삼출")
+
+
+def test_glossary_definition_replaces_summary(tmp_path, monkeypatch):
+    from services import learningNoteServices
+
+    csv_path = tmp_path / "glossary.csv"
+    csv_path.write_text("en,kr,definition,definition_kr\n"
+                        "pleural effusion,흉막삼출,x,흉막강 내에 액체가 존재하는 상태. 질병의 징후이다. 세 번째 문장.\n",
+                        encoding="utf-8")
+    monkeypatch.setattr(learningNoteServices.settings, "glossary_csv_path", str(csv_path))
+    learningNoteServices._glossary.cache_clear()
+    note = learningNoteServices.get_learning_note("2", "흉막삼출")
+    assert note["summary_source"] == "glossary"
+    assert note["summary"] == "흉막강 내에 액체가 존재하는 상태. 질병의 징후이다."   # 두 문장까지
+    # 사전에 없는 용어는 고정 해설 그대로
+    assert learningNoteServices.get_learning_note("2", "폐음영")["summary_source"] == "static"
+    learningNoteServices._glossary.cache_clear()

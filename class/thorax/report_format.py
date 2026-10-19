@@ -7,7 +7,8 @@
 
 해설 순서: 이 소견은(summary) → 판독 포인트(appearance, 이 소견이면 보통 이렇게 보인다)
 → 이 영상에서는(case_summary·locations, 채점한 의심 부위로 문제마다 만든다)
-→ 원인이 될 수 있는 질환(related) → 다른 소견과 같이 보이면(combinations) → 헷갈리기 쉬운 점(pitfall)
+→ 감별할 질환(related) → 확인하려면(confirm, 원인을 확인하는 검사) → 다른 소견과 같이 보이면(combinations)
+→ 헷갈리기 쉬운 점(pitfall). X-ray 는 소견까지만 보여 주고 원인 질환을 확진하지 못하므로 CONFIRM_NOTE 를 함께 둔다.
 
 - NOTES: 소견 코드별 설명
 - COMBINATIONS: 두 소견이 같이 보일 때 생각해 볼 상황
@@ -21,6 +22,7 @@ from __future__ import annotations
 from .constants import LABELS, class_ko, class_label, finding_code
 
 NOTE_DISCLAIMER = "학습용 참고 정보이며 진단이 아닙니다. 실제 판단은 임상 정보와 함께 의사가 합니다."
+CONFIRM_NOTE = "X-ray 는 보이는 소견까지만 알려 줍니다. 원인 질환은 아래 검사와 증상·병력을 함께 보고 정합니다."
 
 NOTES = {
     "pleural_effusion": {
@@ -40,6 +42,12 @@ NOTES = {
             "결핵",
             "폐색전증",
             "간경화·신증후군처럼 혈액 속 단백질이 낮아지는 질환",
+        ],
+        "confirm": [
+            "흉부 초음파 — 적은 양도 확인하고, 흉수를 뽑을 위치를 정합니다",
+            "흉수천자(흉수 검사) — 삼출액인지 여출액인지 나눠 원인을 좁힙니다",
+            "흉부 CT — 폐·흉막의 원인 병변(종양·폐렴 등)을 찾습니다",
+            "심초음파·혈액검사 — 심부전이 의심될 때",
         ],
         "pitfall": "누워서 찍은(AP) 사진에서는 액체가 등 쪽으로 퍼져 한쪽 폐가 전체적으로 뿌옇게만 보여 놓치기 쉽습니다.",
         "references": [
@@ -64,6 +72,12 @@ NOTES = {
             "무기폐",
             "종양",
         ],
+        "confirm": [
+            "증상·혈액검사(염증 수치) — 감염(폐렴)인지 판단합니다",
+            "객담 검사 — 원인균을 찾습니다",
+            "흉부 CT — 분포와 원인을 더 자세히 봅니다",
+            "추적 X-ray — 치료 뒤 좋아지는지 확인합니다",
+        ],
         "pitfall": "유방·근육 같은 연조직이 겹쳐 폐음영처럼 보일 수 있습니다. 양쪽을 비교해 봅니다.",
         "references": [
             {"title": "Radiopaedia - Airspace opacification", "url": "https://radiopaedia.org/articles/airspace-opacification"},
@@ -85,6 +99,11 @@ NOTES = {
             "외상 — 늑골 골절 등",
             "시술·인공호흡기 사용 후(의인성)",
         ],
+        "confirm": [
+            "기흉 자체는 X-ray 로 진단하는 경우가 많습니다",
+            "흉부 CT — 작은 기흉을 확인하고, 폐 기포 같은 원인을 찾습니다",
+            "증상·활력징후 — 긴장성 기흉(응급)인지 판단합니다",
+        ],
         "pitfall": "피부 주름이나 견갑골 가장자리를 흉막선으로 착각하기 쉽습니다. 누운 사진에서는 늑골횡격막각이 깊게 파여 보이는 것(deep sulcus sign)으로 나타나기도 합니다.",
         "references": [
             {"title": "Radiopaedia - Pneumothorax", "url": "https://radiopaedia.org/articles/pneumothorax"},
@@ -104,6 +123,11 @@ NOTES = {
             "심근병증",
             "심낭삼출 — 심장 자체가 아니라 주변 액체 때문에 커 보일 수 있습니다",
             "고혈압",
+        ],
+        "confirm": [
+            "심초음파 — 심장이 실제로 커졌는지, 심낭삼출 때문인지, 심장 기능은 어떤지 봅니다",
+            "심전도 — 리듬과 심장 부담을 봅니다",
+            "혈액검사(BNP 등) — 심부전 여부를 봅니다",
         ],
         "pitfall": "누워서 찍은(AP) 사진이나 숨을 덜 들이쉰 사진에서는 심장이 실제보다 크게 보입니다.",
         "references": [
@@ -192,6 +216,8 @@ def learning_note(disease: str | None, targets: list[dict] | None = None) -> dic
         "locations": locations,
         "case_summary": case_summary(class_ko(code), targets),
         "related": list(note["related"]),
+        "confirm": list(note.get("confirm", [])),
+        "confirm_note": CONFIRM_NOTE,
         "combinations": [text for pair, text in COMBINATIONS if code in pair],
         "pitfall": note["pitfall"],
         "references": [dict(ref) for ref in note["references"]],
