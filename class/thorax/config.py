@@ -7,7 +7,7 @@
 best.pt(가중치)와 inference_config.json(입력 크기·기준값·소견 이름)이 있다.
 
     THORAX_HF_REPO=team/MediScan_Chest
-    THORAX_PACKAGES=mediscan_opacity_detector_v2,mediscan_effusion_detector_v2_3
+    THORAX_PACKAGES=mediscan_opacity_detector_v2,mediscan_effusion_detector_v2_3,mediscan_pneumothorax_detector_v2
 
 Hugging Face 저장소 안에 패키지 이름의 폴더가 있어야 한다.
 개발 중 HF에 올리기 전에는 THORAX_LOCAL_DIR 로 PC 폴더에서 읽을 수 있다(운영에서는 비워 둔다).
