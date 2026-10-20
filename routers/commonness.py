@@ -6,7 +6,7 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 하는 일:
 - /health/db          : DB 연결 확인
 - /login              : 학습자 로그인
-- /popups             : 메인 화면 홍보 팝업 목록
+- /popups             : 노출 중이고 노출 기간 안인 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
 - /learning/problem   : 랜덤 학습 문제 1건
@@ -90,8 +90,10 @@ def _popup_public_url(pp_image: str | None) -> str | None:
 @router.get("/popups", response_model=list[PopupPublicOut])
 def public_popups(db: Session = Depends(get_db)):
     """
-    학습자 메인용 활성 홍보 팝업 목록.
-    del_yn=N, state=N, 노출 기간 안인 항목만 pp_sort 순으로 반환.
+    학습자 메인에 띄울 홍보 팝업.
+
+    상태가 노출(N)이고, 지금이 노출 시작과 노출 종료 사이인 항목만 pp_sort 순으로 반환.
+    시작을 비우면 즉시, 종료를 비우면 종료 없음. 숨김·삭제·기간 밖은 빠진다.
     """
     rows = popup_service.list_public(db)
     return [
@@ -102,6 +104,9 @@ def public_popups(db: Session = Depends(get_db)):
             pp_image_url=_popup_public_url(row.pp_image),
             pp_link=row.pp_link,
             pp_sort=row.pp_sort or 0,
+            state=row.state,
+            start_at=row.start_at,
+            end_at=row.end_at,
         )
         for row in rows
     ]

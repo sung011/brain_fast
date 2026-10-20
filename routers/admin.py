@@ -11,7 +11,7 @@ Swagger(/docs)에는 숨긴다 (main.py 에서 include_in_schema=False).
 - /admin/user...            : 회원 목록·가입·수정·삭제, SSE 실시간 갱신
 - /admin/reviews...         : 학습자 ROI 제출 리뷰 조회, SSE
 - /admin/study...           : 학습 문제(스터디) CRUD, NAS 이미지 업로드
-- /admin/popup...           : 홍보 팝업 CRUD
+- /admin/popup...           : 홍보 팝업 CRUD, SSE 실시간 갱신
 - /admin/qa...              : 문의 답변·종료, SSE 실시간 알림
 - /admin/nas/...            : NAS 연결 확인·파일 업로드
 """
@@ -53,6 +53,7 @@ from services import reviewNodeServices as review_node_service
 from services import studyServices as study_service
 from services import userServices as user_service
 from utils.adminAuth import admin_session_guard
+from utils.popup_sse import popup_events
 from utils.qa_sse import qa_events
 from utils.renderHelper import render_with_layout
 from utils.review_sse import review_events
@@ -1076,9 +1077,55 @@ def popup_detail_page(idx: int, request: Request, partial: bool = False):
     return render_with_layout(request, templates, "popup_detail", data)
 
 
+def _popup_event_payload(row) -> dict:
+    return {
+        "idx": row.idx,
+        "pp_title": row.pp_title,
+        "pp_image": row.pp_image,
+        "pp_sort": row.pp_sort or 0,
+        "state": row.state,
+    }
+
+
 @router.get("/popups_all", response_model=list[PopupOut])
 def popups_all(db: Session = Depends(get_db)):
     return [_popup_out(row) for row in popup_service.list_admin(db)]
+
+
+@router.get("/popups/next-sort")
+def popups_next_sort(db: Session = Depends(get_db)):
+    """노출 팝업이 있으면 다음 표시 순서, 없으면 0."""
+    return {"pp_sort": popup_service.next_sort_for_exposed(db)}
+
+
+@router.get("/popups/stream")
+async def popups_stream(request: Request):
+    """팝업 목록 변경을 실시간으로 알린다 (SSE)."""
+
+    async def event_generator():
+        queue = await popup_events.subscribe()
+        try:
+            yield popup_events.format_sse({"event": "connected", "data": {"ok": True}})
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield popup_events.format_sse(message)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await popup_events.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/popups/{idx}", response_model=PopupOut)
@@ -1103,7 +1150,7 @@ async def popup_create(
         end_at: str = Form("", description="노출 종료 datetime-local"),
         state: str = Form("N", description="N:노출 / S:숨김"),
 ) -> PopupWriteResult:
-    """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장."""
+    """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장. 성공 시 SSE(popup_created)."""
     svc = nas_service_mod.nas_service
     if not svc.enabled:
         raise HTTPException(
@@ -1140,6 +1187,8 @@ async def popup_create(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": str(exc)},
         ) from exc
+
+    await popup_events.publish("popup_created", _popup_event_payload(row))
 
     return PopupWriteResult(
         ok=True,
@@ -1219,6 +1268,8 @@ async def popup_update(
             detail={"message": "팝업을 찾을 수 없습니다."},
         )
 
+    await popup_events.publish("popup_updated", _popup_event_payload(row))
+
     return PopupWriteResult(
         ok=True,
         idx=row.idx,
@@ -1232,13 +1283,14 @@ async def popup_update(
 
 
 @router.delete("/popup/{idx}")
-def popup_delete(idx: int, db: Session = Depends(get_db)):
+async def popup_delete(idx: int, db: Session = Depends(get_db)):
     row = popup_service.delete_popup(db, idx)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"message": "팝업을 찾을 수 없습니다."},
         )
+    await popup_events.publish("popup_deleted", {"idx": row.idx})
     return {"ok": True, "idx": row.idx}
 
 

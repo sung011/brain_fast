@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from models.popupModel import PopupModel
@@ -15,7 +15,12 @@ def list_all(db: Session, *, active_only: bool = False) -> list[PopupModel]:
 
 
 def list_public_active(db: Session, *, now: datetime | None = None) -> list[PopupModel]:
-    """학습자 메인용: 삭제/숨김 제외, 기간 안인 팝업."""
+    """
+    학습자 메인용.
+
+    삭제되지 않았고, 상태가 노출(N)이며, 지금이 노출 시작과 종료 사이인 팝업만.
+    시작이 비어 있으면 이미 시작된 것으로, 종료가 비어 있으면 종료가 없는 것으로 본다.
+    """
     now = now or datetime.now()
     stmt = (
         select(PopupModel)
@@ -32,6 +37,18 @@ def list_public_active(db: Session, *, now: datetime | None = None) -> list[Popu
 
 def get_by_idx(db: Session, idx: int) -> PopupModel | None:
     return db.get(PopupModel, idx)
+
+
+def max_exposed_sort(db: Session) -> int | None:
+    """삭제되지 않은 노출(state=N) 팝업의 가장 큰 pp_sort. 없으면 None."""
+    stmt = select(func.max(PopupModel.pp_sort)).where(
+        PopupModel.del_yn == "N",
+        PopupModel.state == "N",
+    )
+    value = db.scalar(stmt)
+    if value is None:
+        return None
+    return int(value)
 
 
 def create(
