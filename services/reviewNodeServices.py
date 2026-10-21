@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from repositories import reviewNodeRepositories as repositories
-from repositories import studyRepositories as study_repositories
 from services.nasServices import NasNotConfiguredError, nas_service
 
 SOLUTION_MAP = {
@@ -55,17 +54,43 @@ def _overlay_bytes(overlay_b64: str | None) -> bytes | None:
     return data or None
 
 
-def _disease_for_review(db: Session, study_idx: int | None, grade: dict[str, Any]) -> str | None:
-    if study_idx is not None:
-        study = study_repositories.get_by_idx(db, study_idx)
-        if study is not None:
-            disease = _clip_disease(study.st_disease)
-            if disease:
-                return disease
+def _finding_score(item: dict[str, Any]) -> float:
+    try:
+        return float(item.get("score"))
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+def highest_percent_disease(grade: dict[str, Any]) -> str | None:
+    """출혈·germinoma 후보 중 score가 가장 높은 병명. 한글 이름을 우선한다."""
+    candidates: list[dict[str, Any]] = []
     classification = grade.get("classification") or {}
-    return _clip_disease(
-        classification.get("top_label_ko") or classification.get("top_label")
-    )
+    if isinstance(classification, dict):
+        findings = classification.get("findings") or []
+        if isinstance(findings, list):
+            candidates.extend(item for item in findings if isinstance(item, dict))
+    germinoma = grade.get("germinoma") or {}
+    if isinstance(germinoma, dict):
+        g_findings = germinoma.get("findings") or []
+        if isinstance(g_findings, list) and g_findings:
+            candidates.extend(item for item in g_findings if isinstance(item, dict))
+        elif germinoma.get("confidence") is not None:
+            candidates.append(
+                {
+                    "label": germinoma.get("top_label"),
+                    "label_ko": germinoma.get("top_label_ko"),
+                    "score": germinoma.get("confidence"),
+                }
+            )
+    if candidates:
+        best = max(candidates, key=_finding_score)
+        if _finding_score(best) != float("-inf"):
+            return _clip_disease(best.get("label_ko") or best.get("label"))
+    if isinstance(classification, dict):
+        return _clip_disease(
+            classification.get("top_label_ko") or classification.get("top_label")
+        )
+    return None
 
 
 async def save_submission(
@@ -116,7 +141,7 @@ async def save_submission(
         db,
         rn_u_idx=user_idx,
         rn_s_idx=study_idx,
-        rn_disease=_disease_for_review(db, study_idx, grade),
+        rn_disease=highest_percent_disease(grade),
         rn_image=rn_image,
         rn_solution=solution_code(grade.get("result")),
         state="N",

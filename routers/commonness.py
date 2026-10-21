@@ -9,6 +9,7 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /popups             : 노출 중이고 노출 기간 안인 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
+- /learning/today      : 오늘 부위별 학습 시간·문제 수·정답률
 - /learning/problem   : 랜덤 학습 문제 1건
 - /learning/submit    : 병명 제출·채점 + 다음 문제
 - /learning/roi-grade : 이미지+ROI 제출 채점 (MRI는 slice_index/image_path, 리뷰 저장 포함)
@@ -26,6 +27,7 @@ from db import get_db
 from db import ping_db
 from models.studyModel import StudyModel
 from repositories import studyRepositories as study_repositories
+from schemas.learningSchemas import TodayLearningOut
 from schemas.popupSchemas import PopupPublicOut
 from schemas.qaSchemas import QaCreateBody, QaMessageBody
 from schemas.userSchemas import UserLogin
@@ -293,6 +295,28 @@ def glossary(
         "count": len(items),
         "items": items,
     }
+
+
+@router.get("/learning/today", response_model=TodayLearningOut)
+def learning_today(
+        user_idx: int = Query(..., description="로그인 사용자 user_member.idx"),
+        db: Session = Depends(get_db),
+):
+    """
+    오늘의 학습 현황.
+
+    오늘 제출이 있는 부위만 학습 시간(분), 학습 문제 수, 정답률(%)을 돌려준다.
+    제출은 review_node 기준이고 정답은 rn_solution=C. 없는 부위는 items에 넣지 않는다.
+    학습 시간은 첫 제출과 마지막 제출 사이의 분이고, 제출이 1건 이하면 0이다.
+    """
+    try:
+        result = learning_service.today_learning(db, user_idx)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True, **result}
 
 
 @router.get("/learning/problem")

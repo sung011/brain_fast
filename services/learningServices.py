@@ -1,15 +1,21 @@
+from datetime import date, datetime, timedelta, timezone
+
 from sqlalchemy.orm import Session
 
 from models.medicalTermsModel import MedicalTermsModel
+from models.reviewNodeModel import ReviewNodeModel
 from models.studyModel import StudyModel
 from repositories import learningRepositories as repositories
 from repositories import reviewNodeRepositories as review_node_repositories
 from repositories import studyRepositories as study_repositories
 from schemas.studySchemas import (
+    ST_PART_LABELS,
     parse_study_image_paths,
     resolve_st_modal,
     resolve_st_part,
 )
+
+KST = timezone(timedelta(hours=9))
 
 ALLOWED_BODY_PARTS = {"brain", "chest", "abdomen", "knee", "other"}
 ALLOWED_MODALITIES = {"xray", "ct", "mri", "common"}
@@ -218,4 +224,72 @@ def submit_problem(
         "expected": expected,
         "next": next_row,
         "exclude_idxs": done,
+    }
+
+
+def today_bounds(now: datetime | None = None) -> tuple[date, datetime, datetime]:
+    """오늘 00:00 이상, 내일 00:00 미만. now 가 없으면 한국 시각."""
+    current = now or datetime.now(KST)
+    if current.tzinfo is not None:
+        current = current.astimezone(KST).replace(tzinfo=None)
+    day = current.date()
+    start = datetime.combine(day, datetime.min.time())
+    return day, start, start + timedelta(days=1)
+
+
+def study_minutes(times: list[datetime]) -> int:
+    """첫 제출과 마지막 제출 사이의 분. 제출이 1건 이하면 0."""
+    if len(times) < 2:
+        return 0
+    span = max(times) - min(times)
+    return int(round(span.total_seconds() / 60))
+
+
+def summarize_today_parts(
+    rows: list[tuple[ReviewNodeModel, StudyModel | None]],
+) -> list[dict]:
+    """부위별 학습 시간·문제 수·정답률. 오늘 제출이 있는 부위만, 뇌·흉부·복부·무릎 순."""
+    grouped: dict[str, list[ReviewNodeModel]] = {code: [] for code in ST_PART_LABELS}
+    for review, study in rows:
+        part = study.st_part if study is not None else None
+        if part not in grouped:
+            continue
+        grouped[part].append(review)
+
+    items: list[dict] = []
+    for code, label in ST_PART_LABELS.items():
+        reviews = grouped[code]
+        total = len(reviews)
+        if total == 0:
+            continue
+        correct = sum(1 for review in reviews if (review.rn_solution or "").upper() == "C")
+        times = [review.created_at for review in reviews if review.created_at is not None]
+        rate = int(round(correct * 100 / total)) if total else 0
+        items.append(
+            {
+                "st_part": code,
+                "part_label": label,
+                "study_minutes": study_minutes(times),
+                "problem_count": total,
+                "correct_rate": rate,
+            }
+        )
+    return items
+
+
+def today_learning(db: Session, user_idx: int, *, now: datetime | None = None) -> dict:
+    """한 회원의 오늘 학습 현황. 제출은 review_node, 부위는 study.st_part."""
+    if user_idx < 1:
+        raise ValueError("user_idx가 필요합니다.")
+    day, start, end = today_bounds(now)
+    rows = review_node_repositories.list_between_for_user(
+        db,
+        user_idx,
+        start=start,
+        end=end,
+    )
+    return {
+        "date": day.isoformat(),
+        "user_idx": user_idx,
+        "items": summarize_today_parts(rows),
     }

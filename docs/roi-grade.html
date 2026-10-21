@@ -37,7 +37,7 @@
       <li>프론트가 현재 보이는 장 PNG와 ROI 좌표, <code>study_idx</code>를 보냅니다.</li>
       <li>MRI면 추가로 <code>slice_index</code>(0부터) 또는 <code>image_path</code>로 슬라이스를 지정합니다.</li>
       <li><code>routers/commonness.py</code>가 슬라이스를 맞춘 뒤 <code>services/roiGradeServices.py</code>로 채점합니다.</li>
-      <li>제출 이미지를 NAS review 폴더에 올리고 <code>review_node</code>에 이력을 남깁니다.</li>
+      <li>제출 이미지를 NAS review 폴더에 올리고 <code>review_node</code>에 이력을 남깁니다. <code>rn_disease</code>에는 문제 정답이 아니라, 출혈·생식세포종양 확률 중 가장 높은 병명이 들어갑니다.</li>
       <li>응답은 기존과 같습니다(<code>ok</code>, 판정, overlay 등). 다음 문제가 있으면 <code>next</code>도 붙습니다.</li>
     </ol>
 

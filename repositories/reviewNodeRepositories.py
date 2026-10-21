@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -38,6 +40,28 @@ def list_with_details(
         stmt = stmt.where(ReviewNodeModel.rn_u_idx == user_idx)
     if limit is not None and limit > 0:
         stmt = stmt.limit(limit)
+    return list(db.execute(stmt).all())
+
+
+def list_between_for_user(
+    db: Session,
+    user_idx: int,
+    *,
+    start: datetime,
+    end: datetime,
+) -> list[tuple[ReviewNodeModel, StudyModel | None]]:
+    """한 회원의 기간 안 제출과 연결된 study. start 이상, end 미만."""
+    stmt = (
+        select(ReviewNodeModel, StudyModel)
+        .outerjoin(StudyModel, StudyModel.idx == ReviewNodeModel.rn_s_idx)
+        .where(
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+            ReviewNodeModel.created_at >= start,
+            ReviewNodeModel.created_at < end,
+        )
+        .order_by(ReviewNodeModel.created_at.asc(), ReviewNodeModel.idx.asc())
+    )
     return list(db.execute(stmt).all())
 
 
