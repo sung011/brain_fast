@@ -18,6 +18,9 @@ _from_rag() 만 채우면 되고, 라우터·화면은 고치지 않는다.
         "confirm": ["확인하려면 — 원인 질환을 확인하는 검사", ...],
         "confirm_note": "X-ray 는 소견까지만 … (확진할 수 없다는 안내)",
         "combinations": ["다른 소견과 같이 보이면 …", ...],
+        "next_steps": [{"sign": "이렇게 보이면", "suspect": "의심", "next": "다음 검사",
+                        "evidence": "guideline", "source": {"title": "...", "url": "https://..."}}],
+                                             # 지침·용어집으로 확인한 줄만. 없으면 빈 목록
         "pitfall": "헷갈리기 쉬운 점",
         "references": [{"title": "...", "url": "https://..."}],
         "disclaimer": "학습용 참고 정보이며 진단이 아닙니다 …",
@@ -37,8 +40,8 @@ from config import settings
 
 THORAX_PART = "2"
 NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "locations", "case_summary", "related",
-             "confirm", "confirm_note", "combinations", "pitfall", "references", "disclaimer")
-LIST_KEYS = ("appearance", "locations", "related", "confirm", "combinations", "references")
+             "confirm", "confirm_note", "combinations", "next_steps", "pitfall", "references", "disclaimer")
+LIST_KEYS = ("appearance", "locations", "related", "confirm", "combinations", "next_steps", "references")
 TEXT_KEYS = ("code", "name", "name_en", "summary", "case_summary", "confirm_note", "pitfall", "disclaimer")
 # 부위별 정답의 성격. 흉부 문제의 정답은 소견, 그 밖은 병명
 KIND_BY_PART = {THORAX_PART: "finding"}

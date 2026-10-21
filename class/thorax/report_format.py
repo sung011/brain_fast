@@ -9,6 +9,8 @@
 → 이 영상에서는(case_summary·locations, 채점한 의심 부위로 문제마다 만든다)
 → 감별할 질환(related) → 확인하려면(confirm, 원인을 확인하는 검사) → 다른 소견과 같이 보이면(combinations)
 → 헷갈리기 쉬운 점(pitfall). X-ray 는 소견까지만 보여 주고 원인 질환을 확진하지 못하므로 CONFIRM_NOTE 를 함께 둔다.
+이렇게 보이면(next_steps)은 "보이는 것 → 의심 → 다음 검사"를 잇는 줄로, 학회 진료지침·용어집으로 확인한 줄만 넣고
+줄마다 출처를 단다(evidence="guideline"). 근거를 못 찾은 줄은 넣지 않는다.
 
 - NOTES: 소견 코드별 설명
 - COMBINATIONS: 두 소견이 같이 보일 때 생각해 볼 상황
@@ -22,6 +24,20 @@ from __future__ import annotations
 from .constants import LABELS, class_ko, class_label, finding_code
 
 NOTE_DISCLAIMER = "학습용 참고 정보이며 진단이 아닙니다. 실제 판단은 임상 정보와 함께 의사가 합니다."
+
+# 이렇게 보이면(next_steps) 출처
+_BTS_PLEURAL = {"title": "British Thoracic Society Guideline for pleural disease (Thorax 2023)",
+                "url": "https://brit-thoracic.org.uk/document-library/guidelines/pleural-disease/bts-guideline-for-pleural-disease"}
+_ATS_IDSA_CAP = {"title": "ATS/IDSA Community-acquired Pneumonia Guideline (AJRCCM 2019)",
+                 "url": "https://www.atsjournals.org/doi/10.1164/rccm.201908-1581ST"}
+_FLEISCHNER = {"title": "Fleischner Society: Glossary of Terms for Thoracic Imaging (Radiology 2024)",
+               "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10902601/"}
+
+
+def _step(sign: str, suspect: str, next_: str, source: dict) -> dict:
+    """이렇게 보이면 한 줄. 지침·용어집으로 확인한 줄만 만든다."""
+    return {"sign": sign, "suspect": suspect, "next": next_, "evidence": "guideline", "source": source}
+
 CONFIRM_NOTE = "X-ray 는 보이는 소견까지만 알려 줍니다. 원인 질환은 아래 검사와 증상·병력을 함께 보고 정합니다."
 
 NOTES = {
@@ -48,6 +64,14 @@ NOTES = {
             "흉수천자(흉수 검사) — 삼출액인지 여출액인지 나눠 원인을 좁힙니다",
             "흉부 CT — 폐·흉막의 원인 병변(종양·폐렴 등)을 찾습니다",
             "심초음파·혈액검사 — 심부전이 의심될 때",
+        ],
+        "next_steps": [
+            _step("한쪽에만 있음", "감염·악성 종양 등 원인을 찾아야 함",
+                  "초음파로 위치를 보며 흉수를 뽑아 검사합니다", _BTS_PLEURAL),
+            _step("한쪽에 있고 악성 종양이 의심됨", "악성 흉수",
+                  "흉수 세포검사를 먼저 합니다. 음성이어도 CT·조직검사 같은 추가 검사를 생각합니다", _BTS_PLEURAL),
+            _step("같은 쪽에 폐음영이 있고 열이 남", "폐렴에 동반된 삼출·흉막 감염",
+                  "흉수를 뽑아 세균 검사를 합니다", _BTS_PLEURAL),
         ],
         "pitfall": "누워서 찍은(AP) 사진에서는 액체가 등 쪽으로 퍼져 한쪽 폐가 전체적으로 뿌옇게만 보여 놓치기 쉽습니다.",
         "references": [
@@ -78,6 +102,13 @@ NOTES = {
             "흉부 CT — 분포와 원인을 더 자세히 봅니다",
             "추적 X-ray — 치료 뒤 좋아지는지 확인합니다",
         ],
+        "next_steps": [
+            _step("하얀 음영 안에 검은 기관지가 보임(공기기관지조영)", "폐포가 액체 등으로 채워진 경화. 이것만으로 원인은 알 수 없음",
+                  "증상·혈액검사 같은 임상 정보와 함께 원인을 판단합니다", _FLEISCHNER),
+            _step("열·기침이 있어 폐렴이 의심됨", "폐렴",
+                  "외래 환자는 객담 검사를 일상적으로 하지 않고, 5~7일 안에 좋아지면 추적 X-ray 도 필요하지 않습니다",
+                  _ATS_IDSA_CAP),
+        ],
         "pitfall": "유방·근육 같은 연조직이 겹쳐 폐음영처럼 보일 수 있습니다. 양쪽을 비교해 봅니다.",
         "references": [
             {"title": "Radiopaedia - Airspace opacification", "url": "https://radiopaedia.org/articles/airspace-opacification"},
@@ -103,6 +134,10 @@ NOTES = {
             "기흉 자체는 X-ray 로 진단하는 경우가 많습니다",
             "흉부 CT — 작은 기흉을 확인하고, 폐 기포 같은 원인을 찾습니다",
             "증상·활력징후 — 긴장성 기흉(응급)인지 판단합니다",
+        ],
+        "next_steps": [
+            _step("얇은 흉막선이 있고 바깥에 혈관 무늬가 없음, 증상이 적음", "자발성 기흉",
+                  "증상이 적으면 크기와 관계없이 경과 관찰을 고려할 수 있습니다", _BTS_PLEURAL),
         ],
         "pitfall": "피부 주름이나 견갑골 가장자리를 흉막선으로 착각하기 쉽습니다. 누운 사진에서는 늑골횡격막각이 깊게 파여 보이는 것(deep sulcus sign)으로 나타나기도 합니다.",
         "references": [
@@ -225,6 +260,7 @@ def learning_note(disease: str | None, targets: list[dict] | None = None) -> dic
         "confirm": list(note.get("confirm", [])),
         "confirm_note": CONFIRM_NOTE,
         "combinations": [text for pair, text in COMBINATIONS if code in pair],
+        "next_steps": [{**step, "source": dict(step["source"])} for step in note.get("next_steps", [])],
         "pitfall": note["pitfall"],
         "references": [dict(ref) for ref in note["references"]],
         "disclaimer": NOTE_DISCLAIMER,

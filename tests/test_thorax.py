@@ -442,6 +442,16 @@ def test_learning_note_for_chest_answer():
     assert thorax.learning_note("Pleural effusion")["code"] == "pleural_effusion"
 
 
+def test_learning_note_next_steps_have_guideline_source():
+    # 이렇게 보이면: 지침·용어집으로 확인한 줄만, 줄마다 출처가 있다
+    for name in ("흉막삼출", "폐음영", "기흉", "심비대"):
+        for step in thorax.learning_note(name)["next_steps"]:
+            assert step["sign"] and step["suspect"] and step["next"]
+            assert step["evidence"] == "guideline" and step["source"]["url"].startswith("https://")
+    assert len(thorax.learning_note("흉막삼출")["next_steps"]) == 3
+    assert thorax.learning_note("심비대")["next_steps"] == []   # 지침으로 확인한 줄이 아직 없다
+
+
 def test_learning_note_unknown_or_brain_is_none():
     assert thorax.learning_note(None) is None
     assert thorax.learning_note("폐결절") is None
@@ -460,7 +470,7 @@ def test_learning_note_prefers_rag_and_fills_missing_keys(monkeypatch):
                         lambda part, disease, targets: {"name": disease, "summary": "RAG 설명"})
     note = learningNoteServices.get_learning_note("1", "경막하출혈")
     assert note["source"] == "rag" and note["summary"] == "RAG 설명"
-    assert note["related"] == [] and note["pitfall"] == "" and note["references"] == []
+    assert note["related"] == [] and note["pitfall"] == "" and note["references"] == [] and note["next_steps"] == []
     assert note["kind"] == "disease" and note["appearance"] == [] and note["locations"] == []   # 뇌 문제의 정답은 병명
 
 
