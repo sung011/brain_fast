@@ -363,6 +363,30 @@
     flex-shrink: 0;
 }
 
+/* 학습 상세 미리보기. 두 장은 같은 칸에 겹치고, 준비된 장만 위에 둔다. */
+[data-slide-stage] [data-slide-frame]:not([src]) {
+    opacity: 0;
+}
+
+[data-slide-stage].is-empty [data-slide-frame] {
+    visibility: hidden;
+}
+
+.study-slide-empty {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#studyDetailImagePath {
+    min-height: 1.5rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 @media (max-width: 767.98px) {
     .qa-messenger {
         height: 70vh;
