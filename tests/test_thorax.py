@@ -525,11 +525,13 @@ def test_roi_feedback_explains_why():
 
     target = [(10, 60, 40, 90)]   # 화면 왼쪽 아래 = 환자 우측 하부
     fb = roiGradeServices.roi_feedback
-    assert "좌우를 반대로" in fb([m(65, 60, 95, 90)], target, W, H, chest=True)[0]
-    assert "일부만" in fb([m(15, 65, 25, 75)], target, W, H, chest=True)[0]
+    assert "반대쪽 폐" in fb([m(65, 60, 95, 90)], target, W, H, chest=True)[0]
+    # 크기만 다르면 위치는 맞았다고 먼저 말하고, 크기는 의사마다 다르다고 덧붙인다
+    small = fb([m(15, 65, 25, 75)], target, W, H, chest=True)[0]
+    assert small.startswith("위치는 맞았어요") and "의사마다" in small
     assert "더 아래쪽" in fb([m(10, 10, 40, 40)], target, W, H, chest=True)[0]
     assert fb([m(10, 60, 40, 90), m(60, 10, 80, 30)], target, W, H, found=[True], chest=True) == [
-        "정답 부위가 아닌 곳에 그린 ROI 가 1개 있어요."]
+        "정답이 아닌 곳에 그린 ROI 가 1개 있어요."]
     assert "너무 넓게" in fb([m(0, 0, 100, 100)], target, W, H, found=[True], too_wide=True)[0]
     assert fb([], target, W, H) == ["ROI 를 그리지 않았습니다."]
     assert fb([m(10, 60, 40, 90)], target, W, H, found=[True]) == []

@@ -333,8 +333,10 @@ def roi_feedback(
 ) -> list[str]:
     """
     틀린 이유를 학습자가 알아듣게 한두 줄로 알려 준다. 채점 숫자(겹침·중심)를 말로 바꾼 것이다.
+    위치는 분명하게, 크기는 너그럽게 말한다. 의사들도 "어디쯤"은 대체로 같지만 "얼마나 크게"는 사람마다 달라서다.
+    학습자가 왜 틀렸는지(좌우 헷갈림 등)는 짐작하지 않고, 보이는 사실만 쉬운 말로 쓴다.
 
-    - 정답 부위마다 가장 가까운 ROI 와 비교해: 일부만 그림 / 비껴 그림(방향) / 좌우 반대(흉부) / 떨어져 있음
+    - 정답 부위마다 가장 가까운 ROI 와 비교해: 반대쪽 폐(흉부) / 크기만 다름 / 거의 맞음(방향) / 다른 곳
     - 정답 부위와 전혀 겹치지 않는 ROI 가 있으면 알려 준다
     - 다 찾았지만 너무 넓게 그렸으면 알려 준다
     """
@@ -355,22 +357,22 @@ def roi_feedback(
         ux = (best[0] + best[2]) / 2 / width
         tx = (t[0] + t[2]) / 2 / width
         if chest and abs(tx - ux) > 0.25 and (ux - 0.5) * (tx - 0.5) < 0:
-            tips.append("좌우를 반대로 그렸어요. 흉부 사진은 화면 왼쪽이 환자의 오른쪽입니다.")
+            tips.append("정답은 반대쪽 폐에 있어요. 색칠된 곳을 확인해 보세요.")
         elif overlap > 0 and _box_area(best) < _box_area(t) * 0.5:
-            tips.append("정답 부위의 일부만 그렸어요. 더 넓게 감싸 보세요.")
+            tips.append("위치는 맞았어요. 정답 표시보다 작게 그렸는데, 크기는 의사마다 차이가 있어요.")
         elif overlap > 0 and direction:
-            tips.append(f"조금 비껴 그렸어요. 정답 부위는 {direction}에 있어요.")
+            tips.append(f"거의 맞았어요. 정답은 조금 더 {direction}에 있어요.")
         elif overlap > 0:
-            tips.append("정답 부위와 겹치긴 하지만 범위가 많이 달라요. 크기와 위치를 맞춰 보세요.")
+            tips.append("위치는 맞았어요. 정답 표시와 크기가 많이 다른데, 크기는 의사마다 차이가 있어요.")
         elif direction:
-            tips.append(f"정답 부위와 떨어져 있어요. 정답 부위는 {direction}에 있어요.")
+            tips.append(f"다른 곳을 골랐어요. 정답은 {direction}에 있어요.")
         else:
-            tips.append("정답 부위와 겹치지 않아요. 색칠된 위치를 확인해 보세요.")
+            tips.append("다른 곳을 골랐어요. 색칠된 곳을 확인해 보세요.")
     extra = sum(1 for u in users if all(_box_iou(u, t) == 0 for t in target_boxes))
     if extra and len(users) > 1:
-        tips.append(f"정답 부위가 아닌 곳에 그린 ROI 가 {extra}개 있어요.")
+        tips.append(f"정답이 아닌 곳에 그린 ROI 가 {extra}개 있어요.")
     if too_wide:
-        tips.append("정답 부위는 다 포함했지만 너무 넓게 그렸어요. 의심되는 곳만 감싸 보세요.")
+        tips.append("병변은 다 감쌌어요. 다만 너무 넓게 그려서, 이상한 부분만 감싸 보세요.")
     # 같은 말이 여러 번 나오지 않게
     return list(dict.fromkeys(tips))
 
