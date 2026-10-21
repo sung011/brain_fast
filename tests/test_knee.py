@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -132,6 +133,303 @@ def test_setting_missing_everywhere(tmp_path, monkeypatch):
     assert svc.ready is False and svc.error
 
 
+# ── 4-1. 무릎 전용 토큰(KNEE_HF_TOKEN): 비공개 저장소용. 비어 있으면 지금과 같은 동작 ──
+# 진짜 토큰이 아니다. 시험에서만 쓰는 가짜 값이다.
+FAKE_TOKEN = "hf_FAKE_TOKEN_FOR_TESTS_ONLY"
+
+
+def test_hf_token_env_beats_dotenv_and_missing_is_none(tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KNEE_HF_TOKEN=from_dotenv\n", encoding="utf-8")
+    monkeypatch.setattr(knee_config, "ENV_PATH", env_file)
+    monkeypatch.delenv("KNEE_HF_TOKEN", raising=False)
+    assert knee_config.hf_token() == "from_dotenv"
+    monkeypatch.setenv("KNEE_HF_TOKEN", "from_environ")
+    assert knee_config.hf_token() == "from_environ"
+    monkeypatch.delenv("KNEE_HF_TOKEN")
+    monkeypatch.setattr(knee_config, "ENV_PATH", tmp_path / "없음.env")
+    assert knee_config.hf_token() is None
+
+
+def test_hf_token_never_falls_back_to_the_brain_token(tmp_path, monkeypatch):
+    """뇌용 HF_TOKEN(다른 계정)을 무릎 토큰으로 몰래 쓰지 않는다. 무릎 전용 칸이 비면 None 이다."""
+    monkeypatch.setattr(knee_config, "ENV_PATH", tmp_path / "없음.env")
+    monkeypatch.delenv("KNEE_HF_TOKEN", raising=False)
+    monkeypatch.setenv("HF_TOKEN", "brain_token_must_not_be_used")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "brain_token_must_not_be_used")
+    assert knee_config.hf_token() is None
+
+
+def _capture_download(monkeypatch, module, tmp_path):
+    calls = []
+
+    def fake(**kwargs):
+        calls.append(kwargs)
+        path = tmp_path / "x.json"
+        path.write_text("{}", encoding="utf-8")
+        return str(path)
+
+    monkeypatch.setattr(module, "hf_hub_download", fake)
+    return calls
+
+
+def test_ensemble_download_passes_the_knee_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_REVISION", "abc123")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    calls = _capture_download(monkeypatch, knee_ens, tmp_path)
+    knee_ens.KneeEnsembleService._download("combiner.json")
+    assert calls == [{"repo_id": "me/Knee", "filename": "combiner.json", "revision": "abc123", "token": FAKE_TOKEN}]
+
+
+def test_ensemble_download_without_knee_token_sends_token_false(tmp_path, monkeypatch):
+    """의도적인 계약 변경(12차 TOKEN-012-01): 무릎 토큰이 없으면 None 이 아니라 False 를 넘긴다.
+    None 은 'huggingface_hub 가 환경 변수·로그인 캐시에서 알아서 찾아 쓰라'는 뜻이라 뇌 토큰이 몰래 쓰인다."""
+    monkeypatch.setattr(knee_config, "ENV_PATH", tmp_path / "없음.env")
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.delenv("KNEE_HF_REVISION", raising=False)
+    monkeypatch.delenv("KNEE_HF_TOKEN", raising=False)
+    calls = _capture_download(monkeypatch, knee_ens, tmp_path)
+    knee_ens.KneeEnsembleService._download("combiner.json")
+    assert calls[0]["token"] is False
+
+
+def test_yolo_download_passes_the_knee_token(tmp_path, monkeypatch):
+    import sys
+
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    monkeypatch.setattr(knee_loc.Localization, "_yolo", None)
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: ("fake-yolo", path)))
+    calls = _capture_download(monkeypatch, knee_loc, tmp_path)
+    knee_loc.Localization._get_yolo()
+    assert calls[0]["token"] == FAKE_TOKEN
+    assert calls[0]["filename"] == knee_config.ACL_YOLO_FILE
+
+
+def test_token_is_not_leaked_in_error_text(monkeypatch):
+    """최악의 경우(예외 문구에 토큰이 섞임)에도 API 안내문과 내부 오류 기록에 토큰이 남지 않는다."""
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+
+    def boom(**kwargs):
+        raise OSError(f"401 Unauthorized for token {kwargs['token']}")
+
+    monkeypatch.setattr(knee_ens, "hf_hub_download", boom)
+    svc = knee_ens.KneeEnsembleService()
+    with pytest.raises(knee_errors.KneeModelNotReady) as exc:
+        svc.ensure_ready()
+    assert FAKE_TOKEN not in str(exc.value)
+    assert svc.ready is False and svc.error and FAKE_TOKEN not in svc.error
+
+
+# ── 4-2. 12차 TOKEN-012-01: 실제 헤더 선택 경로에서 뇌·로그인 캐시 토큰이 쓰이지 않는다 ──
+def _run_download_path(path_name, monkeypatch, tmp_path):
+    """무릎 다운로드 두 경로(앙상블·YOLO) 중 하나를 실행하고, hf_hub_download 에 넘어간 인자 목록을 돌려준다."""
+    import sys
+
+    module = knee_ens if path_name == "ensemble" else knee_loc
+    calls = _capture_download(monkeypatch, module, tmp_path)
+    if path_name == "ensemble":
+        knee_ens.KneeEnsembleService._download("combiner.json")
+    else:
+        monkeypatch.setattr(knee_loc.Localization, "_yolo", None)
+        monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: ("fake-yolo", path)))
+        knee_loc.Localization._get_yolo()
+    return calls
+
+
+def _headers_for(token_arg):
+    """huggingface_hub 가 실제 요청에 쓰는 함수(build_hf_headers)로 Authorization 헤더가 어떻게 정해지는지 본다(네트워크 없음)."""
+    from huggingface_hub.utils import build_hf_headers
+
+    return {k.lower(): v for k, v in build_hf_headers(token=token_arg).items()}
+
+
+@pytest.fixture
+def brain_and_login_tokens(tmp_path, monkeypatch):
+    """무릎 토큰은 없고, 프로세스 HF_TOKEN(뇌 설정이 올리는 값)과 로그인 캐시 토큰만 있는 상황을 만든다."""
+    import huggingface_hub
+
+    cached = tmp_path / "login_token"
+    cached.write_text("hf_FAKE_CACHED_LOGIN_TOKEN", encoding="utf-8")
+    monkeypatch.setattr(huggingface_hub.constants, "HF_TOKEN_PATH", str(cached))
+    monkeypatch.setenv("HF_TOKEN", "hf_FAKE_BRAIN_TOKEN")
+    monkeypatch.delenv("HF_HUB_DISABLE_IMPLICIT_TOKEN", raising=False)
+    monkeypatch.setattr(knee_config, "ENV_PATH", tmp_path / "없음.env")
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.delenv("KNEE_HF_TOKEN", raising=False)
+    # 기준선: 이 환경에서 token=None 이면 huggingface_hub 가 실제로 뇌 토큰을 Authorization 에 싣는다(이게 12차가 짚은 위험)
+    assert _headers_for(None).get("authorization") == "Bearer hf_FAKE_BRAIN_TOKEN"
+
+
+@pytest.mark.parametrize("path_name", ["ensemble", "yolo"])
+def test_no_knee_token_sends_no_authorization_header(path_name, tmp_path, monkeypatch, brain_and_login_tokens):
+    calls = _run_download_path(path_name, monkeypatch, tmp_path)
+    assert calls[0]["token"] is False
+    headers = _headers_for(calls[0]["token"])
+    assert "authorization" not in headers   # 뇌 HF_TOKEN·로그인 캐시 토큰 모두 쓰이지 않는다
+
+
+@pytest.mark.parametrize("path_name", ["ensemble", "yolo"])
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_blank_knee_token_is_treated_as_missing(path_name, blank, tmp_path, monkeypatch, brain_and_login_tokens):
+    monkeypatch.setenv("KNEE_HF_TOKEN", blank)
+    calls = _run_download_path(path_name, monkeypatch, tmp_path)
+    assert calls[0]["token"] is False
+    assert "authorization" not in _headers_for(calls[0]["token"])
+
+
+@pytest.mark.parametrize("path_name", ["ensemble", "yolo"])
+def test_knee_token_alone_is_sent_even_when_brain_token_exists(path_name, tmp_path, monkeypatch, brain_and_login_tokens):
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    calls = _run_download_path(path_name, monkeypatch, tmp_path)
+    assert calls[0]["token"] == FAKE_TOKEN
+    assert _headers_for(calls[0]["token"])["authorization"] == f"Bearer {FAKE_TOKEN}"   # 뇌·캐시 토큰이 아니라 무릎 토큰만
+
+
+def test_env_beats_dotenv_at_the_download_boundary(tmp_path, monkeypatch, brain_and_login_tokens):
+    env_file = tmp_path / ".env"
+    env_file.write_text("KNEE_HF_TOKEN=hf_FROM_DOTENV_FILE\n", encoding="utf-8")
+    monkeypatch.setattr(knee_config, "ENV_PATH", env_file)
+    calls = _run_download_path("ensemble", monkeypatch, tmp_path)
+    assert calls[0]["token"] == "hf_FROM_DOTENV_FILE"          # .env 만 있으면 .env 값
+    monkeypatch.setenv("KNEE_HF_TOKEN", "hf_FROM_ENVIRONMENT")
+    calls = _run_download_path("ensemble", monkeypatch, tmp_path)
+    assert calls[-1]["token"] == "hf_FROM_ENVIRONMENT"         # 환경 변수가 우선
+
+
+# ── 4-3. 12차 TOKEN-012-02: 직접 호출(load·YOLO)의 예외·traceback·로그에도 토큰이 남지 않는다 ──
+def _boom_with_token(**kwargs):
+    """최악의 경우: 예외 문구와 원인(cause) 예외에 모두 토큰이 섞여 있다."""
+    token = kwargs["token"]
+    try:
+        raise ValueError(f"inner cause carrying {token}")
+    except ValueError as inner:
+        raise OSError(f"401 Unauthorized for token {token}") from inner
+
+
+def _all_text(exc):
+    import traceback
+
+    return str(exc) + repr(exc) + "".join(traceback.format_exception(exc))
+
+
+def _assert_clean(exc, *secrets):
+    text = _all_text(exc)
+    for secret in secrets:
+        assert secret not in text
+    assert exc.__cause__ is None and exc.__context__ is None   # 원 예외를 cause/context 로 다시 노출하지 않는다
+
+
+def test_load_direct_call_error_has_no_token(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    monkeypatch.setattr(knee_ens, "hf_hub_download", _boom_with_token)
+    svc = knee_ens.KneeEnsembleService()
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(knee_errors.KneeModelLoadError) as exc:
+            svc.load()
+    _assert_clean(exc.value, FAKE_TOKEN)
+    assert "OSError" in str(exc.value)                         # 디버깅에 필요한 종류는 남긴다
+    assert svc.ready is False and svc.error and FAKE_TOKEN not in svc.error
+    assert FAKE_TOKEN not in caplog.text
+
+
+def test_yolo_direct_call_error_has_no_token_and_can_retry(monkeypatch, caplog):
+    import logging
+    import sys
+
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    monkeypatch.setattr(knee_loc.Localization, "_yolo", None)
+    monkeypatch.setitem(sys.modules, "ultralytics", SimpleNamespace(YOLO=lambda path: ("fake-yolo", path)))
+    monkeypatch.setattr(knee_loc, "hf_hub_download", _boom_with_token)
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(knee_errors.KneeModelLoadError) as exc:
+            knee_loc.Localization._get_yolo()
+    _assert_clean(exc.value, FAKE_TOKEN)
+    assert knee_loc.Localization._yolo is None                 # 실패 뒤 다시 시도할 수 있다
+    assert FAKE_TOKEN not in caplog.text
+
+
+def test_load_sanitizes_errors_that_did_not_pass_through_the_download_wrapper(monkeypatch, caplog):
+    """_download 자체가 (가짜로) 토큰이 섞인 예외를 던져도 load() 가 한 번 더 정리한다(체크포인트 읽기 오류 등 다른 경로 포함)."""
+    import logging
+
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+
+    def raw_boom(filename):
+        try:
+            raise ValueError(f"inner {FAKE_TOKEN}")
+        except ValueError as inner:
+            raise OSError(f"failed with {FAKE_TOKEN} and another hf_AnotherTokenShape1234567890") from inner
+
+    monkeypatch.setattr(knee_ens.KneeEnsembleService, "_download", staticmethod(raw_boom))
+    svc = knee_ens.KneeEnsembleService()
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(knee_errors.KneeModelLoadError) as exc:
+            svc.load()
+    _assert_clean(exc.value, FAKE_TOKEN, "hf_AnotherTokenShape1234567890")
+    assert svc.error and FAKE_TOKEN not in svc.error and "hf_AnotherTokenShape1234567890" not in svc.error
+    assert FAKE_TOKEN not in caplog.text
+
+
+def test_ensure_ready_error_has_no_token_in_message_or_traceback(monkeypatch, caplog):
+    import logging
+
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    monkeypatch.setattr(knee_ens, "hf_hub_download", _boom_with_token)
+    svc = knee_ens.KneeEnsembleService()
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(knee_errors.KneeModelNotReady) as exc:
+            svc.ensure_ready()
+    assert FAKE_TOKEN not in _all_text(exc.value)
+    assert "준비하지 못했습니다" in str(exc.value)             # API 고정 안내는 그대로
+    assert FAKE_TOKEN not in caplog.text
+
+
+def test_redact_secrets_hides_the_knee_token_and_any_hf_token_shape(monkeypatch):
+    monkeypatch.setenv("KNEE_HF_TOKEN", "custom-token-without-prefix")
+    text = "a custom-token-without-prefix b hf_BrainTokenLooksLikeThis12345 c"
+    out = knee_config.redact_secrets(text)
+    assert "custom-token-without-prefix" not in out and "hf_BrainTokenLooksLikeThis12345" not in out
+    assert out.startswith("a ") and out.endswith(" c")          # 나머지 문장은 그대로
+
+
+def test_failure_then_recovery_still_works_after_sanitizing(tmp_path, monkeypatch):
+    """기존 복구 동작 유지: 다운로드 실패 → ready=False, 이후 정상으로 돌아오면 다시 적재."""
+    monkeypatch.setenv("KNEE_HF_REPO", "me/Knee")
+    monkeypatch.setenv("KNEE_HF_TOKEN", FAKE_TOKEN)
+    monkeypatch.setattr(knee_ens, "CKPT_FILES", {("acl", "sagittal"): ["a.pt"]})
+    good = tmp_path / "good.pt"
+    _tiny_ckpt(good)
+    combiner = tmp_path / "combiner.json"
+    combiner.write_text('{"acl": {"planes": ["sagittal"]}}', encoding="utf-8")
+    calib = tmp_path / "calibration.json"
+    calib.write_text("{}", encoding="utf-8")
+    state = {"fail": True}
+
+    def flaky(**kwargs):
+        if state["fail"]:
+            return _boom_with_token(**kwargs)
+        name = kwargs["filename"]
+        return str(good if name.endswith(".pt") else (combiner if name == knee_config.COMBINER_FILE else calib))
+
+    monkeypatch.setattr(knee_ens, "hf_hub_download", flaky)
+    svc = knee_ens.KneeEnsembleService()
+    with pytest.raises(knee_errors.KneeModelLoadError):
+        svc.load()
+    assert svc.ready is False and svc.error
+    state["fail"] = False
+    svc.load()
+    assert svc.ready is True and svc.error is None
+
+
 # ── 5. 모델 로드 실패/복구 (네트워크는 가짜) ───────────────
 def _tiny_ckpt(path):
     m = knee_model.MRNetModel()
@@ -173,7 +471,8 @@ def test_download_failure_keeps_not_ready(monkeypatch):
 
     monkeypatch.setattr(knee_ens.KneeEnsembleService, "_download", boom)
     svc = knee_ens.KneeEnsembleService()
-    with pytest.raises(OSError):
+    # 12차 TOKEN-012-02: load() 는 원 예외(OSError) 대신 정리된 KneeModelLoadError(RuntimeError)를 내보낸다. 원 예외 종류는 문구에 남는다.
+    with pytest.raises(knee_errors.KneeModelLoadError, match="OSError"):
         svc.load()
     assert svc.ready is False
     with pytest.raises(RuntimeError):
@@ -415,3 +714,62 @@ def test_real_weights_smoke():
     out = svc.predict({p: _vol(8, 64, 64) for p in ("axial", "coronal", "sagittal")})
     assert set(out) == {"abnormal", "acl", "meniscus"}
     assert all(np.isfinite(v["prob"]) for v in out.values())
+
+
+# ── 11. 화면 캡처 한 장 분석용 메서드 (API 가 승인된 조합에서만 부른다) ──────
+def _fake_ready_service():
+    svc = knee_ens.KneeEnsembleService()
+    svc.device = "cpu"
+    svc.models = {("abnormal", "sagittal"): [(knee_model.MRNetModel().eval(), None)]}
+    svc.ready = True
+    return svc
+
+
+def _random_gray(seed=0, size=96):
+    return np.random.default_rng(seed).integers(0, 255, (size, size), dtype=np.uint8)
+
+
+def test_single_plane_prob_scores_one_image():
+    p = _fake_ready_service().single_plane_prob("abnormal", "sagittal", _random_gray())
+    assert 0.0 <= p <= 1.0
+
+
+def test_single_plane_methods_reject_missing_model_and_bad_shape():
+    svc = _fake_ready_service()
+    with pytest.raises(KneeInputError):
+        svc.single_plane_prob("meniscus", "sagittal", _random_gray())      # 서비스에 없는 조합
+    with pytest.raises(KneeInputError):
+        svc.single_plane_prob("abnormal", "sagittal", _random_gray()[None])  # 2차원이 아님
+    with pytest.raises(KneeInputError):
+        svc.single_plane_gradcam("acl", "axial", _random_gray())
+
+
+def test_single_plane_gradcam_returns_model_input_sized_overlay():
+    image, activated = _fake_ready_service().single_plane_gradcam("abnormal", "sagittal", _random_gray())
+    assert image.size == (224, 224)
+    assert isinstance(activated, bool)
+
+
+def test_ensure_ready_hides_the_internal_reason(monkeypatch):
+    svc = knee_ens.KneeEnsembleService()
+
+    def boom(filename):
+        raise OSError("SECRET-REPO/private path token")
+
+    monkeypatch.setattr(knee_ens.KneeEnsembleService, "_download", staticmethod(boom))
+    with pytest.raises(knee_errors.KneeModelNotReady) as info:
+        svc.ensure_ready()
+    assert "SECRET" not in str(info.value)
+    assert info.value.__cause__ is None
+    assert svc.ready is False
+
+
+def test_package_import_is_lazy_for_model_code():
+    import subprocess
+    import sys
+
+    code = ("import importlib, sys; importlib.import_module('class.knee.gates'); importlib.import_module('class.knee.screen_roi'); "
+            "importlib.import_module('class.knee.imageio'); print('torch' in sys.modules)")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(Path(__file__).resolve().parents[1]))
+    assert out.returncode == 0, out.stderr[-500:]
+    assert out.stdout.strip() == "False", "게이트·이미지·판정 모듈이 torch 를 불러옵니다"

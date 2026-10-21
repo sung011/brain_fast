@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>무릎 ROI 학습 — 메디스캔노트</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/assets/css/knee-learning.css">
+</head>
+{# 화면 동작은 /assets/js/knee-learning.js. 이 화면은 기준 박스·점수 규칙을 갖지 않고, 채점은 서버(POST /learning/roi-grade/knee)만 한다. #}
+<body data-mode="{{ mode }}" data-study="{{ study_idx if study_idx else '' }}">
+<div class="bg-deco" aria-hidden="true"></div>
+
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><rect x="5" y="3" width="22" height="26" rx="5" stroke="#a3b9ae"/><path d="M10 16h4l2-5 3 10 2-5h3" stroke="#63edb1" stroke-width="1.7"/><path d="M3 7V3h4M25 29h4v-4" stroke="#63edb1"/></svg>
+    <span>메디<em>스캔</em>노트</span>
+  </div>
+  <span class="mode-badge" id="modeBadge">{{ '시연 화면' if mode == 'demo' else '무릎 학습' }}</span>
+</header>
+
+{% if mode == 'demo' %}
+<div class="banner banner-demo" role="note">
+  <strong>시연 화면 · 실제 서버 채점이 아닙니다.</strong>
+  합성 영상과 시험용 응답만 사용합니다. 아래 "시험용 응답"에서 고른 결과가 그대로 표시되며, 그린 박스의 위치와는 관계가 없습니다.
+</div>
+{% endif %}
+
+<main>
+  <section class="stage-panel" aria-labelledby="taskTitle">
+    <p class="eyebrow">ACL · REFERENCE REGION PRACTICE</p>
+    <h1 id="taskTitle">ACL이 포함된 참고 영역 표시 연습</h1>
+    <p class="lead">대표 영상 한 장에서 데이터셋의 ACL 참고 영역과 내가 그린 박스의 겹침을 비교합니다.</p>
+    <p class="slice-info" id="sliceInfo" aria-live="polite"></p>
+
+    {# 대표 영상이 바뀌면 이전 박스를 자동으로 옮기지 않는다. 새로 그리거나, 이전 박스를 쓰겠다고 직접 확인해야 제출할 수 있다. #}
+    <div class="change-notice" id="changeNotice" role="alert" hidden>
+      <p id="changeNoticeText"></p>
+      <div class="actions">
+        <button type="button" class="primary" id="btnRedraw">새로 그리기</button>
+        <button type="button" class="ghost" id="btnUseOldBox">이전 박스를 이 영상에 사용(직접 확인)</button>
+      </div>
+    </div>
+
+    <div class="stage" id="stage">
+      <div class="stage-message" id="stageMessage" role="status" aria-live="polite">문제를 불러오는 중입니다…</div>
+      {# 문제를 열지 못했을 때(통신·서버·로그인·영상 오류) 언제든 다시 열 수 있는 자리. 결과 카드 밖에 있어 숨겨지지 않는다. #}
+      <div class="stage-retry" id="stageRetry" hidden>
+        <button type="button" class="primary" id="btnStageRetry">다시 시도</button>
+      </div>
+      <div class="canvas-wrap" id="canvasWrap" hidden>
+        <img id="studyImage" alt="무릎 MRI 대표 영상" draggable="false">
+        <svg class="overlay" id="overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+          <rect id="referenceRect" class="ref-rect" hidden></rect>
+        </svg>
+        <div class="user-box" id="userBox" tabindex="0" role="group" hidden
+             aria-label="내가 그린 박스. 방향키로 이동, Shift와 방향키로 크기 조절">
+          <span class="handle" data-handle="nw"></span><span class="handle" data-handle="n"></span><span class="handle" data-handle="ne"></span>
+          <span class="handle" data-handle="e"></span><span class="handle" data-handle="se"></span><span class="handle" data-handle="s"></span>
+          <span class="handle" data-handle="sw"></span><span class="handle" data-handle="w"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="toolbar" role="toolbar" aria-label="그리기 도구">
+      <div class="zoom" role="group" aria-label="영상 확대">
+        <button type="button" class="ghost" id="zoomOut" aria-label="축소">−</button>
+        <output id="zoomLabel" aria-live="polite">100%</output>
+        <button type="button" class="ghost" id="zoomIn" aria-label="확대">＋</button>
+      </div>
+      <button type="button" class="ghost" id="btnDefaultBox">중앙에 박스 만들기</button>
+      <button type="button" class="ghost" id="btnReset">박스 초기화</button>
+      <button type="button" class="primary" id="btnSubmit" disabled>제출하고 비교하기</button>
+    </div>
+    <p class="hint" id="drawHint">영상 위에서 마우스(또는 손가락)를 끌어 사각형 박스를 그리세요. 박스는 끌어서 옮기고, 모서리·변의 점으로 크기를 바꿉니다. 영상 밖으로는 나갈 수 없습니다.</p>
+{% if mode != 'demo' %}
+    {# 로그인이 필요할 때(문제 열기 또는 제출이 401)만 나타난다. 영상·박스가 보이는 채로 같은 페이지에서 로그인해 초안을 지키려고 영상 칸 밖에 둔다. 입력칸에는 name 속성을 두지 않아, 스크립트가 늦게 켜져도 값이 주소로 전송되지 않는다. #}
+    <form class="login-form" id="loginForm" hidden novalidate autocomplete="on">
+      <p class="login-title">학습자 로그인</p>
+      <label for="loginId">아이디(이메일)</label>
+      <input id="loginId" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="30">
+      <label for="loginPw">비밀번호</label>
+      <input id="loginPw" type="password" autocomplete="current-password" maxlength="100">
+      <p class="login-message" id="loginMessage" role="alert"></p>
+      <button type="submit" class="primary" id="btnLogin">로그인</button>
+    </form>
+{% endif %}
+  </section>
+
+  <aside class="side-panel">
+    <section class="card" aria-labelledby="howTitle">
+      <h2 id="howTitle">이렇게 해 보세요</h2>
+      <ol class="steps">
+        <li>대표 영상에서 ACL이 있다고 생각하는 영역을 사각형으로 둘러싸세요.</li>
+        <li>박스를 다듬은 뒤 <strong>제출하고 비교하기</strong>를 누르세요.</li>
+        <li>기준 영역과 겹치는 정도(IoU)를 확인하고 <strong>다시 풀기</strong>로 연습하세요.</li>
+      </ol>
+      <p class="note">원(원형) 도형은 쓰지 않습니다. 사각형 박스만 제출할 수 있습니다.</p>
+    </section>
+
+    <section class="card result" id="resultCard" hidden aria-live="polite" aria-labelledby="resultTitle">
+      <h2 id="resultTitle">결과</h2>
+      <p class="verdict" id="resultVerdict"></p>
+      <p class="iou" id="resultIou" hidden>영역 겹침(IoU) <strong id="resultIouValue"></strong></p>
+      <p class="rule" id="resultRule" hidden></p>
+      <ul class="legend" id="resultLegend" hidden>
+        <li><span class="swatch swatch-user"></span>내 박스</li>
+        <li><span class="swatch swatch-ref"></span>데이터셋 ACL 참고 영역</li>
+      </ul>
+      <p class="message" id="resultMessage"></p>
+      <ul class="notices" id="resultNotices"></ul>
+      <div class="actions">
+        <button type="button" class="primary" id="btnRetry" hidden>다시 풀기</button>
+        <button type="button" class="ghost" id="btnReopen" hidden>문제 다시 열기</button>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="basisTitle">
+      <h2 id="basisTitle">기준 영역 설명</h2>
+      {# 검수 완료 문장은 승인된 문제가 실제로 열렸을 때만 화면 스크립트가 보여 준다(시연·미승인 상태에서 완료로 오해되지 않게). #}
+      <p id="basisReview" class="basis-review">{{ '시연 영상은 합성 이미지이며 검수된 기준이 아닙니다.' if mode == 'demo' else '기준 영역은 팀원의 라벨 확인을 마친 문제에만 제공됩니다.' }}</p>
+      <p>기준 박스는 ACL이 포함된 대략적인 해부학 영역이며, 파열 병변이나 인대의 정확한 경계를 뜻하지 않습니다.</p>
+      <p class="basis-label"><strong>데이터셋 라벨 기준, 임상 검증 아님.</strong></p>
+    </section>
+
+{% if mode == 'demo' %}
+    <section class="card demo-card" aria-labelledby="demoTitle">
+      <h2 id="demoTitle">시험용 응답</h2>
+      <p class="note">제출했을 때 표시할 서버 응답을 고릅니다. 실제 서버 채점이 아닙니다.</p>
+      <label class="sr-only" for="scenario">시험용 응답 선택</label>
+      <select id="scenario">
+        <option value="graded_match">채점됨 · 기준 영역과 일치</option>
+        <option value="graded_partial">채점됨 · 일부 일치</option>
+        <option value="graded_differ">채점됨 · 차이 있음</option>
+        <option value="ungraded_no_reference">미채점 · 기준 없음(비대표 슬라이스)</option>
+        <option value="ungraded_token_expired">미채점 · 토큰 만료</option>
+        <option value="error_outside">오류 400 · 이미지 밖 박스</option>
+        <option value="error_unauthorized">오류 401 · 비로그인</option>
+        <option value="error_server">오류 503 · 기능 꺼짐</option>
+        <option value="error_network">통신 오류(연결 실패)</option>
+      </select>
+    </section>
+{% endif %}
+  </aside>
+</main>
+
+<footer>
+  <p>이 화면은 학습용이며 의료 진단이 아닙니다. 점수는 사람이 확인한 데이터셋 라벨과의 겹침만 뜻하고, 병변의 유무·정도·범위를 판단하지 않습니다.</p>
+  <p>{{ '시연 영상은 합성 이미지이며 실제 환자 영상이 아닙니다.' if mode == 'demo' else '영상의 출처·저자·라이선스 표시는 실제 영상을 제공하기 전에 이곳에 함께 보여 줍니다.' }}</p>
+</footer>
+
+<script src="/assets/js/knee-learning-core.js"></script>
+<script src="/assets/js/knee-learning.js"></script>
+</body>
+</html>

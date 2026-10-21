@@ -14,9 +14,9 @@ import torch.nn.functional as F
 from huggingface_hub import hf_hub_download
 from PIL import Image
 
-from .config import ACL_YOLO_FILE, IMG_SIZE, hf_repo, hf_revision
+from .config import ACL_YOLO_FILE, IMG_SIZE, hf_download_token, hf_repo, hf_revision, safe_failure_text
 from .constants import ACL_REGION_LABEL
-from .errors import KneeAnalysisError, KneeInputError
+from .errors import KneeAnalysisError, KneeInputError, KneeModelLoadError
 from .model import INFERENCE_LOCK
 from .preprocess import Preprocess
 
@@ -40,8 +40,16 @@ class Localization:
                 raise RuntimeError("KNEE_HF_REPO 가 비어 있습니다.")
             from ultralytics import YOLO
 
-            path = hf_hub_download(repo_id=repo, filename=ACL_YOLO_FILE, revision=hf_revision())
-            cls._yolo = YOLO(path)
+            # token: KNEE_HF_TOKEN 이 있으면 그 값, 없으면 False(토큰을 보내지 않음). None 이면 뇌 토큰·로그인 캐시가 몰래 쓰인다.
+            try:
+                path = hf_hub_download(repo_id=repo, filename=ACL_YOLO_FILE, revision=hf_revision(), token=hf_download_token())
+                model = YOLO(path)
+            except Exception as exc:
+                failure = KneeModelLoadError(safe_failure_text(exc))
+            else:
+                cls._yolo = model
+                return model
+            raise failure  # except 블록 밖: 원 예외(토큰이 섞일 수 있음)를 cause/context 로 남기지 않는다. _yolo 는 None 이라 다시 시도할 수 있다.
         return cls._yolo
 
     @classmethod

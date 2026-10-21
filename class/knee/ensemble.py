@@ -28,11 +28,13 @@ from .config import (
     GATING_BAND,
     PLANES,
     TASKS,
+    hf_download_token,
     hf_repo,
     hf_revision,
+    safe_failure_text,
 )
 from .constants import TASK_KO, UNCERTAIN_VERDICT, VERDICT
-from .errors import KneeAnalysisError, KneeInputError
+from .errors import KneeAnalysisError, KneeInputError, KneeModelLoadError, KneeModelNotReady
 from .model import INFERENCE_LOCK, MRNetModel
 from .preprocess import Preprocess
 
@@ -69,12 +71,20 @@ class KneeEnsembleService:
         repo = hf_repo()
         if not repo:
             raise RuntimeError("KNEE_HF_REPO 가 비어 있습니다. 환경 변수나 .env 에 KNEE_HF_REPO=계정/저장소 를 적어 주세요.")
-        return Path(hf_hub_download(repo_id=repo, filename=filename, revision=hf_revision()))
+        # token: KNEE_HF_TOKEN 이 있으면 그 값, 없으면 False(토큰을 보내지 않음). None 을 넘기면 뇌 토큰·로그인 캐시가 몰래 쓰인다.
+        try:
+            path = hf_hub_download(repo_id=repo, filename=filename, revision=hf_revision(), token=hf_download_token())
+        except Exception as exc:
+            failure = KneeModelLoadError(safe_failure_text(exc))
+        else:
+            return Path(path)
+        raise failure  # except 블록 밖에서 던져 원래 예외(토큰이 섞일 수 있음)가 cause/context 로 남지 않게 한다
 
     def load(self) -> None:
         with self._load_lock:
             if self.ready:
                 return
+            failure: KneeModelLoadError | None = None
             try:
                 models: dict = {}
                 for (task, plane), files in CKPT_FILES.items():
@@ -89,9 +99,12 @@ class KneeEnsembleService:
                 combiner = json.loads(self._download(COMBINER_FILE).read_text(encoding="utf-8"))
                 calibration = json.loads(self._download(CALIBRATION_FILE).read_text(encoding="utf-8"))
             except Exception as exc:
+                # 이미 정리된 예외(내려받기 실패)는 그대로, 그 밖(체크포인트 손상 등)은 종류와 가린 문구만 담아 새로 만든다.
+                failure = exc if isinstance(exc, KneeModelLoadError) else KneeModelLoadError(safe_failure_text(exc))
+            if failure is not None:
                 self.ready = False
-                self.error = str(exc)
-                raise
+                self.error = str(failure)
+                raise failure  # except 블록 밖: 원 예외를 cause/context/traceback 으로 다시 노출하지 않는다
             self.models, self.combiner, self.calibration = models, combiner, calibration
             self.ready = True
             self.error = None
@@ -99,6 +112,36 @@ class KneeEnsembleService:
     def _require_ready(self) -> None:
         if not self.ready:
             raise RuntimeError(self.error or "무릎 모델이 아직 로드되지 않았습니다.")
+
+    def ensure_ready(self) -> None:
+        """API 용: 모델이 없으면 불러오고, 실패하면 내부 원인(저장소 이름·경로 등)을 숨기고 KneeModelNotReady 만 낸다."""
+        if self.ready:
+            return
+        try:
+            self.load()
+        except Exception:
+            raise KneeModelNotReady("무릎 모델을 준비하지 못했습니다.") from None
+
+    def single_plane_prob(self, task: str, plane: str, gray: np.ndarray) -> float:
+        """한 촬영면의 이미지 한 장(S=1 볼륨)에 대한 원래 모델 점수(보정 전). 공개 여부는 gates 가 정한다."""
+        self.ensure_ready()
+        if (task, plane) not in self.models:
+            raise KneeInputError("이 촬영면에는 해당 소견 모델이 없습니다.")
+        volume = Preprocess.validate_volume(np.ascontiguousarray(gray)[None, ...])
+        return _check_probability(self._plane_prob(task, plane, volume), f"{task}/{plane}")
+
+    def single_plane_gradcam(self, task: str, plane: str, gray: np.ndarray):
+        """이미지 한 장의 Grad-CAM 오버레이. 반환: (PIL 이미지, 강조했는지). 그림은 모델이 본 224×224 입력 위에 그려진다."""
+        from .localization import Localization
+
+        self.ensure_ready()
+        if (task, plane) not in self.models:
+            raise KneeInputError("이 촬영면에는 해당 소견 모델이 없습니다.")
+        model, crop = self.models[(task, plane)][0]
+        volume = Preprocess.validate_volume(np.ascontiguousarray(gray)[None, ...])
+        cam, _prob, _top = Localization.grad_cam(model, volume, crop, self.device, n_slices=1)
+        shown = Preprocess.to_gray01(Preprocess.preprocess_volume(volume, crop=crop)[0])
+        return Localization.build_overlay(shown, cam[0])
 
     @torch.no_grad()
     def _plane_prob(self, task: str, plane: str, volume: np.ndarray) -> float:
