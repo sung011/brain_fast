@@ -6,7 +6,7 @@
 
 - BRAIN_MRI_MODEL_PATH       : YOLO26s-Seg 가중치 파일 경로 (비어 있으면 MRI 분석만 503)
 - BRAIN_MRI_CONF_THRESHOLD   : 검출 최소 confidence (기본 0.25)
-- BRAIN_MRI_MAX_UPLOAD_BYTES : 업로드 최대 크기 (기본 20MB, DICOM 고려)
+- BRAIN_MRI_MAX_UPLOAD_BYTES : 업로드 최대 크기 (기본 20MB)
 """
 import os
 from pathlib import Path

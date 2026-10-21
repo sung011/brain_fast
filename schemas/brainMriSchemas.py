@@ -34,6 +34,12 @@ class BrainMriAnalyzeResponse(BaseModel):
     image_height: int
     predictions: list[BrainMriPrediction]
     overlay_png_base64: str | None = None
+    sequence: str = Field(
+        default="unknown", description="요청에 적은 MRI sequence. 추론 방식은 바꾸지 않고 기록만 한다."
+    )
+    trained_sequences: dict[str, str] = Field(description="질환별 학습 sequence")
+    input_scope: str
+    limitations: list[str]
     confidence_note: str
     is_diagnosis: bool = False
     disclaimer: str

@@ -28,17 +28,35 @@
   <main>
     <p><a href="index.html">학습 문서 목록</a></p>
     <h1>뇌 MRI 5질환 분석은 무엇을 하는가</h1>
-    <p class="lead">뇌 MRI 2D 슬라이스 한 장을 받아, YOLO26s-Seg 모델로 5가지 질환의 병변 위치(bbox, 외곽선 polygon)와 model confidence score를 돌려줍니다. 의사 진단이 아닙니다.</p>
+    <p class="lead">8-bit PNG/JPEG 뇌 MRI 2D slice 한 장을 받아, YOLO26s-Seg 모델로 5가지 질환의 병변 위치(bbox, 외곽선 polygon)와 model confidence score를 돌려줍니다. 의사 진단이 아닙니다.</p>
     <div class="note">
       <p>결과는 교육·연구용 참고입니다. confidence는 모델 confidence score이며 질병 확률이 아닙니다. 응답에는 <code>is_diagnosis: false</code>와 면책 문구가 항상 들어 있습니다.</p>
       <p>MRI 전용입니다. 뇌 CT(<a href="brain.html">출혈·germinoma</a>)와 주소, 모델, 패키지가 모두 따로입니다.</p>
+      <p>지원 전처리·sequence 가 확인된 2D MRI slice 에 대한 <strong>prototype inference</strong>입니다. 임의의 MRI 에서 5질환을 판별하는 범용 모델이 아닙니다.</p>
     </div>
+
+    <h2 id="limits">모델 제한사항</h2>
+    <p>통합 모델은 질환마다 다른 공개 데이터셋과 다른 sequence 로 만든 PNG 를 합쳐 학습했습니다. 한 질환 데이터에는 다른 질환이 라벨로 없습니다.</p>
+    <table style="border-collapse:collapse;width:100%;background:#fff;font-size:0.92rem">
+      <tr><th style="text-align:left;border:1px solid #d5dee8;padding:4px">class</th><th style="text-align:left;border:1px solid #d5dee8;padding:4px">sequence</th><th style="text-align:left;border:1px solid #d5dee8;padding:4px">원본</th><th style="text-align:left;border:1px solid #d5dee8;padding:4px">PNG 정규화</th></tr>
+      <tr><td style="border:1px solid #d5dee8;padding:4px">0 vestibular_schwannoma</td><td style="border:1px solid #d5dee8;padding:4px">T1</td><td style="border:1px solid #d5dee8;padding:4px">DICOM</td><td style="border:1px solid #d5dee8;padding:4px">3D 볼륨 전체 0.5~99.5 백분위</td></tr>
+      <tr><td style="border:1px solid #d5dee8;padding:4px">1 glioma</td><td style="border:1px solid #d5dee8;padding:4px">T1CE</td><td style="border:1px solid #d5dee8;padding:4px">NIfTI</td><td style="border:1px solid #d5dee8;padding:4px">3D 볼륨 전체 0.5~99.5 백분위</td></tr>
+      <tr><td style="border:1px solid #d5dee8;padding:4px">2 brain_metastasis</td><td style="border:1px solid #d5dee8;padding:4px">T1C</td><td style="border:1px solid #d5dee8;padding:4px">NIfTI</td><td style="border:1px solid #d5dee8;padding:4px">slice 마다 0.5~99.5 백분위</td></tr>
+      <tr><td style="border:1px solid #d5dee8;padding:4px">3 ischemic_stroke</td><td style="border:1px solid #d5dee8;padding:4px">DWI</td><td style="border:1px solid #d5dee8;padding:4px">NIfTI</td><td style="border:1px solid #d5dee8;padding:4px">slice 마다 0.5~99.5 백분위</td></tr>
+      <tr><td style="border:1px solid #d5dee8;padding:4px">4 multiple_sclerosis</td><td style="border:1px solid #d5dee8;padding:4px">FLAIR</td><td style="border:1px solid #d5dee8;padding:4px">NIfTI</td><td style="border:1px solid #d5dee8;padding:4px">slice 마다 1~99 백분위</td></tr>
+    </table>
+    <ul>
+      <li>학습과 다른 sequence, 기관, 전처리의 영상은 결과를 신뢰할 수 없습니다. 예를 들어 FLAIR slice 에 나온 glioma 검출은 근거가 약합니다.</li>
+      <li>NIfTI 4질환은 배열 축 그대로 PNG 로 저장했습니다. 보통의 DICOM 뷰어 방향과 다를 수 있습니다.</li>
+      <li>요청의 <code>sequence</code>(unknown, T1, T1CE, T1C, DWI, FLAIR, other)는 응답에 기록만 하고 추론을 바꾸지 않습니다.</li>
+      <li>검출 0건은 병변이 없다는 뜻이 아닙니다.</li>
+    </ul>
 
     <h2>한 번 요청이 지나가는 순서</h2>
     <ol>
-      <li>화면이 MRI 슬라이스 이미지를 <code>POST /api/v1/analyze/brain-mri</code>로 보냅니다.</li>
+      <li>화면이 8-bit PNG/JPEG MRI slice 를 <code>POST /api/v1/analyze/brain-mri</code>로 보냅니다. <code>sequence</code>는 선택입니다.</li>
       <li><code>routers/brain_mri.py</code>가 파일을 받고 크기를 확인합니다. 모델 계산은 없습니다.</li>
-      <li><code>class/brain_mri/preprocess.py</code>가 PNG·JPG·DICOM을 그레이스케일 3채널 이미지로 바꿉니다.</li>
+      <li><code>class/brain_mri/preprocess.py</code>가 PNG·JPEG 를 그레이스케일 3채널 이미지로 바꿉니다. DICOM 은 415 로 거절합니다.</li>
       <li><code>class/brain_mri/segmentation.py</code>가 처음 요청 때 가중치를 불러오고 추론합니다.</li>
       <li><code>class/brain_mri/localization.py</code>가 외곽선을 색으로 칠한 overlay PNG를 만듭니다.</li>
       <li><code>schemas/brainMriSchemas.py</code> 형식으로 응답합니다. 검출이 없으면 <code>predictions</code>는 빈 배열입니다.</li>
@@ -47,6 +65,7 @@
     <nav>
       <h2>파일마다 보기</h2>
       <ul>
+        <li><a href="#limits">제한사항</a></li>
         <li><a href="#router">라우터</a></li>
         <li><a href="#preprocess">전처리</a></li>
         <li><a href="#segmentation">세그멘테이션</a></li>
@@ -73,11 +92,11 @@
       <h3>class/brain_mri/preprocess.py</h3>
       <dl>
         <dt>한 줄로</dt><dd>업로드 바이트를 모델 입력 이미지로 바꿉니다.</dd>
-        <dt>받는 것</dt><dd>PNG, JPG, DICOM 바이트와 파일 이름.</dd>
-        <dt>하는 일</dt><dd>그레이스케일 한 장을 3채널로 복제합니다. DICOM은 학습 데이터처럼 0.5~99.5 백분위로 0~255 정규화합니다.</dd>
+        <dt>받는 것</dt><dd>8-bit PNG, JPEG 바이트와 파일 이름.</dd>
+        <dt>하는 일</dt><dd>그레이스케일 한 장을 3채널로 복제합니다. 값은 다시 정규화하지 않습니다. 학습 PNG 도 통합 단계에서 그대로 복사됐기 때문입니다.</dd>
         <dt>돌려주는 것</dt><dd>HxWx3 uint8 배열.</dd>
-        <dt>하지 않는 일</dt><dd>CT HU 윈도우를 쓰지 않습니다. 3D 볼륨 전체를 처리하지 않습니다.</dd>
-        <dt>헷갈리기 쉬운 점</dt><dd>다중 프레임 DICOM은 가운데 프레임 한 장만 씁니다.</dd>
+        <dt>하지 않는 일</dt><dd>DICOM 을 받지 않습니다(415). 16-bit·float 이미지를 받지 않습니다(400). CT HU 윈도우를 쓰지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>DICOM 을 뺀 이유는 위 표처럼 질환마다 정규화 단위와 범위가 달라, slice 한 장으로 학습 PNG 를 똑같이 재현할 수 없기 때문입니다. PNG 는 학습 때 만든 방식으로 미리 변환한 slice 를 올립니다.</dd>
       </dl>
     </article>
 
@@ -136,7 +155,7 @@
     <ol>
       <li><code>.env</code>에 <code>BRAIN_MRI_MODEL_PATH</code>를 적고 서버를 켭니다.</li>
       <li><code>/docs</code>에서 <code>POST /api/v1/analyze/brain-mri</code>에 MRI PNG를 올립니다.</li>
-      <li>200 응답과 <code>predictions</code> 배열을 확인합니다. 빈 배열도 정상입니다.</li>
+      <li>200 응답과 <code>predictions</code> 배열, <code>limitations</code>를 확인합니다. 빈 배열도 정상입니다. <code>.dcm</code>은 415 입니다.</li>
       <li><code>pytest tests/test_brain_mri.py</code>를 실행합니다. 가중치가 없으면 실제 추론 테스트는 건너뜁니다.</li>
     </ol>
   </main>
