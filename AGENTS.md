@@ -69,7 +69,7 @@ brain_fast/
 | `class/thorax/` | 흉부 | 팀원이 추가 |
 | `class/abdomen/` | 복부 | 팀원이 추가 |
 | `class/knee/` | 무릎 | 팀원이 추가 |
-| `class/brain_mri/` | 뇌 MRI | 팀원이 추가. `class/brain/`과 섞지 않는다 |
+| `class/brain_mri/` | 뇌 MRI 5질환 (YOLO26s-Seg) | 있음. `class/brain/`과 섞지 않는다 |
 
 패키지 이름은 소문자 영문이다. 학습 부위 코드는 `brain` / `thorax`(별칭 chest) / `abdomen` / `knee` 이고, 영상 종류는 `xray` / `ct` / `mri` 다. NAS 폴더의 `Abdomen`, `Knee` 대문자를 패키지 이름에 쓰지 않는다.
 

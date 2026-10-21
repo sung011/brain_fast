@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>뇌 MRI 5질환 분석 설명</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    dl { margin: 0.4rem 0 0; }
+    dt { font-weight: 700; margin-top: 0.55rem; }
+    dd { margin: 0.15rem 0 0 0; }
+    nav ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 0.8rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>뇌 MRI 5질환 분석은 무엇을 하는가</h1>
+    <p class="lead">뇌 MRI 2D 슬라이스 한 장을 받아, YOLO26s-Seg 모델로 5가지 질환의 병변 위치(bbox, 외곽선 polygon)와 model confidence score를 돌려줍니다. 의사 진단이 아닙니다.</p>
+    <div class="note">
+      <p>결과는 교육·연구용 참고입니다. confidence는 모델 confidence score이며 질병 확률이 아닙니다. 응답에는 <code>is_diagnosis: false</code>와 면책 문구가 항상 들어 있습니다.</p>
+      <p>MRI 전용입니다. 뇌 CT(<a href="brain.html">출혈·germinoma</a>)와 주소, 모델, 패키지가 모두 따로입니다.</p>
+    </div>
+
+    <h2>한 번 요청이 지나가는 순서</h2>
+    <ol>
+      <li>화면이 MRI 슬라이스 이미지를 <code>POST /api/v1/analyze/brain-mri</code>로 보냅니다.</li>
+      <li><code>routers/brain_mri.py</code>가 파일을 받고 크기를 확인합니다. 모델 계산은 없습니다.</li>
+      <li><code>class/brain_mri/preprocess.py</code>가 PNG·JPG·DICOM을 그레이스케일 3채널 이미지로 바꿉니다.</li>
+      <li><code>class/brain_mri/segmentation.py</code>가 처음 요청 때 가중치를 불러오고 추론합니다.</li>
+      <li><code>class/brain_mri/localization.py</code>가 외곽선을 색으로 칠한 overlay PNG를 만듭니다.</li>
+      <li><code>schemas/brainMriSchemas.py</code> 형식으로 응답합니다. 검출이 없으면 <code>predictions</code>는 빈 배열입니다.</li>
+    </ol>
+
+    <nav>
+      <h2>파일마다 보기</h2>
+      <ul>
+        <li><a href="#router">라우터</a></li>
+        <li><a href="#preprocess">전처리</a></li>
+        <li><a href="#segmentation">세그멘테이션</a></li>
+        <li><a href="#localization">overlay</a></li>
+        <li><a href="#constants">라벨</a></li>
+        <li><a href="#config">설정</a></li>
+        <li><a href="#schema">응답 형식</a></li>
+      </ul>
+    </nav>
+
+    <article id="router">
+      <h3>routers/brain_mri.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>MRI 분석 주소 두 개를 열고 <code>class/brain_mri</code>를 호출합니다.</dd>
+        <dt>받는 것</dt><dd><code>image</code> 파일 하나와 <code>include_overlay</code>(기본 true).</dd>
+        <dt>하는 일</dt><dd>크기 검사, 디코딩, 모델 로드 확인, 추론 호출, 응답 조립.</dd>
+        <dt>돌려주는 것</dt><dd>분석 응답, 또는 <code>GET /api/v1/brain-mri/health</code>의 로드 상태.</dd>
+        <dt>하지 않는 일</dt><dd>NAS 업로드, DB 저장, 판독문 생성은 하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>모델을 못 불러오면 이 주소만 503입니다. CT 분석과 관리자 화면은 그대로 동작합니다.</dd>
+      </dl>
+    </article>
+
+    <article id="preprocess">
+      <h3>class/brain_mri/preprocess.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>업로드 바이트를 모델 입력 이미지로 바꿉니다.</dd>
+        <dt>받는 것</dt><dd>PNG, JPG, DICOM 바이트와 파일 이름.</dd>
+        <dt>하는 일</dt><dd>그레이스케일 한 장을 3채널로 복제합니다. DICOM은 학습 데이터처럼 0.5~99.5 백분위로 0~255 정규화합니다.</dd>
+        <dt>돌려주는 것</dt><dd>HxWx3 uint8 배열.</dd>
+        <dt>하지 않는 일</dt><dd>CT HU 윈도우를 쓰지 않습니다. 3D 볼륨 전체를 처리하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>다중 프레임 DICOM은 가운데 프레임 한 장만 씁니다.</dd>
+      </dl>
+    </article>
+
+    <article id="segmentation">
+      <h3>class/brain_mri/segmentation.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>YOLO26s-Seg 모델을 불러와 한 장을 추론합니다.</dd>
+        <dt>받는 것</dt><dd>전처리된 이미지.</dd>
+        <dt>하는 일</dt><dd>첫 요청 때 가중치를 읽고, 클래스 순서가 학습 때와 같은지 확인한 뒤 추론합니다.</dd>
+        <dt>돌려주는 것</dt><dd>검출 목록. 각 항목은 class_id, disease, disease_ko, confidence, bbox, polygon입니다.</dd>
+        <dt>하지 않는 일</dt><dd>가중치를 내려받지 않습니다. 파일 경로는 환경 변수로만 받습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>좌표는 업로드한 이미지의 픽셀 기준입니다.</dd>
+      </dl>
+    </article>
+
+    <article id="localization">
+      <h3>class/brain_mri/localization.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>검출 외곽선과 박스를 원본 위에 그립니다.</dd>
+        <dt>받는 것</dt><dd>원본 이미지와 검출 목록.</dd>
+        <dt>하는 일</dt><dd>polygon을 반투명으로 칠하고, bbox와 라벨을 그린 뒤 PNG base64로 만듭니다.</dd>
+        <dt>돌려주는 것</dt><dd><code>overlay_png_base64</code>.</dd>
+        <dt>하지 않는 일</dt><dd>Grad-CAM을 쓰지 않습니다. 세그멘테이션 모델이 외곽선을 직접 줍니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>검출이 없으면 원본과 같은 그림이 나옵니다.</dd>
+      </dl>
+    </article>
+
+    <article id="constants">
+      <h3>class/brain_mri/constants.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>클래스 순서, 한국어 이름, 색, 면책 문구를 둡니다.</dd>
+        <dt>순서</dt><dd>0 vestibular_schwannoma, 1 glioma, 2 brain_metastasis, 3 ischemic_stroke, 4 multiple_sclerosis.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>학습 때 순서와 같아야 합니다. 바꾸면 가중치 로드 때 오류로 막습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="config">
+      <h3>class/brain_mri/config.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>MRI 분석 환경 변수를 읽습니다.</dd>
+        <dt>값</dt><dd><code>BRAIN_MRI_MODEL_PATH</code>(가중치 경로), <code>BRAIN_MRI_CONF_THRESHOLD</code>(기본 0.25), <code>BRAIN_MRI_MAX_UPLOAD_BYTES</code>(기본 20MB).</dd>
+        <dt>하지 않는 일</dt><dd>루트 <code>config.py</code>의 DB·NAS 설정을 건드리지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>가중치 파일은 저장소에 넣지 않습니다. 각자 PC 경로를 <code>.env</code>에 적습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="schema">
+      <h3>schemas/brainMriSchemas.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>MRI 응답 형식을 정합니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>CT 응답(<code>analyzeSchemas.py</code>)은 분류 확률이고, MRI 응답은 검출 목록입니다. 둘을 섞지 않으려고 파일을 나눴습니다.</dd>
+      </dl>
+    </article>
+
+    <h2>확인하는 법</h2>
+    <ol>
+      <li><code>.env</code>에 <code>BRAIN_MRI_MODEL_PATH</code>를 적고 서버를 켭니다.</li>
+      <li><code>/docs</code>에서 <code>POST /api/v1/analyze/brain-mri</code>에 MRI PNG를 올립니다.</li>
+      <li>200 응답과 <code>predictions</code> 배열을 확인합니다. 빈 배열도 정상입니다.</li>
+      <li><code>pytest tests/test_brain_mri.py</code>를 실행합니다. 가중치가 없으면 실제 추론 테스트는 건너뜁니다.</li>
+    </ol>
+  </main>
+</body>
+</html>

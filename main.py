@@ -10,7 +10,7 @@ FastAPI 앱의 시작 파일 (진입점).
 4. 주소 연결:
    - /          → 화면 공유 분석 페이지
    - /admin     → 관리자 페이지
-   - /api/...   → JSON API (commonness, user, brain)
+   - /api/...   → JSON API (commonness, user, brain, brain_mri)
    - /assets/... → CSS, JS, 이미지
 """
 
@@ -34,7 +34,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, commonness, brain, user
+from routers import admin, commonness, brain, brain_mri, user
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -203,6 +203,9 @@ app.include_router(user.router)
 
 # brain: 화면 공유 ROI 분석·판독문. 앞에 /api/v1 을 붙임
 app.include_router(brain.router, prefix="/api/v1", tags=["brain"])
+
+# brain_mri: 뇌 MRI 5질환 세그멘테이션(YOLO26s-Seg). CT 와 별개. 앞에 /api/v1 을 붙임
+app.include_router(brain_mri.router, prefix="/api/v1", tags=["brain_mri"])
 
 # --- 정적 파일: CSS / JS / 이미지 ---
 # HTML에서는 /assets/css/styles.css 처럼 경로를 쓴다.

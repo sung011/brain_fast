@@ -26,7 +26,8 @@
       <li><a href="popup.html">팝업</a> — 관리자 등록 SSE와 학습자 <code>GET /popups</code>. 노출이면서 노출 기간 안인 팝업만 내려줍니다.</li>
       <li><a href="roi-grade.html">학습 ROI 채점</a> — <code>/learning/roi-grade</code>. 단일 영상은 기존과 같고, MRI 슬라이드(JSON 배열)는 <code>slice_index</code>·<code>image_path</code>로 장을 고른 뒤 채점합니다.</li>
       <li><a href="learning-today.html">오늘의 학습 현황</a> — <code>GET /learning/today</code>. 부위마다 학습 시간, 문제 수, 정답률.</li>
-      <li class="wait">흉부, 복부, 무릎, 뇌 MRI — 해당 <code>class/</code> 패키지를 만들 때 같은 형식의 HTML을 여기에 추가합니다.</li>
+      <li><a href="brain_mri.html">뇌 MRI 5질환 분석</a> — <code>POST /api/v1/analyze/brain-mri</code>. MRI 2D 슬라이스에서 5가지 질환의 위치(bbox, 외곽선)와 model confidence score를 돌려줍니다. CT와 별개입니다.</li>
+      <li class="wait">흉부, 복부, 무릎 — 해당 <code>class/</code> 패키지를 만들 때 같은 형식의 HTML을 여기에 추가합니다.</li>
     </ul>
   </main>
 </body>
