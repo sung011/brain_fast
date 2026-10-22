@@ -299,6 +299,11 @@ def test_answer_boxes_replace_ai_as_grading_target(detector):
     assert on_answer["targets"][0]["findings"] == ["기흉"] and on_answer["targets"][0]["confidence"] is None
     assert on_answer["abnormality_bbox"]["y_px"] == 120
     assert on_answer["overlay_summary"].startswith("AI 참고")
+    # AI 가 찾은 부위는 채점엔 안 쓰고 참고로만 돌려준다(0~1 비율 좌표)
+    ai = on_answer["ai_targets"]
+    assert [t["findings"] for t in ai] == [["폐음영"], ["흉막삼출"]]      # 신뢰도 높은 순
+    assert ai[0]["confidence"] == pytest.approx(0.42)
+    assert all(0 <= ai[0][k] <= 1 for k in ("x", "y", "width", "height")) and "box" not in ai[0]
     on_ai_box = grade(x=20, y=20, width=60, height=60, answer_boxes=answer)   # AI 폐음영 자리
     assert on_ai_box["result"] == "오답"
 
@@ -307,6 +312,7 @@ def test_without_answer_boxes_ai_is_the_target(detector):
     result = grade(x=20, y=20, width=60, height=60)
     assert result["target_source"] == "ai"
     assert result["targets"][0]["confidence"] == pytest.approx(0.42)
+    assert result["ai_targets"] == []     # AI 가 기준이면 따로 참고로 덧그릴 게 없다
 
 
 def test_overlapping_findings_count_as_one_region(monkeypatch):
@@ -449,7 +455,7 @@ def test_learning_note_next_steps_have_guideline_source():
             assert step["sign"] and step["suspect"] and step["next"]
             assert step["evidence"] == "guideline" and step["source"]["url"].startswith("https://")
     assert len(thorax.learning_note("흉막삼출")["next_steps"]) == 3
-    assert thorax.learning_note("심비대")["next_steps"] == []   # 지침으로 확인한 줄이 아직 없다
+    assert len(thorax.learning_note("심비대")["next_steps"]) == 2   # AHA/ACC/HFSA 2022 원문 요약부로 확인
 
 
 def test_learning_note_unknown_or_brain_is_none():

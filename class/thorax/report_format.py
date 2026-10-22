@@ -30,6 +30,8 @@ _BTS_PLEURAL = {"title": "British Thoracic Society Guideline for pleural disease
                 "url": "https://brit-thoracic.org.uk/document-library/guidelines/pleural-disease/bts-guideline-for-pleural-disease"}
 _ATS_IDSA_CAP = {"title": "ATS/IDSA Community-acquired Pneumonia Guideline (AJRCCM 2019)",
                  "url": "https://www.atsjournals.org/doi/10.1164/rccm.201908-1581ST"}
+_AHA_HF = {"title": "2022 AHA/ACC/HFSA Guideline for the Management of Heart Failure (Circulation 2022)",
+           "url": "https://www.ahajournals.org/doi/10.1161/CIR.0000000000001063"}
 _FLEISCHNER = {"title": "Fleischner Society: Glossary of Terms for Thoracic Imaging (Radiology 2024)",
                "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10902601/"}
 
@@ -45,9 +47,14 @@ NOTES = {
         "summary": (
             "흉막강(폐와 흉벽 사이)에 액체가 고인 상태입니다."
         ),
+        # 판독 포인트: 학회 지침(Fleischner 2024 용어집)으로 확인한 줄만 appearance 에 두고 줄마다 출처를 단다.
+        # 아직 지침으로 확인하지 못한 일반 설명은 appearance_extra(검수 전)로 따로 둔다.
         "appearance": [
-            "서서 찍은 정면(PA) 사진에서 늑골횡격막각이 둔해집니다",
-            "바깥쪽이 위로 올라가는 오목한 경계(메니스커스 징후)가 보입니다",
+            "작은 양의 흉수는 늑골횡격막각이 뭉툭해지는 것으로 보일 수 있습니다",
+            "그 부위가 초승달(메니스커스) 모양으로 보일 수 있습니다",
+        ],
+        "appearance_sources": [[_FLEISCHNER], [_FLEISCHNER]],
+        "appearance_extra": [
             "한쪽인지 양쪽인지 봅니다",
             "양이 많으면 종격동이 반대쪽으로 밀립니다",
         ],
@@ -84,10 +91,13 @@ NOTES = {
             "음영 자체는 결과이고, 원인은 위치·분포와 임상 정보를 함께 보고 생각합니다."
         ),
         "appearance": [
-            "폐가 있어야 할 자리가 주변보다 하얗게 보입니다",
-            "한 부위(엽)에 몰려 있는지, 양쪽에 퍼져 있는지 봅니다",
+            "폐가 있어야 할 자리가 주변보다 하얗게 보입니다. 원인은 이것만으로 알 수 없습니다",
             "하얀 음영 속에 검은 기관지가 보일 수 있습니다(공기기관지조영)",
-            "심장·횡격막 경계가 지워지면(실루엣 징후) 위치를 짐작할 수 있습니다",
+            "심장·횡격막 같은 경계가 흐려지는 것을 실루엣 징후라고 합니다. 맞닿은 구조의 농도가 비슷할 때 나타납니다",
+        ],
+        "appearance_sources": [[_FLEISCHNER], [_FLEISCHNER], [_FLEISCHNER]],
+        "appearance_extra": [
+            "한 부위(엽)에 몰려 있는지, 양쪽에 퍼져 있는지 봅니다",
         ],
         "related": [
             "폐렴",
@@ -119,10 +129,13 @@ NOTES = {
             "흉막강에 공기가 들어가 폐가 쪼그라든 상태입니다."
         ),
         "appearance": [
-            "폐 가장자리를 따라 얇은 흰 선(흉막선)이 보입니다",
+            "폐와 흉막강 속 공기의 경계가 얇은 곡선(흉막선)으로 보입니다",
+            "긴장성 기흉은 주로 임상 소견으로 진단하며, 영상에서는 반대쪽 종격동 이동과 횡격막 하강이 흔히 동반됩니다",
+        ],
+        "appearance_sources": [[_FLEISCHNER], [_FLEISCHNER]],
+        "appearance_extra": [
             "그 선 바깥쪽에는 폐 혈관 무늬가 보이지 않습니다",
             "폐 꼭대기(폐첨부)에서 먼저 보이는 경우가 많습니다",
-            "기관·종격동이 반대쪽으로 밀렸으면 긴장성 기흉(응급)을 생각합니다",
         ],
         "related": [
             "자발성 기흉 — 키가 크고 마른 젊은 남성, 흡연과 관련될 수 있습니다",
@@ -148,7 +161,10 @@ NOTES = {
         "summary": (
             "심장 그림자가 커진 상태입니다."
         ),
-        "appearance": [
+        # 심비대는 Fleischner 용어집에 해당 용어가 없어 지침으로 확인된 줄이 아직 없다
+        "appearance": [],
+        "appearance_sources": [],
+        "appearance_extra": [
             "정면(PA) 사진에서 심장 최대 폭이 흉곽 최대 폭의 절반보다 큽니다(심흉비 > 0.5)",
             "폐혈관이 두드러지거나 흉막삼출이 같이 있는지 봅니다",
         ],
@@ -163,6 +179,13 @@ NOTES = {
             "심초음파 — 심장이 실제로 커졌는지, 심낭삼출 때문인지, 심장 기능은 어떤지 봅니다",
             "심전도 — 리듬과 심장 부담을 봅니다",
             "혈액검사(BNP 등) — 심부전 여부를 봅니다",
+        ],
+        "next_steps": [
+            _step("심장 그림자가 커 보임", "심부전 등 심장 질환. X-ray 만으로 원인은 알 수 없음",
+                  "병력·진찰 뒤에는 심초음파가 가장 유용한 첫 검사입니다. 심장 구조와 박출률(LVEF)을 확인합니다", _AHA_HF),
+            _step("숨이 차는 등 심부전이 의심됨", "심부전",
+                  "BNP 또는 NT-proBNP 혈액검사로 심부전 여부를 가립니다. 두 검사의 기준값은 서로 바꿔 쓰지 않고, 비만하면 낮게 나올 수 있습니다",
+                  _AHA_HF),
         ],
         "pitfall": (
             "누워서 찍은(AP) 사진이나 숨을 덜 들이쉰 사진에서는 심장이 실제보다 크게 보입니다. "
@@ -254,6 +277,8 @@ def learning_note(disease: str | None, targets: list[dict] | None = None) -> dic
         "name_en": class_label(code, "en"),
         "summary": note["summary"],
         "appearance": list(note["appearance"]),
+        "appearance_sources": [[dict(src) for src in line] for line in note.get("appearance_sources", [])],
+        "appearance_extra": list(note.get("appearance_extra", [])),
         "locations": locations,
         "case_summary": case_summary(class_ko(code), targets),
         "related": list(note["related"]),

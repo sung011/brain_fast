@@ -90,6 +90,8 @@ def build_overlay_image(img_uint8: np.ndarray, per_class: dict) -> np.ndarray:
     base = img_uint8.astype(np.float32) / 255.0
     overlay = base.copy()
     for name, info in per_class.items():
+        if info.get("outline_only"):
+            continue    # 참고용 박스는 칠하지 않고 테두리만 그린다
         color = CLASS_COLORS.get(name, (1.0, 0.0, 0.0))
         m = info["mask"]
         for c in range(3):

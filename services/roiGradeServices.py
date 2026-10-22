@@ -359,11 +359,13 @@ def roi_feedback(
         if chest and abs(tx - ux) > 0.25 and (ux - 0.5) * (tx - 0.5) < 0:
             tips.append("정답은 반대쪽 폐에 있어요. 색칠된 곳을 확인해 보세요.")
         elif overlap > 0 and _box_area(best) < _box_area(t) * 0.5:
-            tips.append("위치는 맞았어요. 정답 표시보다 작게 그렸는데, 크기는 의사마다 차이가 있어요.")
+            tips.append("위치는 맞았어요. 정답 표시보다 작게 그렸는데, 크기는 의사마다 차이가 있어요. "
+                        "다만 너무 작아서 정답 기준에는 못 미쳤어요.")
         elif overlap > 0 and direction:
             tips.append(f"거의 맞았어요. 정답은 조금 더 {direction}에 있어요.")
         elif overlap > 0:
-            tips.append("위치는 맞았어요. 정답 표시와 크기가 많이 다른데, 크기는 의사마다 차이가 있어요.")
+            tips.append("위치는 맞았어요. 정답 표시와 크기가 많이 다른데, 크기는 의사마다 차이가 있어요. "
+                        "다만 겹친 부분이 적어서 정답 기준에는 못 미쳤어요.")
         elif direction:
             tips.append(f"다른 곳을 골랐어요. 정답은 {direction}에 있어요.")
         else:
@@ -510,6 +512,34 @@ def _thorax_targets(per_class: dict, constants: ModuleType) -> list[dict]:
         })
     targets.sort(key=lambda t: t["confidence"], reverse=True)
     return targets
+
+
+AI_REFERENCE_MAX = 3   # 참고로 보여 줄 AI 부위는 신뢰도 높은 순으로 이만큼만
+
+
+def _ai_reference_targets(
+    per_class: dict, height: int, width: int, constants: ModuleType, answer_findings: set[str] | None = None
+) -> list[dict]:
+    """
+    데이터셋 정답이 기준일 때 화면에 참고로 덧그릴 AI 부위. 정답 소견과 같은 모델의 박스만 보여
+    (흉막삼출 문제에 폐음영 박스가 같이 뜨지 않게) 겹치는 박스는 한 부위로 묶고,
+    신뢰도 높은 순으로 AI_REFERENCE_MAX 곳만 둔다. 좌표는 0~1 비율(x, y, width, height)로도 준다.
+    정답 소견 이름이 어느 모델과도 맞지 않으면 모든 모델의 박스를 쓴다.
+    """
+    if answer_findings:
+        same = {code: info for code, info in per_class.items() if constants.class_ko(code) in answer_findings}
+        per_class = same or per_class
+    out = []
+    for t in _thorax_targets(per_class, constants)[:AI_REFERENCE_MAX]:
+        x1, y1, x2, y2 = t["box"]
+        out.append({
+            "box": t["box"],
+            "x": x1 / width, "y": y1 / height,
+            "width": (x2 - x1) / width, "height": (y2 - y1) / height,
+            "confidence": float(t["confidence"]),
+            "findings": t["findings"],
+        })
+    return out
 
 
 def grade_image_roi(
@@ -761,6 +791,15 @@ def _grade_thorax(
         answer_mask = mask_union
     # overlay 는 채점에 쓴 의심 부위만 한 색으로 그린다 (화면 범례와 같은 색. 데이터셋 정답이면 AI 박스와 섞지 않는다)
     shown = {"answer": {"mask": answer_mask, "boxes": [(t["box"], 1.0) for t in targets]}}
+    # 데이터셋 정답이 기준이면 AI 가 찾은 부위도 참고로 파란 테두리만 덧그린다(정답 위에 오지 않게 먼저 둔다)
+    answer_findings = {str(b.get("finding")) for b in (answer_boxes or []) if b.get("finding")}
+    ai_targets = _ai_reference_targets(per_class, h, w, constants, answer_findings) if source == "dataset" else []
+    if ai_targets:
+        shown = {
+            "ai_ref": {"mask": mask_union, "outline_only": True,
+                       "boxes": [(t["box"], t["confidence"]) for t in ai_targets]},
+            **shown,
+        }
 
     # iou·recall·precision 은 전체를 합쳐 계산한 참고값. 판정(result)은 의심 부위별 채점으로 바꾼다
     scored = grade_overlap(user, answer_mask)
@@ -816,6 +855,8 @@ def _grade_thorax(
         "target_count": scored["target_count"],
         "found_count": scored["found_count"],
         "too_wide": scored["too_wide"],
+        # 정답이 데이터셋 박스일 때 AI 가 찾은 부위(참고). 0~1 비율 좌표. 없으면 빈 목록
+        "ai_targets": [{k: v for k, v in t.items() if k != "box"} for t in ai_targets],
         "classification": {
             "top_label": top["label"],
             "top_label_ko": top["label_ko"],

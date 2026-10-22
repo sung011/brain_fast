@@ -11,7 +11,9 @@ _from_rag() 만 채우면 되고, 라우터·화면은 고치지 않는다.
         "code": "pleural_effusion",          # 소견 코드 (없으면 이름 그대로)
         "name": "흉막삼출", "name_en": "Pleural effusion",
         "summary": "이 소견(병명)은 — 한두 문장 정의",
-        "appearance": ["판독 포인트 — 이 소견이면 보통 이렇게 보인다", ...],
+        "appearance": ["판독 포인트 — 학회 지침으로 확인한 줄만", ...],
+        "appearance_sources": [[{"title": "...", "url": "https://..."}], ...],   # appearance 줄마다 출처(같은 순서)
+        "appearance_extra": ["지침 확인 전 일반 설명(검수 전)", ...],
         "locations": ["하부-환자 우측", ...],  # 이 영상의 의심 부위 위치. 채점 결과로 채운다(RAG 는 비워도 됨)
         "case_summary": "이 영상에서는 … 의심 부위가 1곳 있습니다: …",  # 채점 결과로 만든 문장(RAG 는 비워도 됨)
         "related": ["감별할 질환 — 짧은 이유", ...],
@@ -39,9 +41,11 @@ from pathlib import Path
 from config import settings
 
 THORAX_PART = "2"
-NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "locations", "case_summary", "related",
+NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "appearance_sources", "appearance_extra",
+             "locations", "case_summary", "related",
              "confirm", "confirm_note", "combinations", "next_steps", "pitfall", "references", "disclaimer")
-LIST_KEYS = ("appearance", "locations", "related", "confirm", "combinations", "next_steps", "references")
+LIST_KEYS = ("appearance", "appearance_sources", "appearance_extra", "locations", "related", "confirm",
+             "combinations", "next_steps", "references")
 TEXT_KEYS = ("code", "name", "name_en", "summary", "case_summary", "confirm_note", "pitfall", "disclaimer")
 # 부위별 정답의 성격. 흉부 문제의 정답은 소견, 그 밖은 병명
 KIND_BY_PART = {THORAX_PART: "finding"}
