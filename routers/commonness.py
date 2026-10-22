@@ -43,6 +43,8 @@ from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
+from services.nasServices import NasNotConfiguredError, NasUploadError
+from utils.password import hash_password, verify_password
 from utils.qa_sse import qa_events
 from utils.review_sse import review_events
 
@@ -479,11 +481,22 @@ def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
 def login_post(body: UserLogin, db: Session = Depends(get_db)):
     """학습자 로그인. 성공 시 idx, user_id, user_name, mb_level 을 돌려준다."""
     user = user_service.login(db, body)
-    # 응답에는 비밀번호(입력값·해시)를 넣지 않는다. 실패 원인(아이디/비밀번호)도 구분하지 않는다.
+
+    # 개발 확인용 응답. 나중에 제거하세요.
+    debug = {
+        "plain_pw": body.user_pw,
+        "hashed_pw": hash_password(body.user_pw),
+        "db_user_pw": user.user_pw if user else None,
+        "pw_match": (
+            verify_password(body.user_pw, user.user_pw)
+            if user and user.user_pw.startswith("$2")
+            else None
+        ),
+    }
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="아이디 또는 비밀번호가 올바르지 않습니다.",
+            detail={"message": "아이디 또는 비밀번호가 올바르지 않습니다.", **debug},
         )
     return {
         "ok": True,
@@ -491,6 +504,7 @@ def login_post(body: UserLogin, db: Session = Depends(get_db)):
         "user_id": user.user_id,
         "user_name": user.user_name,
         "mb_level": user.mb_level,
+        **debug,
     }
 
 
