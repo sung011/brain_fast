@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import uuid
 from typing import Any
 
@@ -61,6 +62,68 @@ def _finding_score(item: dict[str, Any]) -> float:
         return float("-inf")
 
 
+def _ratio(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    return round(number, 4)
+
+
+def _finding_items(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        items.append(
+            {
+                "label": item.get("label"),
+                "label_ko": item.get("label_ko"),
+                "score": _ratio(item.get("score")),
+            }
+        )
+    return items
+
+
+def _summary_group(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "top_label": value.get("top_label"),
+        "top_label_ko": value.get("top_label_ko"),
+        "confidence": _ratio(value.get("confidence")),
+        "findings": _finding_items(value.get("findings")),
+    }
+
+
+def grade_findings_json(grade: dict[str, Any]) -> str | None:
+    """결과 요약에 다시 쓸 출혈·germinoma 소견만 JSON으로 남긴다."""
+    payload: dict[str, Any] = {}
+    classification = _summary_group(grade.get("classification"))
+    germinoma = _summary_group(grade.get("germinoma"))
+    if classification:
+        payload["classification"] = classification
+    if germinoma:
+        payload["germinoma"] = germinoma
+    if not payload:
+        return None
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def load_findings_json(raw: str | None) -> dict[str, Any] | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def highest_percent_disease(grade: dict[str, Any]) -> str | None:
     """출혈·germinoma 후보 중 score가 가장 높은 병명. 한글 이름을 우선한다."""
     candidates: list[dict[str, Any]] = []
@@ -101,6 +164,7 @@ async def save_submission(
     grade: dict[str, Any],
     study_idx: int | None = None,
     user_idx: int | None = None,
+    slice_index: int | None = None,
 ) -> dict[str, Any]:
     """
     제출 이미지를 NAS review 폴더에 올리고 review_node 행을 만든다.
@@ -144,6 +208,15 @@ async def save_submission(
         rn_disease=highest_percent_disease(grade),
         rn_image=rn_image,
         rn_solution=solution_code(grade.get("result")),
+        rn_recall=_ratio(grade.get("recall")),
+        rn_iou=_ratio(grade.get("iou")),
+        rn_overlay_summary=(
+            grade.get("overlay_summary").strip()
+            if isinstance(grade.get("overlay_summary"), str) and grade.get("overlay_summary").strip()
+            else None
+        ),
+        rn_findings=grade_findings_json(grade),
+        rn_slice_index=slice_index if slice_index is not None and slice_index >= 0 else None,
         state="N",
     )
     return {
@@ -151,6 +224,129 @@ async def save_submission(
         "rn_image": row.rn_image,
         "rn_solution": row.rn_solution,
         "remote_path": remote_path,
+    }
+
+
+PART_REGION = {
+    "1": "brain",
+    "2": "chest",
+    "3": "abdomen",
+    "4": "knee",
+}
+MODAL_TYPE = {
+    "1": "x-ray",
+    "2": "CT",
+    "3": "MRI",
+}
+NOTE_SOLUTIONS = {"W", "H"}
+
+
+def list_wrong_notes(db: Session, user_idx: int) -> list[dict[str, Any]]:
+    """문제(study)마다 가장 최근 제출만 본다. 그 결과가 오답·부분정답일 때만 노트에 넣는다."""
+    if user_idx < 1:
+        raise ValueError("user_idx는 1 이상이어야 합니다.")
+    notes: list[dict[str, Any]] = []
+    seen_studies: set[int | tuple[str, int | None]] = set()
+    for row in list_for_admin(db, user_idx=user_idx):
+        study_idx = row.get("study_idx")
+        key: int | tuple[str, int | None] = (
+            study_idx if study_idx is not None else ("review", row.get("idx"))
+        )
+        if key in seen_studies:
+            continue
+        seen_studies.add(key)
+        code = str(row.get("rn_solution") or "").strip().upper()
+        if code not in NOTE_SOLUTIONS:
+            continue
+        part = str(row.get("st_part") or "")
+        modal = str(row.get("st_modal") or "")
+        created = row.get("created_at")
+        if created is not None and hasattr(created, "isoformat"):
+            created = created.isoformat(sep=" ", timespec="seconds")
+        notes.append(
+            {
+                "idx": row.get("idx"),
+                "study_idx": study_idx,
+                "disease": row.get("st_disease") or row.get("rn_disease") or "",
+                "solution": code,
+                "solution_label": row.get("rn_solution_label") or solution_label(code),
+                "part_label": row.get("st_part_label") or "",
+                "modal_label": row.get("st_modal_label") or "",
+                "region": PART_REGION.get(part, ""),
+                "type": MODAL_TYPE.get(modal, ""),
+                "image": row.get("rn_image") or "",
+                "created_at": created,
+            }
+        )
+    return notes
+
+
+def get_saved_review(db: Session, review_idx: int, user_idx: int) -> dict[str, Any] | None:
+    """제출 번호로 그 사용자의 채점 이미지를 한 건 돌려준다."""
+    if review_idx < 1 or user_idx < 1:
+        raise ValueError("idx와 user_idx는 1 이상이어야 합니다.")
+    found = repositories.get_owned(db, review_idx, user_idx)
+    if found is None:
+        return None
+    from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
+
+    review, study = found
+    part = str(study.st_part if study else "")
+    modal = str(study.st_modal if study else "")
+    code = str(review.rn_solution or "").strip().upper()
+    return {
+        "idx": review.idx,
+        "study_idx": review.rn_s_idx,
+        "disease": (study.st_disease if study else None) or review.rn_disease or "",
+        "solution": code,
+        "solution_label": solution_label(code),
+        "part_label": ST_PART_LABELS.get(part, ""),
+        "modal_label": ST_MODAL_LABELS.get(modal, ""),
+        "region": PART_REGION.get(part, ""),
+        "type": MODAL_TYPE.get(modal, ""),
+        "image": review.rn_image or "",
+        "study_image": (study.st_image if study else None) or "",
+        "recall": _ratio(review.rn_recall),
+        "iou": _ratio(review.rn_iou),
+        "overlay_summary": review.rn_overlay_summary or "",
+        "findings": load_findings_json(review.rn_findings),
+        "slice_index": review.rn_slice_index,
+    }
+
+
+def list_learning_history(db: Session, user_idx: int) -> dict[str, Any]:
+    """그 사용자의 제출을 최신순으로 모두 돌려준다. 정답·부분정답·오답을 빼지 않는다."""
+    if user_idx < 1:
+        raise ValueError("user_idx는 1 이상이어야 합니다.")
+    from repositories import studyRepositories as study_repositories
+
+    items: list[dict[str, Any]] = []
+    for row in list_for_admin(db, user_idx=user_idx):
+        study_idx = row.get("study_idx")
+        code = str(row.get("rn_solution") or "").strip().upper()
+        part = str(row.get("st_part") or "")
+        modal = str(row.get("st_modal") or "")
+        created = row.get("created_at")
+        if created is not None and hasattr(created, "isoformat"):
+            created = created.isoformat(sep=" ", timespec="seconds")
+        items.append(
+            {
+                "idx": row.get("idx"),
+                "study_idx": study_idx,
+                "disease": row.get("st_disease") or row.get("rn_disease") or "",
+                "solution": code,
+                "solution_label": row.get("rn_solution_label") or solution_label(code),
+                "part_label": row.get("st_part_label") or "",
+                "modal_label": row.get("st_modal_label") or "",
+                "region": PART_REGION.get(part, ""),
+                "type": MODAL_TYPE.get(modal, ""),
+                "image": row.get("rn_image") or "",
+                "created_at": created,
+            }
+        )
+    return {
+        "total_studies": study_repositories.count_active(db),
+        "items": items,
     }
 
 

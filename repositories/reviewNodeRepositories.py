@@ -8,6 +8,25 @@ from models.studyModel import StudyModel
 from models.userModel import UserModel
 
 
+def get_owned(
+    db: Session, idx: int, user_idx: int
+) -> tuple[ReviewNodeModel, StudyModel | None] | None:
+    """그 사용자의 제출 1건과 연결된 study."""
+    stmt = (
+        select(ReviewNodeModel, StudyModel)
+        .outerjoin(StudyModel, StudyModel.idx == ReviewNodeModel.rn_s_idx)
+        .where(
+            ReviewNodeModel.idx == idx,
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+        )
+    )
+    row = db.execute(stmt).first()
+    if row is None:
+        return None
+    return row[0], row[1]
+
+
 def list_solved_study_idxs(db: Session, user_idx: int) -> list[int]:
     """해당 사용자가 review_node에 제출한 study idx 목록."""
     stmt = (
@@ -86,6 +105,11 @@ def create(
     rn_disease: str | None,
     rn_image: str | None,
     rn_solution: str | None,
+    rn_recall: float | None = None,
+    rn_iou: float | None = None,
+    rn_overlay_summary: str | None = None,
+    rn_findings: str | None = None,
+    rn_slice_index: int | None = None,
     state: str = "N",
 ) -> ReviewNodeModel:
     row = ReviewNodeModel(
@@ -95,6 +119,11 @@ def create(
         rn_disease=rn_disease,
         rn_image=rn_image,
         rn_solution=rn_solution,
+        rn_recall=rn_recall,
+        rn_iou=rn_iou,
+        rn_overlay_summary=rn_overlay_summary,
+        rn_findings=rn_findings,
+        rn_slice_index=rn_slice_index,
         state=state,
     )
     db.add(row)

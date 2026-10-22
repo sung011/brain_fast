@@ -66,6 +66,16 @@ def _merge_exclude_idxs(
     return merged or None
 
 
+def get_problem_by_idx(db: Session, idx: int) -> StudyModel | None:
+    """지정한 study.idx 한 건. 삭제된 문제는 돌려주지 않는다."""
+    if idx < 1:
+        raise ValueError("idx는 1 이상이어야 합니다.")
+    row = study_repositories.get_by_idx(db, idx)
+    if row is None or row.del_yn != "N":
+        return None
+    return row
+
+
 def get_random_problem(
     db: Session,
     *,
