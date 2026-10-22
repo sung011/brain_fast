@@ -3,7 +3,7 @@
 
 main.py 에서 prefix="/api/v1" 을 붙인다.
 실제 주소 예: /api/v1/health, /api/v1/analyze/screen-roi
-메디스캔노트 화면공유분석. 분석 로직은 class/brain.
+원본: MediLens 화면공유분석. 분석 로직은 class/brain.
 
 하는 일:
 - GET  /api/v1/health                      : 앙상블·MedGemma 모델 로드 상태
