@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from repositories import reviewNodeRepositories as repositories
-from services.nasServices import NasNotConfiguredError, nas_service
+from services.objectStorageServices import StorageNotConfiguredError, storage_service
 
 SOLUTION_MAP = {
     "정답": "C",
@@ -167,13 +167,13 @@ async def save_submission(
     slice_index: int | None = None,
 ) -> dict[str, Any]:
     """
-    제출 이미지를 NAS review 폴더에 올리고 review_node 행을 만든다.
-    경로 예) /web/mu_shop/public/stylesheets/assets/review/{file}
+    제출 이미지를 Object Storage review 경로에 올리고 review_node 행을 만든다.
     DB rn_image 예) /stylesheets/assets/review/{file}
     """
-    if not nas_service.enabled:
-        raise NasNotConfiguredError(
-            "NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요."
+    if not storage_service.enabled:
+        raise StorageNotConfiguredError(
+            "Object Storage가 설정되지 않았습니다. "
+            ".env 에 NCP_ACCESS_KEY, NCP_SECRET_KEY, NCP_BUCKET 을 넣으세요."
         )
 
     review_png = grade.get("_review_png")
@@ -197,9 +197,9 @@ async def save_submission(
 
     dest = (settings.nas_review_path or REVIEW_DIR).strip() or REVIEW_DIR
     upload_name = f"{uuid.uuid4().hex[:10]}_{study_idx or 'x'}.{ext}"
-    uploaded = await nas_service.upload_bytes(content, upload_name, remote_dir=dest)
+    uploaded = await storage_service.upload_bytes(content, upload_name, remote_dir=dest)
     remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
-    rn_image = nas_service.to_public_path(remote_path)
+    rn_image = storage_service.to_public_path(remote_path)
 
     row = repositories.create(
         db,

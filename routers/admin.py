@@ -46,7 +46,7 @@ from schemas.studySchemas import (
 )
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
 from services import dashboardServices as dashboard_service
-from services import nasServices as nas_service_mod
+from services import objectStorageServices as storage_mod
 from services import popupServices as popup_service
 from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
@@ -540,8 +540,8 @@ def study_get(idx: int, db: Session = Depends(get_db)):
 
 @router.get("/nas/health", response_model=NasHealthResponse)
 async def nas_health() -> NasHealthResponse:
-    """Synology NAS 로그인 가능 여부."""
-    result = await nas_service_mod.nas_service.health()
+    """Object Storage 버킷 조회 가능 여부."""
+    result = await storage_mod.storage_service.health()
     return NasHealthResponse(**result)
 
 
@@ -587,11 +587,11 @@ async def _upload_and_save_study(
         persist: bool = True,
 ) -> StudyCreateResult:
     """이미지를 NAS에 올린 뒤 study 행을 만든다. persist=False 면 경로만 돌려준다."""
-    svc = nas_service_mod.nas_service
+    svc = storage_mod.storage_service
     if not svc.enabled:
         raise HTTPException(
             status_code=503,
-            detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+            detail="Object Storage가 설정되지 않았습니다. .env 에 NCP_ACCESS_KEY, NCP_SECRET_KEY, NCP_BUCKET 을 넣으세요.",
         )
 
     data = await file.read()
@@ -612,7 +612,7 @@ async def _upload_and_save_study(
     try:
         uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {exc}") from exc
 
     remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
     # DB에는 /web/mu_shop/public 을 뺀 웹 경로만 저장
@@ -1151,11 +1151,11 @@ async def popup_create(
         state: str = Form("N", description="N:노출 / S:숨김"),
 ) -> PopupWriteResult:
     """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장. 성공 시 SSE(popup_created)."""
-    svc = nas_service_mod.nas_service
+    svc = storage_mod.storage_service
     if not svc.enabled:
         raise HTTPException(
             status_code=503,
-            detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+            detail="Object Storage가 설정되지 않았습니다. .env 에 NCP_ACCESS_KEY, NCP_SECRET_KEY, NCP_BUCKET 을 넣으세요.",
         )
     data = await file.read()
     if not data:
@@ -1167,7 +1167,7 @@ async def popup_create(
     try:
         uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {exc}") from exc
 
     remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
     pp_image = _to_public_image_path(remote_path)
@@ -1225,11 +1225,11 @@ async def popup_update(
     new_image: str | None = None
     remote_path: str | None = None
     if file and file.filename:
-        svc = nas_service_mod.nas_service
+        svc = storage_mod.storage_service
         if not svc.enabled:
             raise HTTPException(
                 status_code=503,
-                detail="NAS가 설정되지 않았습니다.",
+                detail="Object Storage가 설정되지 않았습니다.",
             )
         data = await file.read()
         if not data:
@@ -1240,7 +1240,7 @@ async def popup_update(
         try:
             uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {exc}") from exc
         remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
         new_image = _to_public_image_path(remote_path)
 

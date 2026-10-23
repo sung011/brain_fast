@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>이미지 저장 — brain_fast</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.6; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 42rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.4rem; }
+    h2 { font-size: 1.15rem; margin-top: 1.75rem; }
+    p, li { margin: 0.4rem 0; }
+    a { color: #1a6b73; }
+    code { background: #e8eef3; padding: 0.1em 0.35em; border-radius: 0.25rem; font-size: 0.92em; }
+    dl { margin: 0.75rem 0; }
+    dt { font-weight: 600; margin-top: 0.75rem; }
+    dd { margin: 0.2rem 0 0 1rem; color: #334155; }
+    .note { background: #eef5ff; border: 1px solid #c5d8f0; padding: 0.75rem 1rem; border-radius: 0.4rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">← 학습 문서 목록</a></p>
+    <h1>이미지 저장</h1>
+    <p>스터디, 팝업, 채점 이미지와 분석 결과 파일을 네이버 클라우드 Object Storage 버킷에 올립니다. 화면의 이미지는 학습용 보조이며 진단이 아닙니다.</p>
+    <div class="note">
+      데이터베이스에는 <code>/stylesheets/assets/...</code> 같은 웹 경로만 저장합니다. 브라우저 주소는 <code>NAS_PUBLIC_BASE_URL</code> 뒤에 그 경로를 붙입니다.
+    </div>
+
+    <h2>파일마다 보기</h2>
+    <dl>
+      <dt><code>services/objectStorageServices.py</code></dt>
+      <dd>한 줄: 버킷에 파일을 올리고 웹 경로를 돌려줍니다.</dd>
+      <dd>받음: 파일 바이트, 파일 이름, 저장 폴더(<code>/stylesheets/assets</code>, review, popup).</dd>
+      <dd>함: 한국 리전 S3 호환 API로 객체를 넣고, 화면에서 열 수 있게 공개 읽기를 붙입니다. 예전 <code>/web/mu_shop/public</code> 접두어는 객체 키에서 뺍니다.</dd>
+      <dd>돌림: 웹 경로, 객체 키, 바이트 수. 분석 묶음이면 원본·overlay·<code>result.json</code> 목록.</dd>
+      <dd>안 함: 회원 로그인, 채점, DB 저장. 키 값을 로그에 남기지 않습니다.</dd>
+      <dd>헷갈림: 버킷 목록 공개와 파일 공개는 다릅니다. 코드는 올린 파일만 공개합니다.</dd>
+
+      <dt><code>config.py</code> · <code>.env</code></dt>
+      <dd>한 줄: 버킷 이름, 엔드포인트, 공개 주소, 폴더 경로를 읽습니다.</dd>
+      <dd>받음: <code>NCP_ACCESS_KEY</code>, <code>NCP_SECRET_KEY</code>, <code>NCP_BUCKET</code>, <code>NAS_PUBLIC_BASE_URL</code>.</dd>
+      <dd>함: 값이 없으면 업로드를 비활성으로 둡니다.</dd>
+      <dd>돌림: <code>settings</code> 객체.</dd>
+      <dd>안 함: 키 값을 코드에 적지 않습니다.</dd>
+      <dd>헷갈림: 폴더 설정 이름이 <code>NAS_</code>로 남아 있어도 저장 위치는 Object Storage입니다.</dd>
+
+      <dt><code>routers/admin.py</code> · <code>services/reviewNodeServices.py</code> · <code>routers/brain.py</code></dt>
+      <dd>한 줄: 스터디·팝업·채점·분석 결과 업로드가 이 저장소를 호출합니다.</dd>
+      <dd>받음: 관리자 등록 파일, 학습 제출 이미지, 분석이 만든 overlay.</dd>
+      <dd>함: 올린 뒤 DB에는 웹 경로만 넣습니다. <code>NAS_UPLOAD_ON_ANALYZE</code>가 켜져 있으면 분석 파일도 같은 버킷에 올립니다.</dd>
+      <dd>돌림: 저장된 경로. 설정이 없으면 503, 업로드 실패면 502.</dd>
+      <dd>안 함: 이미 버킷에 없는 예전 파일을 복사하지 않습니다.</dd>
+      <dd>헷갈림: 예전에 NAS에만 있던 이미지는 이 주소로 열리지 않습니다. 다시 등록해야 합니다.</dd>
+    </dl>
+  </main>
+</body>
+</html>

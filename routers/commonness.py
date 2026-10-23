@@ -40,7 +40,7 @@ from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
-from services.nasServices import NasNotConfiguredError, NasUploadError
+from services.objectStorageServices import StorageNotConfiguredError, StorageUploadError
 from utils.password import hash_password, verify_password
 from utils.qa_sse import qa_events
 from utils.review_sse import review_events
@@ -551,7 +551,7 @@ async def learning_roi_grade(
       제출 슬라이스를 고른 뒤, 올린 image/좌표로 채점한다.
     - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
-      NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
+      Object Storage /stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
     - 포함률(rn_recall), ROI 정확도(rn_iou), 위치 요약(rn_overlay_summary),
       출혈·germinoma 소견(rn_findings), MRI 슬라이스(rn_slice_index)도 같은 행에 넣는다.
@@ -614,15 +614,15 @@ async def learning_roi_grade(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except NasNotConfiguredError as exc:
+    except StorageNotConfiguredError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-    except NasUploadError as exc:
+    except StorageUploadError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"NAS 업로드 실패: {exc}",
+            detail=f"이미지 업로드 실패: {exc}",
         ) from exc
     except Exception as exc:
         raise HTTPException(

@@ -31,14 +31,14 @@ def _app() -> FastAPI:
 class PopupCreateSseTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(_app())
-        self._nas = admin_router.nas_service_mod.nas_service
+        self._nas = admin_router.storage_mod.storage_service
         self._create = admin_router.popup_service.create_popup
         self.published: list[tuple] = []
 
         async def upload_bytes(data: bytes, name: str, remote_dir: str = ""):
             return {"remote_path": f"{remote_dir}/{name}"}
 
-        admin_router.nas_service_mod.nas_service = SimpleNamespace(
+        admin_router.storage_mod.storage_service = SimpleNamespace(
             enabled=True,
             upload_bytes=upload_bytes,
         )
@@ -65,7 +65,7 @@ class PopupCreateSseTests(unittest.TestCase):
         popup_events.publish = capture
 
     def tearDown(self) -> None:
-        admin_router.nas_service_mod.nas_service = self._nas
+        admin_router.storage_mod.storage_service = self._nas
         admin_router.popup_service.create_popup = self._create
         popup_events.publish = self._publish
 
