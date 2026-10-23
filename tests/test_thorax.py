@@ -304,6 +304,7 @@ def test_answer_boxes_replace_ai_as_grading_target(detector):
     assert [t["findings"] for t in ai] == [["폐음영"], ["흉막삼출"]]      # 신뢰도 높은 순
     assert ai[0]["confidence"] == pytest.approx(0.42)
     assert all(0 <= ai[0][k] <= 1 for k in ("x", "y", "width", "height")) and "box" not in ai[0]
+    assert "정답 부위의 100%" in on_answer["metrics_text"]      # 같은 자리에 그렸으니 100%
     on_ai_box = grade(x=20, y=20, width=60, height=60, answer_boxes=answer)   # AI 폐음영 자리
     assert on_ai_box["result"] == "오답"
 
@@ -313,6 +314,18 @@ def test_without_answer_boxes_ai_is_the_target(detector):
     assert result["target_source"] == "ai"
     assert result["targets"][0]["confidence"] == pytest.approx(0.42)
     assert result["ai_targets"] == []     # AI 가 기준이면 따로 참고로 덧그릴 게 없다
+    text = result["metrics_text"]    # 기준이 AI 면 "정답 부위"라고 쓰지 않는다
+    assert "AI가 찾은 부위" in text and "정답 부위" not in text
+    assert "내 영역 중 100%" in text   # 내 박스는 AI 박스 안에 있다(AI 박스가 둘이라 덮은 비율은 100%보다 작다)
+
+
+def test_metrics_text_only_states_numbers():
+    """맞은 정도는 숫자로만 말하고, 비교할 수 없거나 값이 이상하면 문장을 내지 않는다."""
+    f = roiGradeServices._metrics_text
+    assert f(0.42, 0.3, "dataset", True) == "내 영역이 정답 부위의 42%를 덮었고, 내 영역 중 30%가 정답 부위 안에 있어요."
+    assert "AI가 찾은 부위" in f(0.5, 0.5, "ai", True) and "정답 부위" not in f(0.5, 0.5, "ai", True)
+    assert f(0.5, 0.5, "ai", False) == ""                 # 안 그렸거나 기준 부위가 없음
+    assert f(1.2, 0.5, "ai", True) == "" and f(None, 0.5, "ai", True) == ""
 
 
 def test_overlapping_findings_count_as_one_region(monkeypatch):
