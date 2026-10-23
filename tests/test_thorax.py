@@ -549,6 +549,11 @@ def test_roi_feedback_explains_why():
     small = fb([m(15, 65, 25, 75)], target, W, H, chest=True)[0]
     assert small.startswith("위치는 맞았어요") and "의사마다" in small
     assert "더 아래쪽" in fb([m(10, 10, 40, 40)], target, W, H, chest=True)[0]
+    # 겹쳐도 최종 판정이 오답이면 "거의 맞았어요"가 아니라 기준에 못 미쳤다고 말한다
+    near = [m(10, 50, 40, 70)]
+    assert fb(near, target, W, H, chest=True)[0].startswith("거의 맞았어요")
+    over = fb(near, target, W, H, chest=True, result="오답")[0]
+    assert over.startswith("일부 겹쳤지만") and "더 아래쪽" in over and "거의 맞았" not in over
     assert fb([m(10, 60, 40, 90), m(60, 10, 80, 30)], target, W, H, found=[True], chest=True) == [
         "정답이 아닌 곳에 그린 ROI 가 1개 있어요."]
     assert "너무 넓게" in fb([m(0, 0, 100, 100)], target, W, H, found=[True], too_wide=True)[0]

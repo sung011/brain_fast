@@ -330,6 +330,7 @@ def roi_feedback(
     found: list[bool] | None = None,
     too_wide: bool = False,
     chest: bool = False,
+    result: str | None = None,
 ) -> list[str]:
     """
     틀린 이유를 학습자가 알아듣게 한두 줄로 알려 준다. 채점 숫자(겹침·중심)를 말로 바꾼 것이다.
@@ -361,6 +362,9 @@ def roi_feedback(
         elif overlap > 0 and _box_area(best) < _box_area(t) * 0.5:
             tips.append("위치는 맞았어요. 정답 표시보다 작게 그렸는데, 크기는 의사마다 차이가 있어요. "
                         "다만 너무 작아서 정답 기준에는 못 미쳤어요.")
+        elif overlap > 0 and direction and result == "오답":
+            # 최종 판정이 오답이면 "거의 맞았어요"라고 하지 않는다 (판정과 문장이 충돌하지 않게)
+            tips.append(f"일부 겹쳤지만 정답 기준에는 못 미쳤어요. 정답은 조금 더 {direction}에 있어요.")
         elif overlap > 0 and direction:
             tips.append(f"거의 맞았어요. 정답은 조금 더 {direction}에 있어요.")
         elif overlap > 0:
@@ -825,6 +829,7 @@ def _grade_thorax(
     scored["feedback"] = roi_feedback(
         [m for m, _ in users], [t["box"] for t in targets], w, h,
         found=[t["found"] for t in scored["targets"]], too_wide=scored["too_wide"], chest=True,
+        result=scored["result"],
     )
 
     overlay_b64 = None
