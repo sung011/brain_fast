@@ -1044,6 +1044,26 @@
       return res.json();
     }
 
+    /**
+     * checkBodyPart(canvas)
+     * 기능: 분석 전에 사진이 어떤 부위인지 서버에 물어, 고른 부위와 다르면 경고 문구를 돌려준다.
+     * 반환: 경고 문구(문자열) 또는 null. 판별 모델이 없거나 서버 오류여도 분석을 막지 않는다(null).
+     */
+    async function checkBodyPart(canvas) {
+      try {
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+        const form = new FormData();
+        form.append("image", blob, "roi.png");
+        form.append("selected", bodyPart.value);
+        const res = await fetch("/api/v1/body-part/check", { method: "POST", body: form });
+        if (!res.ok) return null;
+        const out = await res.json();
+        return out.mismatch ? out.message : null;
+      } catch (err) {
+        return null;
+      }
+    }
+
     async function explainViaApi(blob, analysis) {
       const form = new FormData();
       form.append("image", blob, "roi.png");
@@ -1203,6 +1223,13 @@
       const canvas = cropRoiToCanvas();
       if (!canvas) {
         setStatus("박스가 너무 작습니다. 다시 그려 주세요.");
+        return;
+      }
+
+      // 부위가 다른 사진을 넣으면 엉뚱한 소견이 나오므로, 판별 모델이 확신할 때만 한 번 물어본다
+      const partWarning = await checkBodyPart(canvas);
+      if (partWarning && !window.confirm(partWarning + "\n\n그래도 분석할까요?")) {
+        setStatus("부위를 확인한 뒤 다시 분석하세요.");
         return;
       }
 

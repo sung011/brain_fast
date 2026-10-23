@@ -34,7 +34,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, commonness, brain, user, account, thorax
+from routers import admin, commonness, brain, user, account, thorax, bodyPart
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -207,6 +207,9 @@ app.include_router(brain.router, prefix="/api/v1", tags=["brain"])
 
 # thorax: 화면 공유 흉부 X-ray 분석. 앞에 /api/v1/thorax 를 붙임
 app.include_router(thorax.router, prefix="/api/v1/thorax", tags=["thorax"])
+
+# bodyPart: 화면 공유 사진의 부위(뇌 CT·흉부 X-ray 등) 자동 판별. 앞에 /api/v1/body-part 를 붙임
+app.include_router(bodyPart.router, prefix="/api/v1/body-part", tags=["body-part"])
 
 # --- 정적 파일: CSS / JS / 이미지 ---
 # HTML에서는 /assets/css/styles.css 처럼 경로를 쓴다.
