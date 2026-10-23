@@ -13,10 +13,27 @@ import base64
 import io
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from .constants import CLASS_COLORS, class_ko
 from .ensemble import Detection
+
+# 박스 옆에 붙이는 짧은 이름. 서버 글꼴에 한글이 없을 수 있어 영문으로 쓴다(채점 정답 박스는 라벨을 달지 않는다)
+BOX_LABELS = {
+    "airspace_opacity": "Opacity",
+    "pleural_effusion": "Effusion",
+    "pneumothorax": "Pneumothorax",
+    "cardiomegaly": "Cardiomegaly",
+    "consolidation": "Consolidation",
+    "ai_ref": "AI",
+}
+
+
+def _label_font(size: int):
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:    # 오래된 Pillow 는 크기를 못 준다
+        return ImageFont.load_default()
 
 
 def _clip_box(box, w: int, h: int) -> tuple[int, int, int, int] | None:
@@ -99,10 +116,19 @@ def build_overlay_image(img_uint8: np.ndarray, per_class: dict) -> np.ndarray:
     img = Image.fromarray((np.clip(overlay, 0, 1) * 255).astype(np.uint8))
     draw = ImageDraw.Draw(img)
     width = max(2, round(min(img.size) / 300))
+    font = _label_font(max(12, round(min(img.size) / 40)))
     for name, info in per_class.items():
         rgb = tuple(int(v * 255) for v in CLASS_COLORS.get(name, (1.0, 0.0, 0.0)))
-        for (x1, y1, x2, y2), _conf in info["boxes"]:
+        label = BOX_LABELS.get(name)
+        for (x1, y1, x2, y2), conf in info["boxes"]:
             draw.rectangle([x1, y1, x2 - 1, y2 - 1], outline=rgb, width=width)
+            if label:    # 어느 박스가 무슨 소견이고 점수가 얼마인지 박스 위에 적는다
+                text = f"{label} {conf:.2f}"
+                left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+                tw, th = right - left, bottom - top
+                ty = y1 - th - 6 if y1 - th - 6 >= 0 else y1 + 2
+                draw.rectangle([x1, ty, x1 + tw + 8, ty + th + 6], fill=rgb)
+                draw.text((x1 + 4, ty + 2 - top), text, fill=(0, 0, 0), font=font)
     return np.asarray(img)
 
 
