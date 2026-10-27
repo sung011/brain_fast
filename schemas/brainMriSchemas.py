@@ -25,6 +25,22 @@ class BrainMriPrediction(BaseModel):
     )
 
 
+class BrainMriBox(BaseModel):
+    """학습자가 맞출 기준 박스. 좌표는 이미지 너비·높이 대비 0~1."""
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class BrainMriUpload(BaseModel):
+    """화면 공유 분석 묶음을 Object Storage 에 올렸는지."""
+    ok: bool
+    folder: str | None = None
+    files: list[str] = Field(default_factory=list)
+    error: str | None = None
+
+
 class BrainMriAnalyzeResponse(BaseModel):
     """POST /api/v1/analyze/brain-mri 응답. 검출이 없으면 predictions 는 빈 배열."""
     request_id: str
@@ -34,6 +50,15 @@ class BrainMriAnalyzeResponse(BaseModel):
     image_height: int
     predictions: list[BrainMriPrediction]
     overlay_png_base64: str | None = None
+    result: str | None = Field(
+        default=None, description="학습자 박스가 있을 때만 정답, 부분정답, 오답."
+    )
+    iou: float | None = None
+    recall: float | None = None
+    reference_bbox: BrainMriBox | None = None
+    review_idx: int | None = None
+    overlay_summary: str | None = None
+    nas_upload: BrainMriUpload | None = None
     sequence: str = Field(
         default="unknown", description="요청에 적은 MRI sequence. 추론 방식은 바꾸지 않고 기록만 한다."
     )

@@ -1,7 +1,8 @@
 """
 뇌 MRI 5질환 YOLO26s-Seg 세그멘테이션 서비스.
 
-- 가중치는 BRAIN_MRI_MODEL_PATH 에서 읽는다 (저장소에 넣지 않는다).
+- 가중치는 BRAIN_MRI_MODEL_PATH 파일이 있으면 그 파일을 읽고, 없으면 BRAIN_MRI_HF_REPO 에서 받는다.
+  받은 파일은 저장소에 커밋하지 않는다.
 - 첫 요청 때 로드한다. 실패하면 error 에 남기고, MRI 분석 요청만 503 이 된다.
 - 결과 좌표(bbox, polygon)는 모두 입력 이미지 픽셀 기준이다.
 """
@@ -12,6 +13,7 @@ from threading import Lock
 
 import numpy as np
 
+from . import config
 from .config import CONF_THRESHOLD, MODEL_PATH
 from .constants import CLASSES, class_ko
 
@@ -42,15 +44,7 @@ class SegmentationService:
             if self.ready:
                 return
             try:
-                if not self.model_path:
-                    raise FileNotFoundError(
-                        "BRAIN_MRI_MODEL_PATH 가 비어 있습니다. .env 에 가중치 경로를 지정하세요."
-                    )
-                path = Path(self.model_path).expanduser()
-                if not path.is_file():
-                    raise FileNotFoundError(
-                        f"MRI 모델 파일을 찾을 수 없습니다: {path.name} (BRAIN_MRI_MODEL_PATH 확인)"
-                    )
+                path = _weight_path(self.model_path)
                 from ultralytics import YOLO  # 지연 import: 없거나 깨져도 다른 기능 유지
 
                 model = YOLO(str(path))
@@ -100,6 +94,34 @@ class SegmentationService:
             )
         preds.sort(key=lambda p: p["confidence"], reverse=True)
         return preds
+
+
+def _weight_path(model_path: str) -> Path:
+    """로컬 가중치 파일. 경로가 비어 있으면 Hugging Face 저장소의 가중치를 받는다."""
+    if model_path:
+        path = Path(model_path).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"MRI 모델 파일을 찾을 수 없습니다: {path.name} (BRAIN_MRI_MODEL_PATH 확인)"
+            )
+        return path
+    repo = config.hf_repo()
+    if not repo:
+        raise FileNotFoundError(
+            "BRAIN_MRI_MODEL_PATH 가 비어 있습니다. .env 에 가중치 경로나 BRAIN_MRI_HF_REPO 를 지정하세요."
+        )
+    from huggingface_hub import hf_hub_download
+
+    try:
+        # token=False: 공개 저장소는 토큰 없이 받는다. HF_TOKEN 을 오류 문구에 싣지 않는다.
+        downloaded = hf_hub_download(
+            repo_id=repo, filename=config.hf_filename(), revision=config.hf_revision(), token=False
+        )
+    except Exception as exc:
+        raise FileNotFoundError(
+            f"뇌 MRI 가중치를 받지 못했습니다 ({type(exc).__name__}). BRAIN_MRI_HF_REPO 를 확인하세요."
+        ) from None
+    return Path(downloaded)
 
 
 def _round_polygon(poly) -> list[list[float]]:

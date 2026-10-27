@@ -1,5 +1,5 @@
 /**
- * 학습 등록 폼 — 다중 이미지 드래그 앤 드롭 + NAS 업로드 + study 저장
+ * 학습 등록 폼 — 다중 이미지 드래그 앤 드롭 + Object Storage 업로드 + study 저장
  * scope(탭 패널) 기준으로 초기화한다.
  */
 (function () {
@@ -158,7 +158,7 @@
             if (!btn) return;
             const icon = '<i class="me-1" data-feather="upload"></i>';
             const n = selectedFiles.length;
-            let label = 'NAS 업로드 후 등록';
+            let label = '업로드 후 등록';
             if (n > 0 && isSlideMode()) {
                 label += ' (슬라이드 ' + n + '장, 1건)';
             } else if (n > 0) {

@@ -34,7 +34,7 @@ MAX_PROBLEM_IMAGE_BYTES = 20 * 1024 * 1024
 
 
 class ProblemImageError(Exception):
-    """NAS 에서 문제 영상을 받지 못했다."""
+    """공개 주소에서 문제 영상을 받지 못했다."""
 ALLOWED_MODALITIES = {"xray", "ct", "mri", "common"}
 
 
@@ -304,7 +304,7 @@ def problem_image_paths(row: StudyModel) -> list[str]:
 
 
 def problem_image_url(path: str) -> str:
-    """DB 웹 경로 → NAS 공개 URL. (관리자 화면의 미리보기 주소와 같은 규칙)"""
+    """DB 웹 경로 → Object Storage 공개 URL. (관리자 화면의 미리보기 주소와 같은 규칙)"""
     web_path = path if path.startswith("/") else f"/{path}"
     base = (settings.nas_public_base_url or "").rstrip("/")
     return f"{base}{web_path}" if base else web_path
@@ -316,9 +316,9 @@ async def fetch_problem_image(
     slice_index: int = 0,
 ) -> tuple[bytes, str, str]:
     """
-    문제 영상 한 장을 NAS 공개 주소에서 받아 돌려준다. → (바이트, MIME, 파일 이름)
+    문제 영상 한 장을 Object Storage 공개 주소에서 받아 돌려준다. → (바이트, MIME, 파일 이름)
 
-    브라우저가 NAS 에서 직접 받으면 다른 출처(CORS) 때문에 채점 API 로 다시 보내지 못할 수 있어
+    브라우저가 저장소에서 직접 받으면 다른 출처(CORS) 때문에 채점 API 로 다시 보내지 못할 수 있어
     같은 서버가 대신 받는다. 주소는 study 행에서만 만들고, 요청 값으로 임의 URL 을 받지 않는다.
     """
     row = study_repositories.get_by_idx(db, int(study_idx))
@@ -339,7 +339,7 @@ async def fetch_problem_image(
 
     url = problem_image_url(path)
     if not url.startswith(("http://", "https://")):
-        raise ProblemImageError("NAS_PUBLIC_BASE_URL 이 설정되지 않았습니다.")
+        raise ProblemImageError("이미지 공개 주소(NAS_PUBLIC_BASE_URL)가 설정되지 않았습니다.")
     try:
         async with httpx.AsyncClient(
             verify=settings.nas_verify_ssl,
@@ -348,9 +348,9 @@ async def fetch_problem_image(
         ) as client:
             response = await client.get(url)
     except httpx.HTTPError as exc:
-        raise ProblemImageError(f"NAS 연결 실패: {exc.__class__.__name__}") from exc
+        raise ProblemImageError(f"이미지 연결 실패: {exc.__class__.__name__}") from exc
     if response.status_code != 200:
-        raise ProblemImageError(f"NAS 응답 {response.status_code}")
+        raise ProblemImageError(f"이미지 응답 {response.status_code}")
     content = response.content
     if len(content) > MAX_PROBLEM_IMAGE_BYTES:
         raise ProblemImageError("영상이 너무 큽니다.")

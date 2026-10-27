@@ -10,7 +10,7 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
 - /learning/problem   : 랜덤 학습 문제 1건
-- /learning/problem/{idx}/image : 문제 영상 한 장 (NAS 에서 대신 받아 줌)
+- /learning/problem/{idx}/image : 문제 영상 한 장 (Object Storage 에서 대신 받아 줌)
 - /learning/problem/{idx} : 문제 번호로 1건 (오답노트 '다시 풀기', 정답 숨김)
 - /learning/reviews  : 내 오답노트 목록 (기본: 오답·부분정답)
 - /learning/reviews/{idx} : 오답 상세 + 다시 풀 문제
@@ -50,7 +50,6 @@ from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
 from services.objectStorageServices import StorageNotConfiguredError, StorageUploadError
-from utils.password import hash_password, verify_password
 from utils.qa_sse import qa_events
 from utils.review_sse import review_events
 
@@ -516,7 +515,7 @@ async def learning_problem_image(
 ):
     """
     문제 영상 한 장을 돌려준다.
-    NAS 공개 주소에서 서버가 대신 받아 주므로, 학습자 화면(Vue)이 NAS 의 CORS 설정과 상관없이
+    Object Storage 공개 주소에서 서버가 대신 받아 주므로, 학습자 화면(Vue)이 저장소 CORS 와 상관없이
     영상을 받아 그대로 /learning/roi-grade 에 올릴 수 있다.
     """
     try:
@@ -578,21 +577,10 @@ def login_post(request: Request, body: UserLogin, db: Session = Depends(get_db))
     """학습자 로그인. 성공 시 idx, user_id, user_name, mb_level 을 돌려주고, 학습자 로그인 상태(세션 learner)를 만든다."""
     user = user_service.login(db, body)
 
-    # 개발 확인용 응답. 나중에 제거하세요.
-    debug = {
-        "plain_pw": body.user_pw,
-        "hashed_pw": hash_password(body.user_pw),
-        "db_user_pw": user.user_pw if user else None,
-        "pw_match": (
-            verify_password(body.user_pw, user.user_pw)
-            if user and user.user_pw.startswith("$2")
-            else None
-        ),
-    }
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"message": "아이디 또는 비밀번호가 올바르지 않습니다.", **debug},
+            detail={"message": "아이디 또는 비밀번호가 올바르지 않습니다."},
         )
     # 학습자 로그인 상태. 관리자 로그인이 쓰는 session["user"] 와 키를 분리하고 서로 건드리지 않는다.
     # 발표용 최소 방식(2026-10-13 사용자 결정): 이메일 인증 메일 없이, 관리자(팀)가 만든 활성 회원이 로그인에 성공하면
@@ -604,7 +592,6 @@ def login_post(request: Request, body: UserLogin, db: Session = Depends(get_db))
         "user_id": user.user_id,
         "user_name": user.user_name,
         "mb_level": user.mb_level,
-        **debug,
     }
 
 
@@ -678,7 +665,7 @@ async def learning_roi_grade(
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       Object Storage /stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
-    - NAS 가 꺼져 있거나 업로드에 실패해도 채점 결과와 review_node 기록은 남긴다.
+    - Object Storage 가 꺼져 있거나 업로드에 실패해도 채점 결과와 review_node 기록은 남긴다.
       이때 image_saved=false, image_error 에 이유가 들어간다.
     - 포함률(rn_recall), ROI 정확도(rn_iou), 위치 요약(rn_overlay_summary),
       출혈·germinoma 소견(rn_findings), MRI 슬라이스(rn_slice_index)도 같은 행에 넣는다.

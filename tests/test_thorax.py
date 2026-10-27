@@ -227,6 +227,13 @@ def test_without_model_settings_api_answers_503(client, monkeypatch):
     assert "THORAX_PACKAGES" in health["models_error"]
 
 
+def test_health_reports_loaded_when_detector_is_ready(client, detector):
+    """분석이 점수를 낼 수 있는 상태면 health 의 models_loaded 도 true 다."""
+    health = client.get("/api/v1/thorax/health").json()
+    assert health["status"] == "ok"
+    assert health["models_loaded"] is True
+
+
 def test_analyze_returns_same_format_as_brain(client, detector):
     response = client.post("/api/v1/thorax/analyze/screen-roi",
                            files={"image": ("roi.png", chest_png(), "image/png")})

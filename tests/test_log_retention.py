@@ -71,8 +71,18 @@ class LogRetentionTests(unittest.TestCase):
         from logging_setup import LOG_DIR, today_kst
         from main import app
 
-        with TestClient(app, raise_server_exceptions=False) as client:
-            response = client.get("/debug/error")
+        async def boom():
+            raise RuntimeError("테스트용 서버 오류입니다")
+
+        app.add_api_route("/debug/error", boom, methods=["GET"])
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/debug/error")
+        finally:
+            app.router.routes[:] = [
+                route for route in app.router.routes
+                if getattr(route, "path", None) != "/debug/error"
+            ]
 
         self.assertEqual(response.status_code, 500)
         log_file = LOG_DIR / today_kst().isoformat() / "error.log"

@@ -10,10 +10,10 @@ Swagger(/docs)에는 숨긴다 (main.py 에서 include_in_schema=False).
 - /admin/                   : 대시보드 홈
 - /admin/user...            : 회원 목록·가입·수정·삭제, SSE 실시간 갱신
 - /admin/reviews...         : 학습자 ROI 제출 리뷰 조회, SSE
-- /admin/study...           : 학습 문제(스터디) CRUD, NAS 이미지 업로드
+- /admin/study...           : 학습 문제(스터디) CRUD, Object Storage 이미지 업로드
 - /admin/popup...           : 홍보 팝업 CRUD, SSE 실시간 갱신
 - /admin/qa...              : 문의 답변·종료, SSE 실시간 알림
-- /admin/nas/...            : NAS 연결 확인·파일 업로드
+- /admin/nas/...            : Object Storage 연결 확인·파일 업로드
 """
 
 import asyncio
@@ -133,10 +133,7 @@ def index_page(request: Request, db: Session = Depends(get_db)):
         {
             "title": "Dashboard",
             "user": request.session.get("user"),
-            "nas_public_base_url": (
-                    settings.nas_public_base_url
-                    or "https://olleh7531.synology.me/mu_shop/public"
-            ).rstrip("/"),
+            "nas_public_base_url": (settings.nas_public_base_url or "").rstrip("/"),
             "dashboard_stats": stats,
         },
     )
@@ -144,7 +141,7 @@ def index_page(request: Request, db: Session = Depends(get_db)):
 
 @router.get("/dashboard/stats")
 def dashboard_stats(db: Session = Depends(get_db)):
-    """대시보드 카드·차트·최근 풀이 요약. NAS 로그인 없이 빠르게."""
+    """대시보드 카드·차트·최근 풀이 요약."""
     stats = dashboard_service.get_stats(db)
     for item in stats.get("recent_reviews") or []:
         item["rn_image_url"] = _public_image_url(item.get("rn_image"))
@@ -180,7 +177,7 @@ def reviews_page(request: Request, partial: bool = False):
     data = {
         "title": "풀이 이력",
         "nas_public_base_url": (
-                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or ""
         ).rstrip("/"),
     }
     if partial:
@@ -418,7 +415,7 @@ async def user_delete(idx: int, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
-# 학습(study) + NAS
+# 학습(study) + Object Storage
 # ---------------------------------------------------------------------------
 
 
@@ -442,7 +439,7 @@ def study_page(request: Request, partial: bool = False):
 
 @router.get("/study/create")
 def study_create_page(request: Request, partial: bool = False):
-    """학습 등록 폼 (부위·모달리티·병명·이미지·NAS 경로)."""
+    """학습 등록 폼 (부위·모달리티·병명·이미지·저장 경로)."""
     data = {
         "title": "학습 등록",
         "part_labels": ST_PART_LABELS,
@@ -479,7 +476,7 @@ def study_detail_page(idx: int, request: Request, partial: bool = False):
         "modal_labels": ST_MODAL_LABELS,
         "nas_base_path": settings.nas_base_path or "/stylesheets/assets",
         "nas_public_base_url": (
-                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or ""
         ).rstrip("/"),
     }
     if partial:
@@ -546,9 +543,8 @@ async def nas_health() -> NasHealthResponse:
 
 def _to_nas_upload_dir(remote_dir: str) -> str:
     """
-    입력 경로 → File Station 업로드 폴더.
-    /stylesheets/assets  → /web/mu_shop/public/stylesheets/assets
-    /web/mu_shop/public/... 는 그대로 사용.
+    입력 경로 → Object Storage에 넘길 폴더.
+    /stylesheets/assets 처럼 웹 경로를 받고, 예전 전체 경로면 그대로 둔 뒤 저장 서비스가 접두어를 뺀다.
     """
     path = (remote_dir or "").strip().replace("\\", "/") or "/stylesheets/assets"
     if not path.startswith("/"):
@@ -561,7 +557,7 @@ def _to_nas_upload_dir(remote_dir: str) -> str:
 
 def _to_public_image_path(remote_path: str) -> str:
     """
-    NAS 전체 경로 → DB/웹용 상대 경로.
+    저장 경로 → DB/웹용 상대 경로.
     /web/mu_shop/public/stylesheets/assets/a.png
       → /stylesheets/assets/a.png
     """
@@ -673,11 +669,11 @@ async def nas_upload(
         st_disease: str = Form(..., description="병명 (최대 30자)"),
         remote_dir: str = Form(
             default="/stylesheets/assets",
-            description="웹 상대 저장 폴더. 기본값 /stylesheets/assets (NAS에는 /web/mu_shop/public 이 앞에 붙음)",
+            description="웹 상대 저장 폴더. 기본값 /stylesheets/assets. Object Storage 객체 키로 쓴다.",
         ),
 ) -> NasUploadResponse:
     """
-    NAS 업로드 + study 테이블 저장.
+    Object Storage 업로드 + study 테이블 저장.
 
     Swagger에서 st_part / st_modal / st_disease / file 을 입력한다.
     """
@@ -1028,7 +1024,7 @@ def popup_page(request: Request, partial: bool = False):
         "title": "팝업",
         "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
         "nas_public_base_url": (
-                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or ""
         ).rstrip("/"),
     }
     if partial:
@@ -1064,7 +1060,7 @@ def popup_detail_page(idx: int, request: Request, partial: bool = False):
         "popup_idx": idx,
         "nas_popup_path": settings.nas_popup_path or "/stylesheets/assets/popup",
         "nas_public_base_url": (
-                settings.nas_public_base_url or "https://olleh7531.synology.me/mu_shop/public"
+                settings.nas_public_base_url or ""
         ).rstrip("/"),
     }
     if partial:

@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     await task  # cleanup_loop 가 끝날 때까지 기다림
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, swagger_ui_parameters={"withCredentials": True})
 
 
 @app.get("/")
@@ -183,7 +183,7 @@ app.include_router(thorax.router, prefix="/api/v1/thorax", tags=["thorax"])
 # brain_mri: 뇌 MRI 5질환 세그멘테이션(YOLO26s-Seg). CT 와 별개. 앞에 /api/v1 을 붙임
 app.include_router(brain_mri.router, prefix="/api/v1", tags=["brain_mri"])
 # knee: 무릎 MRI 화면 캡처 한 장 분석. 앞에 /api/v1 을 붙임 (POST /api/v1/knee/screen-roi)
-# 모델(torch)은 승인된 조합이 있는 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
+# 모델(torch)은 화면 분석 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
 app.include_router(knee.router, prefix="/api/v1", tags=["knee"])
 
 # knee 학습 채점: 학습자가 그린 ROI 를 AI 가 찾은 ACL 위치와 비교 (POST /learning/roi-grade/knee, prefix 없음)

@@ -59,7 +59,7 @@ class LocationGate:
     reviewed_by: str
 
 
-# 승인된 조합. 비어 있다 = 어떤 조합도 한 장으로 평가하지 않는다.
+# 승인된 조합. 비어 있으면 검수된 보정·성능 근거는 없다. 화면 분석은 그때도 모델이 있는 면의 원래 점수를 학습용으로 낸다.
 APPROVED: dict[tuple[str, str, str], GateRecord] = {}
 APPROVED_LOCATION: dict[tuple[str, str], LocationGate] = {}
 

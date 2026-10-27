@@ -1,7 +1,7 @@
 """
 LOGIN-019-01 수정(사용자 승인 2026-10-13: A·C) 시험 — 서버 로그와 콘솔에 비밀번호가 남지 않는지 확인한다.
 
-A: 공용 오류 처리기(exception_handlers.py)가 로그에 적기 전에 비밀번호 같은 값을 가린다. **응답은 그대로**(사용자 지시: 로그인 응답의 개발용 필드 유지).
+A: 공용 오류 처리기(exception_handlers.py)가 로그에 적기 전에 비밀번호 같은 값을 가린다. 학습자 로그인 실패 응답에는 비밀번호와 해시를 넣지 않는다.
 C: 관리자 로그인(routers/admin.py)의 `print(body)`(입력한 비밀번호가 콘솔로 나감)를 없앤다.
 
 합성 계정·합성 비밀번호만 쓴다(실제 계정·재사용 비밀번호 금지). 로그는 파일이 아니라 **메모리 핸들러**로 잡고, 실제 로그 폴더에는 아무것도 쓰지 않는다.
@@ -266,8 +266,11 @@ class RealLoginLogTests(unittest.TestCase):
         self.assertNotIn(SECRET, self.log.text)
         self.assertIn("/login", self.log.text)
         self.assertIn("401", self.log.text)
-        # 응답은 사용자 지시대로 그대로(개발용 필드 유지). 이 줄이 실패하면 응답을 바꾼 것이다.
-        self.assertEqual(res.json()["detail"]["plain_pw"], SECRET)
+        detail = res.json()["detail"]
+        self.assertEqual(detail["message"], "아이디 또는 비밀번호가 올바르지 않습니다.")
+        self.assertNotIn(SECRET, res.text)
+        for name in ("plain_pw", "hashed_pw", "db_user_pw", "pw_match", "user_pw"):
+            self.assertNotIn(name, detail)
 
     def test_learner_login_unknown_user_and_validation_failure(self):
         res = self.client.post("/login", json={"user_id": "nobody@example.test", "user_pw": SECRET})
@@ -421,9 +424,11 @@ class SourceChecks(unittest.TestCase):
         self.assertNotIn("body :", login)
 
     def test_only_the_approved_shared_files_changed_for_this_fix(self):
-        """승인 범위(A: exception_handlers.py, C: routers/admin.py) 밖의 공용 로그인 코드는 이 수정으로 바뀌지 않았다."""
+        """학습자 로그인 응답에는 비밀번호와 해시를 넣지 않는다."""
         commonness = (self.ROOT / "routers" / "commonness.py").read_text(encoding="utf-8")
-        self.assertIn('"plain_pw": body.user_pw,', commonness)                  # 응답의 개발용 필드는 그대로(사용자 지시)
+        login = commonness[commonness.index("def login_post"):commonness.index("@router.post(\"/learning/roi-grade\")")]
+        for name in ("plain_pw", "hashed_pw", "db_user_pw", "pw_match"):
+            self.assertNotIn(name, login)
         self.assertIn('request.session["learner"]', commonness)
 
 

@@ -97,6 +97,7 @@ class KneeScreenRoiResponse(BaseModel):
     retention: KneeRetention
     latency_ms: int
     models_loaded: bool
+    review_idx: int | None = None
 
 
 class KneeErrorBody(BaseModel):

@@ -34,7 +34,7 @@ from schemas.analyzeSchemas import (
     RoiInfo,
     ScreenRoiResponse,
 )
-from services import nasServices as nas_service_mod
+from services import objectStorageServices as storage_mod
 
 router = APIRouter()
 _thorax_mod: ModuleType | None = None
@@ -65,6 +65,13 @@ async def health() -> HealthResponse:
         return HealthResponse(status="degraded", models_loaded=False, models_error=_thorax_error)
     config = import_module("class.thorax.config")
     service = thorax.detector_service
+    # 화면은 health 의 models_loaded 를 보고 분석을 시작한다.
+    # 분석 주소는 요청 때 모델을 불러서 200을 주므로, health 도 같은 로드를 해 상태를 맞춘다.
+    if not service.ready and config.model_configured():
+        try:
+            service.load()
+        except Exception:
+            pass
     error = service.error
     if not config.model_configured():
         error = import_module("class.thorax.ensemble").NOT_CONFIGURED
@@ -114,14 +121,14 @@ async def _maybe_upload_analysis(
     response_payload: dict,
     overlay_b64: str | None,
 ) -> NasUploadInfo | None:
-    """NAS_UPLOAD_ON_ANALYZE 가 켜져 있으면 원본·overlay·result.json 을 올린다 (뇌 CT와 같은 방식)."""
+    """NAS_UPLOAD_ON_ANALYZE 가 켜져 있으면 원본·overlay·result.json 을 Object Storage에 올린다."""
     if not settings.nas_upload_on_analyze:
         return None
-    svc = nas_service_mod.nas_service
+    svc = storage_mod.storage_service
     if not svc.enabled:
         return NasUploadInfo(
             ok=False,
-            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 NAS 계정 설정이 비어 있습니다.",
+            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 Object Storage 설정이 비어 있습니다.",
         )
     try:
         slim = {

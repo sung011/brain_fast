@@ -79,7 +79,7 @@ class BrainMriApiWithoutModelTests(unittest.TestCase):
 
     def test_missing_model_returns_503_only_for_mri(self) -> None:
         empty = brain_mri.SegmentationService(model_path="")
-        with patch.object(brain_mri, "segmentation_service", empty):
+        with patch.object(brain_mri, "segmentation_service", empty), patch.object(mri_config, "hf_repo", lambda: ""):
             r = self.client.post(
                 "/api/v1/analyze/brain-mri",
                 files={"image": ("a.png", _png_bytes(np.zeros((64, 64), np.uint8)), "image/png")},
@@ -181,6 +181,35 @@ class BrainMriApiWithModelTests(unittest.TestCase):
             self.assertAlmostEqual(got, want, delta=1.0)
         self.assertEqual(len(p["polygon"]), 22)
         self.assertEqual(r.json()["sequence"], "T1")
+
+
+class BrainMriGradeTests(unittest.TestCase):
+    def test_overlapping_box_is_correct(self) -> None:
+        from services.brainMriServices import grade_box
+
+        grade = grade_box(
+            100,
+            100,
+            [{
+                "disease": "glioma",
+                "disease_ko": "신경교종",
+                "confidence": 0.8,
+                "bbox": [20, 20, 60, 60],
+            }],
+            x=0.2,
+            y=0.2,
+            box_w=0.4,
+            box_h=0.4,
+        )
+        self.assertEqual(grade["result"], "정답")
+        self.assertGreaterEqual(grade["iou"], 0.4)
+
+    def test_empty_detection_is_wrong(self) -> None:
+        from services.brainMriServices import grade_box
+
+        grade = grade_box(100, 100, [], x=0.2, y=0.2, box_w=0.4, box_h=0.4)
+        self.assertEqual(grade["result"], "오답")
+        self.assertIsNone(grade["reference_bbox"])
 
 
 if __name__ == "__main__":
