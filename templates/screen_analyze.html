@@ -224,6 +224,29 @@
       cursor: not-allowed;
     }
 
+    /* 부위·촬영면 선택 (무릎 분석 옵션) */
+    .options {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .options select {
+      background: #0b1220;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 13px;
+    }
+    .options .knee-only { display: none; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .options.is-knee .knee-only { display: flex; }
+    .knee-notice { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.5; }
+    .knee-status-tag { font-size: 12px; color: var(--warn); }
+
     /*
       [중요] 화면 공유가 나오는 상자
       - max-height로 높이 제한 → 영상이 더 크면 반드시 스크롤 생김
@@ -531,6 +554,27 @@
           <button id="btnStop" class="secondary" disabled>공유 종료</button>
         </div>
 
+        <div class="options" id="options">
+          <label for="partSelect">부위</label>
+          <select id="partSelect">
+            <option value="brain" selected>뇌 CT</option>
+            <option value="knee">무릎 MRI</option>
+          </select>
+          <span class="knee-only">
+            <label for="planeSelect">촬영면</label>
+            <select id="planeSelect">
+              <option value="sagittal" selected>sagittal (옆면)</option>
+              <option value="coronal">coronal (앞면)</option>
+              <option value="axial">axial (가로면)</option>
+            </select>
+            <label for="scopeSelect">박스 범위</label>
+            <select id="scopeSelect">
+              <option value="roi_crop" selected>영상의 일부(잘라낸 영역)</option>
+              <option value="full_slice">영상 한 장 전체</option>
+            </select>
+          </span>
+        </div>
+
         <div class="status" id="status">Chrome/Edge에서 열어 주세요. (화면 공유 API)</div>
       </div>
 
@@ -592,6 +636,12 @@
         실제 의료 진단이 아니며, 최종 판단은 의사에게 있습니다.
         분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.
       </div>
+      <div class="disclaimer" id="kneeDisclaimer" style="display:none">
+        ※ 무릎 분석은 <strong>한 장짜리 화면 캡처</strong>를 기준으로 하는 학습·연구용 기능입니다.
+        검증을 통과한 조건에서만 점수를 보여 주며, 그 밖의 조건은 "평가하지 않음"으로 표시합니다.
+        점수는 임상적 발병 확률이 아니고 실제 의료 진단이 아니며, 최종 판단은 의사에게 있습니다.
+        올린 영상은 분석 후 저장하지 않습니다.
+      </div>
       </div>
     </section>
   </main>
@@ -647,6 +697,11 @@
     const btnExplain = document.getElementById("btnExplain");
     const btnStop = document.getElementById("btnStop");
     const stageWrap = document.getElementById("stageWrap");
+    const optionsEl = document.getElementById("options");
+    const partSelect = document.getElementById("partSelect");
+    const planeSelect = document.getElementById("planeSelect");
+    const scopeSelect = document.getElementById("scopeSelect");
+    const kneeDisclaimer = document.getElementById("kneeDisclaimer");
 
     // ----- 상태 변수 -----
     let stream = null;          // 화면 공유 스트림 (브라우저가 보내주는 실시간 화면)
@@ -1169,6 +1224,113 @@
       }
     }
 
+    // ----- 무릎 MRI 분석 (POST /api/v1/knee/screen-roi) -----
+    const KNEE_STATUS_TITLES = {
+      evaluated: "무릎 분석 결과",
+      partially_evaluated: "무릎 분석 결과 (일부만 평가)",
+      not_evaluated: "평가하지 않음 — 이 영상 조건은 아직 검증되지 않았습니다",
+    };
+
+    function isKnee() {
+      return partSelect.value === "knee";
+    }
+
+    /** 부위를 바꾸면 무릎 옵션을 보이거나 숨기고, 이전 결과를 지운다. */
+    function applyPart() {
+      const knee = isKnee();
+      optionsEl.classList.toggle("is-knee", knee);
+      kneeDisclaimer.style.display = knee ? "block" : "none";
+      lastAnalysis = null;
+      lastRoiBlob = null;
+      btnExplain.disabled = true;
+      btnExplain.title = knee ? "AI 해설(MedGemma)은 뇌 분석에서만 사용합니다." : "";
+      resultBox.style.display = "none";
+      resultEmpty.style.display = "block";
+      explainBox.style.display = "none";
+      overlayPreview.style.display = "none";
+    }
+    partSelect.addEventListener("change", applyPart);
+
+    async function analyzeKneeViaApi(canvas) {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+      const form = new FormData();
+      form.append("image", blob, "roi.png");
+      form.append("body_part", "knee");
+      form.append("plane", planeSelect.value);
+      form.append("image_scope", scopeSelect.value);
+      form.append("include_overlay", "true");
+
+      const res = await fetch("/api/v1/knee/screen-roi", { method: "POST", body: form });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // 무릎 API 오류는 {code, message} 형식이다(내부 정보 없음).
+        throw new Error(body.message || `무릎 API 오류 (${res.status})`);
+      }
+      return body;
+    }
+
+    function renderKneeFinding(f) {
+      const label = escapeHtml(f.label_ko);
+      if (f.status !== "evaluated" || typeof f.prob !== "number") {
+        return `
+          <div style="font-size:13px;margin-bottom:2px">${label}
+            <strong style="float:right;color:var(--muted)">평가하지 않음</strong>
+          </div>
+          <div class="meta" style="margin-bottom:10px">${escapeHtml(f.reason || "이 조건에서는 평가하지 않습니다.")}</div>`;
+      }
+      const pct = (f.prob * 100).toFixed(0);
+      const band = f.confidence_band === "uncertain" ? " · 판단 어려움 구간" : "";
+      return `
+        <div style="font-size:13px;margin-bottom:2px">${label}
+          <strong style="float:right">${pct}%</strong>
+        </div>
+        <div class="bar"><span style="width:${pct}%"></span></div>
+        <div class="meta" style="margin-bottom:10px">
+          ${escapeHtml(f.score_label || "모델 점수(임상 확률 아님)")}${band}
+          ${f.verdict ? ` · ${escapeHtml(f.verdict)}` : ""}
+        </div>`;
+    }
+
+    function renderKneeAnalysis(out) {
+      resultEmpty.style.display = "none";
+      resultBox.style.display = "block";
+      explainBox.style.display = "none";
+      explainLoading.classList.remove("is-active");
+      explainText.innerHTML = "";
+
+      resultTitle.textContent = KNEE_STATUS_TITLES[out.analysis_status] || "무릎 분석 결과";
+      resultMeta.innerHTML = `
+        <div>이미지 크기: <strong>${out.image.width}×${out.image.height}</strong></div>
+        <div>촬영면 / 범위: <strong>${escapeHtml(out.image.plane)}</strong> / <strong>${escapeHtml(out.image.image_scope)}</strong></div>
+        <div>추론 시간: <strong>${out.latency_ms}ms</strong></div>
+      `;
+
+      let html = "";
+      for (const f of Object.values(out.findings || {})) html += renderKneeFinding(f);
+
+      const vis = out.visualization || {};
+      if (vis.acl_box_note) html += `<div class="knee-notice">${escapeHtml(vis.acl_box_note)}</div>`;
+      if (vis.overlay_note) html += `<div class="knee-notice">${escapeHtml(vis.overlay_note)}</div>`;
+
+      for (const ex of out.explanations || []) {
+        html += `<div class="knee-notice"><strong>${escapeHtml(ex.finding)}</strong> · ${escapeHtml(ex.text)}</div>`;
+      }
+      for (const n of out.notices || []) {
+        html += `<div class="knee-notice">· ${escapeHtml(n.text)}</div>`;
+      }
+      if (out.retention && out.retention.scope_note) {
+        html += `<div class="knee-notice">${escapeHtml(out.retention.scope_note)}</div>`;
+      }
+      probList.innerHTML = html;
+
+      if (vis.overlay_png_base64) {
+        overlayPreview.style.display = "block";
+        overlayPreview.src = "data:image/png;base64," + vis.overlay_png_base64;
+      } else {
+        overlayPreview.style.display = "none";
+      }
+    }
+
     /**
      * [버튼 핸들러] 선택 영역 분석
      * 기능: ROI 자르기 → (데모)분석 → 오른쪽 결과 카드에 표시
@@ -1183,11 +1345,32 @@
 
       btnAnalyze.disabled = true;
       btnExplain.disabled = true;
-      setStatus("앙상블 모델 분석 중…");
       setStep(3);
 
       cropPreview.style.display = "block";
       cropPreview.src = canvas.toDataURL("image/png");
+
+      if (isKnee()) {
+        setStatus("무릎 분석 중…");
+        try {
+          const out = await analyzeKneeViaApi(canvas);
+          lastAnalysis = null;
+          lastRoiBlob = null;
+          renderKneeAnalysis(out);
+          setStatus(
+            out.analysis_status === "not_evaluated"
+              ? `분석 완료 (${out.latency_ms}ms) · 이 조건은 아직 검증되지 않아 평가하지 않았습니다.`
+              : `분석 완료 (${out.latency_ms}ms)`
+          );
+        } catch (err) {
+          setStatus("무릎 분석 실패: " + err.message);
+          console.error(err);
+        }
+        btnAnalyze.disabled = false;
+        return;
+      }
+
+      setStatus("앙상블 모델 분석 중…");
 
       try {
         const out = await analyzeViaApi(canvas);

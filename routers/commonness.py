@@ -5,8 +5,8 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 
 하는 일:
 - /health/db          : DB 연결 확인
-- /login              : 학습자 로그인
-- /popups             : 노출 중이고 노출 기간 안인 홍보 팝업 목록
+- /login              : 학습자 로그인 (성공하면 세션 learner 를 만든다)
+- /popups             : 메인 화면 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
 - /learning/today      : 오늘 부위별 학습 시간·문제 수·정답률
@@ -21,7 +21,7 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 입력값이 잘못되면 exception_handlers 가 422와 로그를 남긴다.
 """
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -468,8 +468,8 @@ def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
 
 
 @router.post("/login")
-def login_post(body: UserLogin, db: Session = Depends(get_db)):
-    """학습자 로그인. 성공 시 idx, user_id, user_name, mb_level 을 돌려준다."""
+def login_post(request: Request, body: UserLogin, db: Session = Depends(get_db)):
+    """학습자 로그인. 성공 시 idx, user_id, user_name, mb_level 을 돌려주고, 학습자 로그인 상태(세션 learner)를 만든다."""
     user = user_service.login(db, body)
 
     # 개발 확인용 응답. 나중에 제거하세요.
@@ -488,6 +488,10 @@ def login_post(body: UserLogin, db: Session = Depends(get_db)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"message": "아이디 또는 비밀번호가 올바르지 않습니다.", **debug},
         )
+    # 학습자 로그인 상태. 관리자 로그인이 쓰는 session["user"] 와 키를 분리하고 서로 건드리지 않는다.
+    # 발표용 최소 방식(2026-10-13 사용자 결정): 이메일 인증 메일 없이, 관리자(팀)가 만든 활성 회원이 로그인에 성공하면
+    # 승인된 학습자로 본다. 이름·이메일·비밀번호·토큰은 세션에 넣지 않는다. 무릎 학습 라우터는 요청마다 DB 회원 존재도 다시 확인한다.
+    request.session["learner"] = {"idx": user.idx, "email_verified": True}
     return {
         "ok": True,
         "idx": user.idx,

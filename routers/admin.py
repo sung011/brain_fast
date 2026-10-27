@@ -85,7 +85,6 @@ def login_page(request: Request):
 
 @router.post("/login")
 def login_post(request: Request, body: UserLogin, db: Session = Depends(get_db)):
-    print(f"body : {body}")
     user = user_service.login(db, body)
 
     if user is None:
