@@ -1,0 +1,397 @@
+/* 회원가입 화면. 블랙 배경 + 민트 강조. 외부 글꼴·이미지·CDN을 쓰지 않는다. */
+:root {
+  color-scheme: dark;
+  --bg: #060a09;
+  --panel: #111916;
+  --line: #2e4038;
+  --ink: #f2f7f4;
+  --dim: #a5b9af;
+  --mint: #63edb1;
+  --danger: #ffaba9;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Segoe UI', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif;
+}
+
+button, input, select { font: inherit; }
+button, a, input, select { outline-offset: 4px; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--mint); }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .45; }
+a { color: var(--mint); text-decoration: none; }
+a:hover { text-decoration: underline; }
+[hidden] { display: none !important; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── 배경 장식(글자 없음): 텅 빈 좌우 여백을 스캔 프레임·궤도·점 격자로 채운다 ── */
+.bg-deco {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    radial-gradient(640px 420px at 0% 100%, #1cb77726, transparent 70%),
+    radial-gradient(640px 420px at 100% 0%, #1cb77722, transparent 70%);
+}
+.bg-deco::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(#63edb133 1px, transparent 1.4px);
+  background-size: 30px 30px;
+  -webkit-mask-image: radial-gradient(ellipse 60% 70% at 50% 50%, transparent 55%, #000 100%);
+  mask-image: radial-gradient(ellipse 60% 70% at 50% 50%, transparent 55%, #000 100%);
+}
+.deco-left, .deco-right { position: absolute; width: min(520px, 42vw); height: auto; }
+.deco-left { left: 0; bottom: 0; }
+.deco-right { right: 0; top: 0; }
+.preview, header, main, footer, .demo-banner { position: relative; z-index: 1; }
+.lsuffix { display: none; }
+.demo-banner .demo-text { display: block; }
+
+/* ── 설계 미리보기 막대 (?preview=1 일 때만 나온다) ── */
+.preview {
+  padding: 12px 32px;
+  background: #18221d;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: #c0d4c8;
+}
+.preview strong { font-weight: 600; }
+.preview button, .preview select {
+  border: 1px solid #4b6457;
+  background: transparent;
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+.preview select { width: auto; height: auto; font-size: 12px; }
+.preview select option { background: #18221d; }
+.preview button[aria-pressed='true'] { background: var(--mint); color: #063622; border-color: var(--mint); }
+
+/* ── 머리말 ── */
+header {
+  max-width: 1440px;
+  margin: auto;
+  padding: 28px 56px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.brand { font-size: 20px; font-weight: 650; letter-spacing: -.8px; display: flex; align-items: center; gap: 12px; }
+.brand svg { width: 32px; height: 32px; }
+.brand em { font-style: normal; color: var(--mint); }
+.login-link { background: none; border: 0; color: var(--dim); font-size: 13px; }
+.login-link span:last-child { color: var(--ink); margin-left: 10px; }
+
+/* ── 본문 2열 ── */
+main {
+  max-width: 1328px;
+  margin: 16px auto 64px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 100px;
+  padding: 0 56px;
+  align-items: start;
+}
+
+.intro { padding-top: 56px; position: sticky; top: 40px; }
+.eyebrow { font-size: 11px; letter-spacing: 2.7px; color: var(--mint); font-weight: 650; }
+.intro h1 { font-size: 45px; font-weight: 400; line-height: 1.36; letter-spacing: -2.5px; margin: 24px 0; word-break: keep-all; }
+.intro h1 span { color: var(--mint); }
+.lead { color: var(--dim); font-size: 14px; line-height: 1.9; max-width: 350px; }
+
+/* 가입 완료(3단계, 미리보기 전용)에서는 소개 제목·설명 대신 환영 문구를 보이고, 반복되는 흐름 문구는 숨긴다. */
+.intro-welcome { display: none; }
+body[data-stage='3'] .intro-welcome { display: block; }
+body[data-stage='3'] .intro-main { display: none; }
+body[data-stage='3'] .flow { display: none; }
+
+/* 서비스 항목: 기본 정보(2단계)에서만 그림·흐름 대신 보인다. 1단계·휴대폰(700px 이하)에서는 숨긴다. */
+.features { display: none; list-style: none; margin: 22px 0 0; padding: 0; gap: 14px; max-width: 420px; }
+.features li { display: grid; grid-template-columns: 40px 1fr; gap: 14px; align-items: start; }
+.ficon { width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 11px; background: #0d1512; display: grid; place-items: center; color: var(--mint); }
+.ficon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.features strong { display: block; font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+.features p { margin: 0; font-size: 12px; color: var(--dim); line-height: 1.65; }
+body[data-stage='2'] .features { display: grid; }
+body[data-stage='2'] .art, body[data-stage='2'] .flow { display: none; }
+@media (max-width: 700px) { body[data-stage='2'] .features { display: none; } }
+/* 창 높이가 낮은 데스크톱: 항목 설명을 접고 제목만 보여 왼쪽이 한 화면에 들어오게 한다. */
+@media (min-width: 981px) and (min-height: 700px) and (max-height: 860px) {
+  .features { margin-top: 14px; gap: 10px; }
+  .features p { display: none; }
+  .features strong { margin: 0; line-height: 40px; }
+}
+
+.art { position: relative; height: 250px; max-width: 420px; margin: 16px -10px 8px; }
+.art::before { content: ''; position: absolute; inset: 25px; background: radial-gradient(ellipse, #1cb77728, transparent 67%); filter: blur(12px); }
+.art svg { position: relative; width: 100%; height: 100%; }
+
+.flow { display: flex; align-items: center; gap: 16px; color: var(--dim); font-size: 12px; }
+.flow i { height: 1px; width: 28px; background: #4b6759; }
+.flow span:first-child { color: var(--mint); }
+.intro small { display: block; line-height: 1.7; color: #8ba597; font-size: 11px; margin-top: 22px; }
+
+/* ── 폼 ── */
+.form-shell { padding: 28px 0 0; max-width: 480px; width: 100%; justify-self: end; }
+
+.steps { display: flex; align-items: center; gap: 13px; margin-bottom: 27px; color: var(--dim); font-size: 12px; }
+.steps i { width: 40px; height: 1px; background: var(--line); }
+.steps span { display: flex; align-items: center; gap: 8px; }
+.steps b { font-weight: 500; width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; }
+.steps .current { color: var(--mint); }
+.steps .current b { background: #173e2b; border-color: var(--mint); }
+
+h2 { font-size: 28px; font-weight: 500; letter-spacing: -1px; margin: 0 0 10px; }
+h2:focus { outline: none; }
+.sub { font-size: 13px; color: var(--dim); line-height: 1.7; margin: 0 0 27px; }
+
+.field { margin-top: 19px; }
+label.title { font-size: 13px; display: block; margin-bottom: 9px; }
+.required { color: var(--mint); margin-left: 3px; }
+
+.inputwrap { position: relative; }
+input:not([type='checkbox']), select {
+  width: 100%;
+  height: 48px;
+  padding: 0 14px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 9px;
+  font-size: 14px;
+}
+input::placeholder { color: #81998c; }
+input:not([type='checkbox']):focus, select:focus { border-color: var(--mint); outline: 2px solid #63edb11c; }
+input[aria-invalid='true'], select[aria-invalid='true'] { border-color: var(--danger); }
+.inputwrap input { padding-right: 62px; }
+#majorOther { margin-top: 10px; }
+select option { background: var(--panel); color: var(--ink); }
+
+.show { position: absolute; right: 10px; top: 12px; background: none; border: 0; color: var(--dim); font-size: 12px; padding: 4px; }
+
+.hint, .error { font-size: 11px; line-height: 1.6; margin: 7px 0 0; overflow-wrap: anywhere; }
+.hint { color: var(--dim); }
+.error { color: var(--danger); }
+.error:empty { display: none; }
+
+.checklist { display: flex; gap: 7px 14px; flex-wrap: wrap; color: #9cb0a4; font-size: 11px; margin-top: 11px; }
+.checklist span::before { content: '○'; margin-right: 4px; }
+.checklist .met { color: var(--mint); }
+.checklist .met::before { content: '✓'; }
+
+.agreements { margin: 25px 0 0; border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.check { display: flex; gap: 9px; align-items: center; font-size: 12px; line-height: 1.6; }
+.check input { width: 16px; height: 16px; accent-color: var(--mint); margin: 0; flex-shrink: 0; }
+.all { padding-bottom: 12px; border-bottom: 1px solid var(--line); margin-bottom: 8px; font-size: 13px; }
+.consent-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; gap: 8px; }
+.consent-row button { font-size: 11px; color: var(--dim); border: 0; background: none; padding: 4px; white-space: nowrap; }
+
+.primary {
+  width: 100%;
+  height: 48px;
+  background: var(--mint);
+  color: #082a1b;
+  border: 0;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 650;
+  margin-top: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+}
+.secondary { background: transparent; border: 1px solid var(--line); color: var(--ink); border-radius: 8px; height: 46px; font-size: 13px; padding: 0 18px; }
+.actions { display: flex; gap: 10px; margin-top: 25px; }
+.actions .primary { margin: 0; flex: 1; }
+.actions .secondary { height: 48px; }
+.footnote { font-size: 11px; color: var(--dim); line-height: 1.7; margin-top: 15px; }
+
+.notice { border: 1px solid #408665; background: #15291e; padding: 12px 14px; border-radius: 8px; font-size: 12px; color: #cfefdc; line-height: 1.7; margin: 17px 0; overflow-wrap: anywhere; }
+
+/* 운영 화면의 상시 고지: 머리말 바로 아래에 두어 첫 화면(모바일 포함)과 모든 단계에서 보이게 한다. */
+.demo-banner { max-width: 1440px; margin: 0 auto; padding: 0 56px; }
+.demo-banner p { margin: 0; border: 1px solid #a98a3d; background: #2a2410; color: #f3e2b3; padding: 12px 16px; border-radius: 8px; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.demo-banner strong { color: #ffe59a; }
+
+/* ── 가입 완료(미리보기 전용) ── */
+.mail-icon { margin: 32px 0 25px; width: 64px; height: 64px; border: 1px solid #458d67; border-radius: 18px; display: grid; place-items: center; color: var(--mint); background: #163724; }
+.mail-icon svg { width: 28px; height: 28px; }
+.email-line { padding: 18px; border: 1px solid var(--line); border-radius: 10px; margin: 20px 0; color: var(--mint); word-break: break-all; }
+
+/* ── 알림·모달·바닥글 ── */
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #233a2c; color: var(--ink); border: 1px solid #4e8161; border-radius: 10px; padding: 14px 20px; font-size: 13px; z-index: 5; max-width: 90%; box-shadow: 0 12px 40px #0008; }
+dialog { background: #152119; color: var(--ink); border: 1px solid #47735c; border-radius: 16px; width: min(440px, 90%); padding: 28px; }
+dialog::backdrop { background: #000a; }
+dialog h2 { font-size: 22px; }
+dialog p { font-size: 13px; color: var(--dim); line-height: 1.9; }
+
+footer { max-width: 1328px; margin: auto; padding: 24px 56px; border-top: 1px solid #24362c; display: flex; justify-content: space-between; gap: 16px; color: #88a292; font-size: 11px; }
+.footlinks { display: flex; gap: 24px; }
+.footlinks button { padding: 0; border: 0; background: none; color: var(--dim); font-size: 11px; }
+
+/* ── 반응형 ── */
+@media (min-width: 1500px) { main { gap: 130px; } }
+
+@media (max-width: 980px) {
+  main { gap: 45px; padding: 0 32px; }
+  header { padding: 24px 32px; }
+  .demo-banner { padding: 0 32px; }
+  .intro h1 { font-size: 36px; }
+  .form-shell { max-width: 440px; }
+  .art { height: 220px; }
+}
+
+/*
+ * 모바일(700px 이하): 웹 화면을 좁힌 모양이 아니라 "가입 폼이 맨 위에서 바로 시작"하는 별도 구성.
+ * 소개는 한 줄 태그라인만 남기고, 안내 띠·설명·힌트를 줄여 폼을 첫 화면으로 끌어올린다.
+ * 입력칸 글자는 16px 이상(iOS 는 그보다 작으면 포커스 때 화면을 자동 확대한다), 터치 대상은 44px 안팎으로 둔다.
+ */
+@media (max-width: 700px) {
+  header { padding: 14px 16px 10px; }
+  .brand { font-size: 17px; gap: 9px; }
+  .brand svg { width: 26px; height: 26px; }
+  .login-link { font-size: 12px; }
+  .login-link .existing { display: none; }
+  .demo-banner { padding: 0 16px; }
+  .demo-banner p { padding: 8px 12px; font-size: 11px; line-height: 1.55; }
+  .demo-banner strong::after { content: ' — '; font-weight: 400; color: #c9b678; }
+  .demo-banner .demo-text { display: inline; }
+  .preview { padding: 10px 16px; gap: 8px; }
+  .preview strong { width: 100%; }
+
+  main { display: block; margin: 0 auto 24px; padding: 0 16px; }
+  /* 소개: 한 줄 태그라인만 (제목만 작게, 나머지는 숨김) */
+  .intro { position: static; padding: 12px 2px 4px; }
+  .intro .eyebrow, .intro .lead, .intro .art, .intro .flow, .intro small, .features { display: none; }
+  .intro h1 { font-size: 15px; font-weight: 500; letter-spacing: -.4px; line-height: 1.5; margin: 0; color: var(--dim); }
+  .intro h1 br { display: none; }
+  .intro-welcome h1 { font-size: 18px; font-weight: 600; color: var(--ink); }
+
+  /* 가입 폼: 카드로 만들어 바로 집중하게 한다 */
+  .form-shell { max-width: none; margin-top: 10px; padding: 18px 16px 22px; background: #0c1512; border: 1px solid var(--line); border-radius: 16px; }
+  .steps { margin-bottom: 14px; }
+  h2 { font-size: 22px; margin-bottom: 2px; }
+  .sub { display: none; }
+  .field { margin-top: 14px; }
+  label.title { margin-bottom: 6px; }
+  .lsuffix { display: inline; margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--dim); }
+  .lsuffix.show-limit { color: var(--mint); font-weight: 600; }
+  .lsuffix.show-limit::after { content: ' · 한도 도달'; }
+  input:not([type='checkbox']), select { height: 46px; font-size: 16px; }
+  .show { top: 10px; }
+  /* 보조 설명 문장은 화면에서는 숨기고 스크린리더에만 남긴다(조건은 라벨 옆 글씨와 오류 문구로 안내). */
+  .hint { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .checklist { gap: 6px 10px; margin-top: 8px; }
+  .agreements { margin-top: 16px; padding: 8px 12px; }
+  .check input { width: 20px; height: 20px; }
+  .check { gap: 10px; }
+  .all { padding-bottom: 8px; margin-bottom: 4px; }
+  .consent-row { padding: 4px 0; min-height: 36px; }
+  .consent-row .check { font-size: 12px; }
+  .consent-row button { padding: 8px 4px; }
+  .primary { height: 48px; margin-top: 16px; }
+  .actions { margin-top: 16px; }
+  .actions .primary { margin: 0; }
+  .actions .secondary { height: 48px; }
+  .footnote { display: none; }
+  footer { padding: 16px 16px 20px; flex-wrap: wrap; line-height: 1.8; }
+}
+
+/*
+ * 데스크톱(넓고 충분히 높은 창): 스크롤 없이 한 화면에 들어오도록 압축한다.
+ * 소개는 왼쪽, 가입 폼은 오른쪽 카드. 간격·입력칸 높이는 창 높이(vh)에 맞춰 줄어든다.
+ * 창이 좁거나(980px 이하) 낮으면(700px 미만) 이 규칙을 쓰지 않고 페이지 전체가 일반 세로 스크롤을 쓴다.
+ * 카드 안 스크롤은 오류 문구가 겹쳐 나올 때를 위한 안전장치일 뿐, 평소에는 생기지 않는다.
+ */
+@media (min-width: 981px) and (min-height: 700px) {
+  :root { --gap: clamp(8px, 1.5vh, 16px); --ih: clamp(38px, 5.3vh, 46px); }
+  body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  .preview { flex: none; }
+  header { flex: none; width: 100%; padding-top: 12px; padding-bottom: 10px; }
+  .demo-banner { flex: none; width: 100%; }
+  .demo-banner p { padding: 7px 14px; }
+  .demo-banner strong::after { content: ' — '; font-weight: 400; color: #c9b678; }
+  .demo-banner .demo-text { display: inline; }
+  main {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    margin: 0 auto;
+    padding: 12px 56px;
+    grid-template-columns: minmax(0, 440px) minmax(0, 480px);
+    justify-content: center;
+    gap: clamp(48px, 6vw, 96px);
+    align-items: stretch;
+  }
+  .intro { position: static; padding-top: clamp(12px, 3vh, 36px); overflow-y: auto; min-height: 0; scrollbar-width: none; }
+  .intro h1 { font-size: clamp(32px, 4.8vh, 44px); margin: clamp(12px, 2.4vh, 24px) 0; }
+  .art { height: clamp(170px, 27vh, 260px); margin-top: 6px; }
+
+  /* 가입 폼은 카드로 만들어 왼쪽 소개와 확실히 구분한다. */
+  .form-shell {
+    max-width: none;
+    justify-self: stretch;
+    align-self: center;
+    max-height: 100%;
+    overflow-y: auto;
+    padding: clamp(16px, 2.8vh, 28px) 30px clamp(16px, 2.6vh, 28px);
+    background: #0c1512;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: 0 18px 60px #0008, inset 0 1px 0 #ffffff08;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+  .steps { margin-bottom: var(--gap); }
+  h2 { font-size: clamp(22px, 3.2vh, 28px); margin-bottom: 4px; }
+  .sub { display: none; }
+  .field { margin-top: var(--gap); }
+  label.title { margin-bottom: 6px; }
+  .lsuffix { display: inline; margin-left: 8px; font-size: 11px; font-weight: 400; color: var(--dim); }
+  /* 글자 수 한도에 닿으면 라벨 옆 "최대 N자"를 강조한다(줄을 추가하지 않아 높이가 변하지 않음). */
+  .lsuffix.show-limit { color: var(--mint); font-weight: 600; }
+  .lsuffix.show-limit::after { content: ' · 한도 도달'; }
+  input:not([type='checkbox']), select { height: var(--ih); }
+  .show { top: calc((var(--ih) - 26px) / 2); }
+  /* 힌트 문장은 화면에서는 숨기고 스크린리더에는 그대로 읽히게 둔다(조건은 라벨 옆 글씨와 오류 문구로 안내). */
+  .hint { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .error { margin-top: 4px; }
+  .checklist { margin-top: 6px; }
+  .agreements { margin-top: var(--gap); padding: 8px 14px; }
+  .all { padding-bottom: 7px; margin-bottom: 4px; }
+  .consent-row { padding: 2px 0; }
+  .primary { height: var(--ih); margin-top: var(--gap); }
+  .actions { margin-top: var(--gap); }
+  .actions .primary { margin: 0; }
+  .actions .secondary { height: var(--ih); }
+  .footnote { display: none; }
+  .notice { margin: var(--gap) 0 0; }
+  footer { flex: none; width: 100%; padding-top: 10px; padding-bottom: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }

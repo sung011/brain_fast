@@ -40,7 +40,7 @@
       <li><code>preprocess.py</code>가 그림 파일이나 DICOM을 모델이 읽는 3채널 이미지로 바꿉니다.</li>
       <li><code>ensemble.py</code>가 출혈 6가지와 germinoma를 각각 두 모델의 평균으로 추정합니다.</li>
       <li><code>localization.py</code>가 높은 확률 부위를 찾아 색 overlay를 만듭니다.</li>
-      <li>설정이 켜져 있으면 원본, overlay, <code>result.json</code>을 NAS에 올립니다.</li>
+      <li>설정이 켜져 있으면 원본, overlay, <code>result.json</code>을 네이버 클라우드 Object Storage에 올립니다.</li>
       <li>이어서 <code>/api/v1/analyze/screen-roi/explain</code>이 <code>medgemma.py</code>와 <code>report_format.py</code>로 한국어 판독문을 만듭니다.</li>
     </ol>
 
@@ -156,7 +156,7 @@
         <dt>받는 것</dt>
         <dd>환경 변수. 예시로 이미지 크기, germinoma 사용 여부, 판독문 방식, 업로드 최대 크기.</dd>
         <dt>하는 일</dt>
-        <dd>값이 없으면 코드 안의 기본값을 씁니다. 앱 전체 DB·NAS 설정은 루트 <code>config.py</code>에 있고, 여기와 역할을 나누었습니다.</dd>
+        <dd>값이 없으면 코드 안의 기본값을 씁니다. 앱 전체 DB·이미지 저장 설정은 루트 <code>config.py</code>에 있고, 여기와 역할을 나누었습니다.</dd>
         <dt>돌려주는 것</dt>
         <dd>다른 뇌 CT 파일이 import 하는 설정 값.</dd>
         <dt>하지 않는 일</dt>
@@ -196,7 +196,7 @@
         <dt>돌려주는 것</dt>
         <dd><code>report_format.py</code>를 거친 최종 판독문.</dd>
         <dt>하지 않는 일</dt>
-        <dd>분류 점수를 대신 만들지 않습니다. 회원 정보나 NAS 업로드를 하지 않습니다.</dd>
+        <dd>분류 점수를 대신 만들지 않습니다. 회원 정보나 이미지 업로드를 하지 않습니다.</dd>
         <dt>헷갈리기 쉬운 점</dt>
         <dd>분류기(ensemble)와 설명문(MedGemma)은 다른 모델입니다. 설명이 자연스러워도 확률 숫자와 다른 말을 하면, 학습자는 숫자를 먼저 봅니다.</dd>
       </dl>

@@ -35,6 +35,7 @@ from exception_handlers import (
 )
 from logging_setup import purge_old_log_folders, setup_logging
 from routers import admin, commonness, brain, brain_mri, user
+from routers import admin, commonness, brain, knee, kneeLearning, user
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -71,32 +72,6 @@ def _maybe_load_brain_models() -> None:
             pass
 
 
-def _maybe_warmup_nas() -> None:
-    """
-    NAS(파일 저장소) 로그인을 미리 해 둔다.
-
-    첫 업로드 때 로그인하느라 느려지지 않게, 서버 시작 직후에
-    백그라운드에서 연결·SID를 미리 받아 둔다.
-    NAS 설정(url/user/password)이 없으면 아무 것도 하지 않는다.
-    """
-    if not settings.nas_url or not settings.nas_user or not settings.nas_password:
-        return
-
-    async def _run() -> None:
-        try:
-            from services.nasServices import nas_service
-
-            client = await nas_service._get_client()
-            await nas_service._ensure_sid(client, force=True)
-        except Exception:
-            pass
-
-    try:
-        asyncio.get_running_loop().create_task(_run())
-    except RuntimeError:
-        pass
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -106,7 +81,7 @@ async def lifespan(app: FastAPI):
     - 로그 설정
     - DB 준비될 때까지 대기
     - 7일 지난 로그 폴더 삭제
-    - (설정되어 있으면) AI 모델·NAS 미리 준비
+    - (설정되어 있으면) AI 모델을 미리 준비
     - 1시간마다 오래된 로그를 지우는 백그라운드 작업 시작
 
     꺼질 때:
@@ -120,7 +95,6 @@ async def lifespan(app: FastAPI):
     wait_for_db()
     purge_old_log_folders()
     _maybe_load_brain_models()
-    _maybe_warmup_nas()
 
     # stop.set() 이 호출되면 cleanup_loop 가 종료된다.
     stop = asyncio.Event()
@@ -206,6 +180,12 @@ app.include_router(brain.router, prefix="/api/v1", tags=["brain"])
 
 # brain_mri: 뇌 MRI 5질환 세그멘테이션(YOLO26s-Seg). CT 와 별개. 앞에 /api/v1 을 붙임
 app.include_router(brain_mri.router, prefix="/api/v1", tags=["brain_mri"])
+# knee: 무릎 MRI 화면 캡처 한 장 분석. 앞에 /api/v1 을 붙임 (POST /api/v1/knee/screen-roi)
+# 모델(torch)은 승인된 조합이 있는 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
+app.include_router(knee.router, prefix="/api/v1", tags=["knee"])
+
+# knee 학습 채점: 학습자가 그린 ROI 를 AI 가 찾은 ACL 위치와 비교 (POST /learning/roi-grade/knee, prefix 없음)
+app.include_router(kneeLearning.router)
 
 # --- 정적 파일: CSS / JS / 이미지 ---
 # HTML에서는 /assets/css/styles.css 처럼 경로를 쓴다.

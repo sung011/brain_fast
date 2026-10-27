@@ -47,7 +47,7 @@ class SlideNameTests(unittest.TestCase):
 class SlideUploadApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(_app())
-        self._nas = admin_router.nas_service_mod.nas_service
+        self._nas = admin_router.storage_mod.storage_service
         self.uploaded: list[str] = []
         self.saved: list[dict] = []
 
@@ -55,7 +55,7 @@ class SlideUploadApiTests(unittest.TestCase):
             self.uploaded.append(name)
             return {"remote_path": f"{remote_dir}/{name}"}
 
-        admin_router.nas_service_mod.nas_service = SimpleNamespace(
+        admin_router.storage_mod.storage_service = SimpleNamespace(
             enabled=True,
             upload_bytes=upload_bytes,
         )
@@ -81,7 +81,7 @@ class SlideUploadApiTests(unittest.TestCase):
         admin_router.study_service.create_study = create_study
 
     def tearDown(self) -> None:
-        admin_router.nas_service_mod.nas_service = self._nas
+        admin_router.storage_mod.storage_service = self._nas
         admin_router.study_service.create_study = self._create
 
     def test_slide_thirty_files_one_row_in_order(self) -> None:
