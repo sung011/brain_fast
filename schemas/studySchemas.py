@@ -188,7 +188,7 @@ def parse_study_image_paths(st_image: str | None) -> list[str] | None:
     study.st_image 를 경로 목록으로 읽는다.
 
     - MRI 슬라이드: JSON 문자열 배열 → list[str]
-    - CT/단일 영상: 경로 문자열 하나 → None (다중 슬라이드 아님)
+    - 파일마다 문제/단일 영상: 경로 문자열 하나 → None (다중 슬라이드 아님)
     """
     raw = (st_image or "").strip()
     if not raw:

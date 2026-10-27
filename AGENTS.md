@@ -69,7 +69,7 @@ brain_fast/
 | `class/thorax/` | 흉부 X-ray | 있음 (팀 모델 연결 전) |
 | `class/abdomen/` | 복부 | 팀원이 추가 |
 | `class/knee/` | 무릎 | 팀원이 추가 |
-| `class/brain_mri/` | 뇌 MRI | 팀원이 추가. `class/brain/`과 섞지 않는다 |
+| `class/brain_mri/` | 뇌 MRI 5질환 (YOLO26s-Seg) | 있음. `class/brain/`과 섞지 않는다 |
 
 패키지 이름은 소문자 영문이다. 학습 부위 코드는 `brain` / `thorax`(별칭 chest) / `abdomen` / `knee` 이고, 영상 종류는 `xray` / `ct` / `mri` 다. NAS 폴더의 `Abdomen`, `Knee` 대문자를 패키지 이름에 쓰지 않는다.
 
@@ -142,7 +142,7 @@ router 함수는 얇게 유지한다. DB 세션과 스키마 객체를 service�
 
 - 업로드 이미지와 ROI를 받아 출혈 6클래스와 germinoma를 추론한다.
 - overlay와 한국어 판독문을 돌려준다.
-- `NAS_UPLOAD_ON_ANALYZE`가 켜져 있으면 원본, overlay, `result.json`을 NAS에 올린다.
+- `NAS_UPLOAD_ON_ANALYZE`가 켜져 있으면 원본, overlay, `result.json`을 네이버 클라우드 Object Storage에 올린다.
 - 흉부·복부·무릎·뇌 MRI는 각각 `class/thorax/`, `class/abdomen/`, `class/knee/`, `class/brain_mri/`에 둔다. 요청받은 부위만 추가한다.
 
 **학습자 API** (prefix 없음)
@@ -150,13 +150,14 @@ router 함수는 얇게 유지한다. DB 세션과 스키마 객체를 service�
 - 로그인, 노출 중 팝업, Q&A 작성·조회·메시지.
 - 의학 용어 사전.
 - 학습 문제 1건, 병명 제출과 다음 문제.
+- 오늘 부위별 학습 시간·문제 수·정답률.
 - ROI 채점과 리뷰 저장.
 
 **관리자** (`/admin`, 세션 로그인)
 
 - 대시보드, 회원, 리뷰, 스터디, 팝업, Q&A.
-- 스터디·팝업 이미지는 NAS에 두고 DB에는 공개 경로만 저장한다.
-- 회원·리뷰·스터디·Q&A 목록은 SSE로 갱신할 수 있다.
+- 스터디·팝업 이미지는 네이버 클라우드 Object Storage에 두고 DB에는 공개 경로만 저장한다.
+- 회원·리뷰·스터디·팝업·Q&A 목록은 SSE로 갱신할 수 있다.
 
 ## 구현 체크리스트
 
@@ -166,7 +167,7 @@ router 함수는 얇게 유지한다. DB 세션과 스키마 객체를 service�
 - URL은 `routers/`, 입출력은 `schemas/`, 규칙은 `services/`, DB는 `repositories/`, 테이블은 `models/`에 두었다.
 - 분석 로직은 그 부위의 `class/<패키지>/`에 두었고, `importlib.import_module("class.<패키지>")`로 호출했다.
 - 관리자 화면이면 `templates/admin/`과 `assets/js/admin/`을 같이 고쳤다.
-- 이미지가 있으면 NAS 경로와 DB에 저장하는 공개 경로를 둘 다 맞췄다.
+- 이미지가 있으면 Object Storage 경로와 DB에 저장하는 공개 경로를 둘 다 맞췄다.
 - 정답·비밀번호·토큰을 학습자 응답이나 로그에 넣지 않았다.
 - 입력 오류는 422, 권한 없음은 관리자 세션 기준, 그 외 서버 오류는 기존 예외 처리로 남긴다.
 - `pytest`와, 화면을 바꿨으면 그 화면의 조회·저장을 확인했다.

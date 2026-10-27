@@ -34,7 +34,7 @@ from schemas.analyzeSchemas import (
     RoiInfo,
     ScreenRoiResponse,
 )
-from services import nasServices as nas_service_mod
+from services import objectStorageServices as storage_mod
 
 router = APIRouter()
 _thorax_mod: ModuleType | None = None
@@ -117,11 +117,11 @@ async def _maybe_upload_analysis(
     """NAS_UPLOAD_ON_ANALYZE 가 켜져 있으면 원본·overlay·result.json 을 올린다 (뇌 CT와 같은 방식)."""
     if not settings.nas_upload_on_analyze:
         return None
-    svc = nas_service_mod.nas_service
+    svc = storage_mod.storage_service
     if not svc.enabled:
         return NasUploadInfo(
             ok=False,
-            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 NAS 계정 설정이 비어 있습니다.",
+            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 Object Storage 설정이 비어 있습니다.",
         )
     try:
         slim = {
