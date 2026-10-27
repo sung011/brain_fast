@@ -9,6 +9,11 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /popups             : 메인 화면 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
+- /learning/problem   : 랜덤 학습 문제 1건
+- /learning/problem/{idx}/image : 문제 영상 한 장 (NAS 에서 대신 받아 줌)
+- /learning/problem/{idx} : 문제 번호로 1건 (오답노트 '다시 풀기', 정답 숨김)
+- /learning/reviews  : 내 오답노트 목록 (기본: 오답·부분정답)
+- /learning/reviews/{idx} : 오답 상세 + 다시 풀 문제
 - /learning/today      : 오늘 부위별 학습 시간·문제 수·정답률
 - /learning/notes     : 로그인 사용자의 오답·부분정답 제출
 - /learning/history   : 로그인 사용자의 제출 전체와 활성 문제 수
@@ -21,7 +26,9 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 입력값이 잘못되면 exception_handlers 가 422와 로그를 남긴다.
 """
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile, status
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -33,7 +40,9 @@ from repositories import studyRepositories as study_repositories
 from schemas.learningSchemas import TodayLearningOut
 from schemas.popupSchemas import PopupPublicOut
 from schemas.qaSchemas import QaCreateBody, QaMessageBody
+from schemas.roiGradeSchemas import parse_rois
 from schemas.userSchemas import UserLogin
+from services import learningNoteServices as learning_note_service
 from services import learningServices as learning_service
 from services import popupServices as popup_service
 from services import qaServices as qa_service
@@ -434,6 +443,103 @@ def learning_problem(
     return {"ok": True, "problem": _problem_payload(row)}
 
 
+@router.get("/learning/problems")
+def learning_problems(
+        st_part: str | None = None,
+        st_modal: str | None = None,
+        user_idx: int | None = Query(default=None, description="있으면 내 최근 풀이 결과(정답·부분정답·오답)를 붙인다"),
+        limit: int = Query(200, ge=1, le=500),
+        db: Session = Depends(get_db),
+):
+    """
+    케이스 목록(화면 흐름도 13). 부위·영상 종류에 맞는 문제를 등록 순서대로 돌려준다.
+    정답 병명(st_disease)과 영상 경로는 넣지 않는다. 문제를 고르면 GET /learning/problem/{idx} 로 연다.
+    예) /learning/problems?st_part=chest&st_modal=xray&user_idx=3
+    """
+    try:
+        result = learning_service.list_problems(
+            db, st_part=st_part, st_modal=st_modal, user_idx=user_idx, limit=limit
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return {"ok": True, **result}
+
+
+@router.get("/learning/problem/{study_idx}")
+def learning_problem_by_idx(study_idx: int, db: Session = Depends(get_db)):
+    """
+    문제 번호로 1건. 오답노트의 '다시 풀기'에 쓴다. 정답(st_disease)은 숨긴다.
+    삭제·비활성 문제면 404.
+    """
+    row = learning_service.get_problem(db, study_idx)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="학습 문제를 찾을 수 없습니다.")
+    return {"ok": True, "problem": _problem_payload(row)}
+
+
+@router.get("/learning/reviews")
+def learning_reviews(
+        user_idx: int = Query(..., description="로그인 사용자 idx"),
+        solution: str | None = Query(
+            None, description="결과 코드 C(정답)·H(부분정답)·W(오답)를 쉼표로. all 이면 전체. 기본 W,H"
+        ),
+        limit: int = Query(50, ge=1, le=200),
+        db: Session = Depends(get_db),
+):
+    """내 오답노트 목록. 최신순. 기본은 오답·부분정답만."""
+    try:
+        solutions = review_node_service.parse_solutions(solution)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    items = review_node_service.list_for_learner(db, user_idx, solutions=solutions, limit=limit)
+    return {"ok": True, "count": len(items), "items": items}
+
+
+@router.get("/learning/reviews/{review_idx}")
+def learning_review_detail(
+        review_idx: int,
+        user_idx: int = Query(..., description="로그인 사용자 idx. 본인 기록만 볼 수 있다"),
+        db: Session = Depends(get_db),
+):
+    """오답 상세. problem 이 있으면 그 문제를 다시 풀 수 있다 (정답 제외)."""
+    item = review_node_service.get_for_learner(db, review_idx, user_idx)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="풀이 기록을 찾을 수 없습니다.")
+    return {"ok": True, "review": item}
+
+
+@router.get("/learning/problem/{study_idx}/image")
+async def learning_problem_image(
+        study_idx: int,
+        slice_index: int = Query(0, ge=0, description="MRI 슬라이스 순번(0부터). 단일 영상은 0"),
+        db: Session = Depends(get_db),
+):
+    """
+    문제 영상 한 장을 돌려준다.
+    NAS 공개 주소에서 서버가 대신 받아 주므로, 학습자 화면(Vue)이 NAS 의 CORS 설정과 상관없이
+    영상을 받아 그대로 /learning/roi-grade 에 올릴 수 있다.
+    """
+    try:
+        content, media_type, filename = await learning_service.fetch_problem_image(
+            db, study_idx, slice_index
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except learning_service.ProblemImageError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, max-age=600",
+            # 한글 파일 이름은 헤더(latin-1)에 그대로 못 넣으므로 RFC 5987 형식으로 보낸다
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename)}",
+        },
+    )
+
+
 @router.post("/learning/submit")
 def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
     """
@@ -540,10 +646,23 @@ async def learning_roi_grade(
             ),
         ),
         st_part: str | None = Form(
-            None, description="다음 문제 부위. 없으면 study 행 값 사용"
+            None,
+            description=(
+                    "부위(brain, chest 또는 1~4). 다음 문제와 채점 모델 선택에 쓴다. "
+                    "study_idx가 있으면 study 행 값이 우선"
+            ),
         ),
         st_modal: str | None = Form(
-            None, description="다음 문제 영상 종류. 없으면 study 행 값 사용"
+            None,
+            description="영상 종류(xray, ct, mri 또는 1~3). study_idx가 있으면 study 행 값이 우선",
+        ),
+        rois: str | None = Form(
+            None,
+            description=(
+                    "흉부 X-ray 전용. 그린 ROI 여러 개를 JSON 배열로. "
+                    '예: [{"roi_type":"box","x":0.1,"y":0.2,"width":0.2,"height":0.3}]. '
+                    "있으면 의심 부위마다 따로 채점한다. 뇌는 쓰지 않는다"
+            ),
         ),
 ):
     """
@@ -554,9 +673,13 @@ async def learning_roi_grade(
     - MRI(st_image JSON 배열)는 study_idx + slice_index 또는 image_path로
       제출 슬라이스를 고른 뒤, 올린 image/좌표로 채점한다.
     - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
+    - 흉부(st_part=2) X-ray 문제는 흉부 모델로 채점한다. 흉부 모델이 준비되지 않았으면 503.
+      rois 로 ROI 여러 개를 보내면 의심 부위마다 따로 채점하고 targets·found_count 를 돌려준다.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       Object Storage /stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
+    - NAS 가 꺼져 있거나 업로드에 실패해도 채점 결과와 review_node 기록은 남긴다.
+      이때 image_saved=false, image_error 에 이유가 들어간다.
     - 포함률(rn_recall), ROI 정확도(rn_iou), 위치 요약(rn_overlay_summary),
       출혈·germinoma 소견(rn_findings), MRI 슬라이스(rn_slice_index)도 같은 행에 넣는다.
     - user_idx + study_idx 를 넣으면 제출 이력이 남아
@@ -570,6 +693,15 @@ async def learning_roi_grade(
             slice_index=slice_index,
             image_path=image_path,
         )
+        grade_part, grade_modal = learning_service.resolve_roi_grade_target(
+            db,
+            study_idx=study_idx,
+            st_part=st_part,
+            st_modal=st_modal,
+        )
+        roi_list = parse_rois(rois)
+        # 정답 박스가 있는 문제면 AI 대신 그 박스로 채점한다 (흉부만. 지금은 칸이 없어 늘 None)
+        answer_boxes = learning_service.get_answer_boxes(db, study_idx)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -591,6 +723,10 @@ async def learning_roi_grade(
             cy=cy,
             radius=radius,
             include_overlay=include_overlay,
+            st_part=grade_part,
+            st_modal=grade_modal,
+            rois=roi_list,
+            answer_boxes=answer_boxes,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -618,25 +754,24 @@ async def learning_roi_grade(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except StorageNotConfiguredError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=str(exc),
-        ) from exc
-    except StorageUploadError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"이미지 업로드 실패: {exc}",
-        ) from exc
     except Exception as exc:
+        # DB 오류 내용은 응답에 넣지 않는다 (서버 로그에는 예외 처리기가 남긴다)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"리뷰 저장 실패: {exc}",
+            detail="채점 기록을 저장하지 못했습니다. 잠시 후 다시 제출해 주세요.",
         ) from exc
     finally:
         result.pop("_review_png", None)
 
     result.update(saved)
+    # 제출한 뒤에만 정답 병명을 보여 준다 (문제 화면에서는 숨김)
+    if study_idx is not None:
+        answered = study_repositories.get_by_idx(db, int(study_idx))
+        result["expected_disease"] = answered.st_disease if answered else None
+    # 정답(흉부는 소견)으로 고른 학습 해설. 정답을 보여 준 뒤라 함께 돌려줘도 된다 (RAG 연결 전에는 흉부 고정 해설)
+    result["learning_note"] = learning_note_service.get_learning_note(
+        grade_part, result.get("expected_disease"), result.get("targets")
+    )
 
     await review_events.publish(
         "review_created",

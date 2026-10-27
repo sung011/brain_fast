@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class FindingItem(BaseModel):
-    """단일 출혈 유형별 분류 점수."""
+    """단일 소견(출혈 유형, 흉부 소견 등)별 분류 점수."""
     label: str
     label_ko: str
     score: float = Field(ge=0.0, le=1.0)
@@ -34,7 +34,7 @@ class ClassificationResult(BaseModel):
     confidence: float
     findings: list[FindingItem]
     probs: list[float] = Field(description="CLASSES 순서의 원시 확률")
-    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma")
+    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma | thorax")
 
 
 class NasUploadInfo(BaseModel):

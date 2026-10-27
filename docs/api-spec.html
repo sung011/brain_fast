@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>학습자 API 명세</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 52rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.25rem; margin: 2.4rem 0 0.6rem; border-bottom: 2px solid #d5dee8; padding-bottom: 0.2rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    pre { background: #1b2430; color: #e8eef4; padding: 0.8rem 1rem; border-radius: 8px; overflow-x: auto; font-size: 0.88em; }
+    pre code { background: none; color: inherit; padding: 0; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    .method { display: inline-block; font-weight: 700; font-size: 0.85em; padding: 0.05rem 0.45rem; border-radius: 4px; color: #fff; background: #1a6b73; margin-right: 0.3rem; }
+    .method.post { background: #8a5a12; }
+    table { width: 100%; border-collapse: collapse; background: #fff; margin: 0.6rem 0; font-size: 0.93em; }
+    th, td { border: 1px solid #d5dee8; padding: 0.4rem 0.55rem; text-align: left; vertical-align: top; }
+    th { background: #e8eef4; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>학습자 화면(Vue)이 쓰는 API</h1>
+    <p class="lead">프론트 담당이 이 문서만 보고 화면을 붙일 수 있게, 주소·보내는 값·돌아오는 값·오류를 한곳에 모았습니다. 실제로 호출해 보려면 서버를 켜고 <code>/docs</code>(FastAPI 자동 문서)를 열면 됩니다.</p>
+    <div class="note">
+      <p><strong>공통 규칙</strong></p>
+      <ul>
+        <li>성공하면 대부분 <code>{"ok": true, ...}</code>입니다. 실패하면 <code>{"detail": "한국어 메시지"}</code>이고, 화면에는 <code>detail</code>을 그대로 보여 주면 됩니다.</li>
+        <li>입력 형식이 틀리면 422, 조건이 맞지 않으면 400, 없으면 404, 모델이 아직 없으면 503입니다.</li>
+        <li>부위 <code>st_part</code>: <code>1</code>=뇌, <code>2</code>=흉부, <code>3</code>=복부, <code>4</code>=무릎 (영문 <code>brain</code>, <code>chest</code>… 도 받음). 영상 <code>st_modal</code>: <code>1</code>=X-ray, <code>2</code>=CT, <code>3</code>=MRI (<code>xray</code>, <code>ct</code>, <code>mri</code> 도 받음).</li>
+        <li>지금은 로그인 후 받은 <code>idx</code>를 화면이 <code>user_idx</code>로 보냅니다. 세션 방식으로 바꿀지는 팀 회의 안건입니다.</li>
+        <li>분석·채점 결과는 학습용 보조이고 진단이 아닙니다. 응답의 <code>disclaimer</code> 문구를 화면에 함께 보여 줍니다.</li>
+      </ul>
+    </div>
+
+    <h2>1. 로그인</h2>
+    <article>
+      <h3><span class="method post">POST</span><code>/login</code></h3>
+      <p>보내는 값(JSON): <code>user_id</code>, <code>user_pw</code></p>
+      <p>성공: <code>{"ok": true, "idx": 3, "user_id": "...", "user_name": "...", "mb_level": 1}</code></p>
+      <p>실패 401: "아이디 또는 비밀번호가 올바르지 않습니다." — 어느 쪽이 틀렸는지는 일부러 알려 주지 않습니다.</p>
+    </article>
+
+    <h2>2. 아이디·비밀번호 찾기</h2>
+    <article>
+      <h3><span class="method post">POST</span><code>/find-id</code></h3>
+      <p>보내는 값: <code>user_name</code>(1~10자), <code>user_birth</code>(<code>YYYY-MM-DD</code>)</p>
+      <p>성공: <code>{"ok": true, "user_id": "le***@example.com", "user_ids": [...]}</code> — 아이디는 앞 두 글자만 보이게 가립니다. 여러 개면 <code>user_id</code>는 <code>null</code>이고 <code>user_ids</code>를 봅니다.</p>
+      <p>오류: 404 일치하는 회원 없음, 429 짧은 시간에 너무 많이 시도함(10분 기준).</p>
+    </article>
+    <article>
+      <h3><span class="method post">POST</span><code>/find-pw/verify</code> → <code>/find-pw</code></h3>
+      <p>1단계 verify: <code>user_name</code>, <code>user_birth</code>, <code>user_id</code>(최대 30자)로 본인 확인. 성공하면 <code>{"ok": true}</code>.</p>
+      <p>2단계 find-pw: 위 세 값 + <code>user_pw</code>, <code>user_pw_confirm</code>(4~72자). 성공하면 <code>{"ok": true, "message": "비밀번호가 변경되었습니다."}</code>.</p>
+      <p>오류: 400 두 비밀번호 불일치 등, 404, 429.</p>
+    </article>
+
+    <h2>3. 문제 받기</h2>
+    <article>
+      <h3><span class="method">GET</span><code>/learning/problem?st_part=2&amp;st_modal=1&amp;user_idx=3</code></h3>
+      <p>조건에 맞는 문제 1개를 무작위로 줍니다. <code>user_idx</code>를 주면 이미 푼 문제는 빼고 고릅니다.</p>
+      <p>성공: <code>{"ok": true, "problem": {"idx": 12, "st_part": "2", "st_modal": "1", "st_image": "/stylesheets/..."}}</code> — 정답 병명은 들어 있지 않습니다.</p>
+      <p>404: 풀 문제가 더 없음.</p>
+    </article>
+    <article>
+      <h3><span class="method">GET</span><code>/learning/problems?st_part=2&amp;st_modal=1&amp;user_idx=3</code></h3>
+      <p>케이스 목록(화면 흐름도 13). 그 부위·영상 종류의 문제를 등록 순서대로 줍니다. 정답 병명과 영상 경로는 넣지 않습니다.</p>
+      <p>성공: <code>{"ok": true, "count": 24, "solved_count": 3, "unsolved_count": 21, "items": [...]}</code></p>
+      <p>항목: <code>idx</code>(문제 번호), <code>number</code>(화면용 CASE 번호, 1부터), <code>st_part</code>, <code>st_modal</code>, <code>solved</code>, <code>last_solution</code>(C/H/W), <code>last_solution_label</code>, <code>last_solved_at</code>. <code>user_idx</code>가 없으면 모두 안 푼 문제로 옵니다. <code>limit</code> 기본 200(최대 500).</p>
+      <p>오류: 400 부위·영상 값이 잘못됨.</p>
+    </article>
+    <article>
+      <h3><span class="method">GET</span><code>/learning/problem/{study_idx}</code></h3>
+      <p>번호로 문제 1개. 오답노트의 "다시 풀기"에 씁니다. 삭제된 문제면 404.</p>
+    </article>
+    <article>
+      <h3><span class="method">GET</span><code>/learning/problem/{study_idx}/image</code></h3>
+      <p>문제 영상 파일 자체를 돌려줍니다(PNG 등). 서버가 NAS에서 대신 받아 주므로 CORS 걱정 없이 <code>&lt;img src&gt;</code>에 바로 쓰거나, 받아서 그대로 채점에 올리면 됩니다. MRI는 <code>?slice_index=0</code>처럼 장 번호를 붙입니다.</p>
+      <p>오류: 404 문제 없음, 502 NAS에서 못 받음.</p>
+    </article>
+
+    <h2>4. ROI 채점 (가장 중요)</h2>
+    <article>
+      <h3><span class="method post">POST</span><code>/learning/roi-grade</code> <small>(multipart/form-data)</small></h3>
+      <table>
+        <tr><th>필드</th><th>필수</th><th>설명</th></tr>
+        <tr><td><code>image</code></td><td>예</td><td>문제 영상 파일 그대로 (위 image 주소에서 받은 것)</td></tr>
+        <tr><td><code>roi_type</code></td><td>예</td><td><code>box</code> 또는 <code>circle</code></td></tr>
+        <tr><td><code>x</code>, <code>y</code>, <code>width</code>, <code>height</code></td><td>box면</td><td>왼쪽 위 좌표와 크기</td></tr>
+        <tr><td><code>cx</code>, <code>cy</code>, <code>radius</code></td><td>circle이면</td><td>원 중심과 반지름</td></tr>
+        <tr><td><code>normalized</code></td><td>아니오</td><td>기본 <code>true</code> = 좌표가 이미지 대비 0~1. <code>false</code>면 픽셀</td></tr>
+        <tr><td><code>study_idx</code>, <code>user_idx</code></td><td>권장</td><td>있으면 풀이 기록이 남고 오답노트에 들어갑니다</td></tr>
+        <tr><td><code>rois</code></td><td>흉부만</td><td>그린 ROI 여러 개를 JSON 문자열로. 예: <code>[{"roi_type":"box","x":0.1,"y":0.2,"width":0.2,"height":0.3},{"roi_type":"circle","cx":0.7,"cy":0.6,"radius":0.08}]</code> (최대 10개). 있으면 의심 부위마다 따로 채점합니다. 이때도 위의 단일 필드(마지막 ROI)는 함께 보냅니다</td></tr>
+        <tr><td><code>slice_index</code> / <code>image_path</code></td><td>MRI만</td><td>제출한 장 번호 또는 경로</td></tr>
+        <tr><td><code>include_overlay</code></td><td>아니오</td><td>기본 <code>true</code>. 정답 부위를 칠한 그림을 같이 받음</td></tr>
+      </table>
+      <p><strong>공통 응답</strong></p>
+      <table>
+        <tr><th>필드</th><th>뜻</th></tr>
+        <tr><td><code>result</code></td><td><code>정답</code> / <code>부분정답</code> / <code>오답</code></td></tr>
+        <tr><td><code>iou</code>, <code>recall</code>, <code>precision</code></td><td>그린 영역과 정답 부위가 겹친 정도(0~1)</td></tr>
+        <tr><td><code>overlay_png_base64</code></td><td>정답 부위를 칠한 PNG. <code>data:image/png;base64,</code>를 앞에 붙여 표시</td></tr>
+        <tr><td><code>overlay_summary</code></td><td>정답 부위 한 줄 설명</td></tr>
+        <tr><td><code>abnormality_bbox</code>, <code>user_roi_bbox</code></td><td>정답 부위·내 ROI를 감싸는 박스(0~1과 픽셀 둘 다)</td></tr>
+        <tr><td><code>classification</code></td><td>모델이 본 소견 점수. <code>task</code>가 <code>hemorrhage</code>(뇌)·<code>thorax</code>(흉부)</td></tr>
+        <tr><td><code>expected_disease</code></td><td>문제 정답 병명. 제출한 뒤에만 옵니다</td></tr>
+        <tr><td><code>review_idx</code>, <code>rn_solution</code></td><td>저장된 풀이 번호와 결과 코드(C/H/W). 오답노트 링크에 씀</td></tr>
+        <tr><td><code>image_saved</code>, <code>image_error</code></td><td>NAS 저장 성공 여부. 실패해도 채점·기록은 남음</td></tr>
+        <tr><td><code>next</code></td><td>다음 문제(없으면 <code>null</code>)</td></tr>
+        <tr><td><code>disclaimer</code></td><td>면책 문구</td></tr>
+      </table>
+      <p><strong>흉부에만 더 오는 값</strong></p>
+      <table>
+        <tr><th>필드</th><th>뜻</th></tr>
+        <tr><td><code>targets</code></td><td>의심 부위 목록. 하나마다 <code>x, y, width, height</code>(0~1), <code>findings</code>(소견 이름들), <code>confidence</code>, <code>found</code>(찾음), <code>near</code>(근처), <code>iou</code>, <code>recall</code></td></tr>
+        <tr><td><code>target_count</code>, <code>found_count</code></td><td>"의심 부위 N곳 중 M곳을 찾았습니다"에 씀</td></tr>
+        <tr><td><code>too_wide</code></td><td><code>true</code>면 다 찾았지만 너무 넓게 그려 부분정답 처리됨</td></tr>
+        <tr><td><code>target_source</code></td><td><code>ai</code> = 모델 결과로 채점("AI가 찾은 부위 (참고)"로 표시), <code>dataset</code> = 의사 정답 박스로 채점("정답 병변"으로 표시)</td></tr>
+        <tr><td><code>learning_note</code></td><td>정답으로 고른 학습 해설. <code>kind</code>(<code>finding</code> 흉부 소견 / <code>disease</code> 병명 — 화면 제목이 "소견 해설"/"병명 해설"로 바뀜), <code>name</code>, <code>name_en</code>, <code>summary</code>(이 소견은), <code>appearance</code>(판독 포인트), <code>locations</code>(이 문제의 의심 부위 위치, 예: "하부-환자 우측"), <code>case_summary</code>(채점한 의심 부위로 만든 "이 영상에서는" 문장 — 위치·개수·크기·한쪽/양쪽), <code>related</code>(감별할 질환), <code>confirm</code>(확인하려면 — 원인 질환을 확인하는 검사), <code>confirm_note</code>(X-ray 로는 원인 질환을 확진할 수 없다는 안내), <code>combinations</code>(다른 소견과 같이 보이면), <code>next_steps</code>(이렇게 보이면 — <code>sign</code> 보이는 것, <code>suspect</code> 의심, <code>next</code> 다음 검사, <code>evidence</code>, <code>source</code>{title, url}. 학회 진료지침·용어집으로 확인한 줄만 넣고 줄마다 출처를 단다), <code>pitfall</code>, <code>references</code>, <code>disclaimer</code>, <code>source</code>(<code>static</code> 고정 해설 / <code>rag</code> 의학용어 사전). 빈 칸은 빈 목록·빈 문자열. 해설이 없으면 <code>null</code></td></tr>
+      </table>
+      <p>오류: 400 좌표·rois 형식 오류, 503 그 부위 모델이 아직 서버에 없음, 502 기록 저장 실패.</p>
+    </article>
+
+    <h2>5. 병명 제출</h2>
+    <article>
+      <h3><span class="method post">POST</span><code>/learning/submit</code></h3>
+      <p>보내는 값(JSON): <code>study_idx</code>, <code>answer</code>(병명), <code>st_part</code>, <code>st_modal</code>, <code>exclude_idxs</code>, <code>user_idx</code></p>
+      <p>성공: <code>{"ok": true, "correct": true, "expected": "흉막삼출", "next": {...} | null, ...}</code></p>
+    </article>
+
+    <h2>6. 오답노트</h2>
+    <article>
+      <h3><span class="method">GET</span><code>/learning/reviews?user_idx=3&amp;solution=W,H</code></h3>
+      <p>내 풀이 목록(최신순). <code>solution</code>: <code>C</code>정답·<code>H</code>부분정답·<code>W</code>오답을 쉼표로, <code>all</code>이면 전부. 기본 <code>W,H</code>. <code>limit</code> 기본 50(최대 200).</p>
+      <p>항목: <code>review_idx</code>, <code>study_idx</code>, <code>st_part</code>/<code>st_part_label</code>, <code>st_modal</code>/<code>st_modal_label</code>, <code>disease</code>, <code>solution</code>/<code>solution_label</code>, <code>image_url</code>(내 ROI가 그려진 제출 이미지), <code>created_at</code></p>
+    </article>
+    <article>
+      <h3><span class="method">GET</span><code>/learning/reviews/{review_idx}?user_idx=3</code></h3>
+      <p>위 항목 + <code>problem</code>(다시 풀 수 있으면 문제 정보, 삭제된 문제면 <code>null</code> → "다시 풀기" 비활성). 다른 사람 기록이면 404.</p>
+    </article>
+
+    <h2>7. 화면 공유 분석 (흉부)</h2>
+    <article>
+      <h3><span class="method">GET</span><code>/api/v1/thorax/health</code></h3>
+      <p><code>status</code>(<code>ok</code>/<code>degraded</code>), <code>models_loaded</code>, <code>models_error</code>. 흉부 모델은 첫 요청 때 불러오므로 처음에는 <code>degraded</code>가 정상입니다.</p>
+    </article>
+    <article>
+      <h3><span class="method post">POST</span><code>/api/v1/thorax/analyze/screen-roi</code> <small>(multipart)</small></h3>
+      <p>보내는 값: <code>image</code>(최대 5MB), <code>modality</code>, <code>include_overlay</code></p>
+      <p>응답은 뇌 CT <code>/api/v1/analyze/screen-roi</code>와 같은 모양입니다: <code>classification.findings</code>(소견별 점수), <code>overlay_png_base64</code>, <code>overlay_summary</code>(예: "흉막삼출: 하부-환자 우측 0.28"), <code>disclaimer</code>, <code>latency_ms</code>.</p>
+      <p>헷갈리기 쉬운 점: 흉부 점수는 확률(%)이 아니라 그 소견 박스의 가장 높은 신뢰도입니다. 0.3도 "찾았다"는 뜻입니다. 좌우는 <strong>환자 기준</strong>(화면 왼쪽 = 환자 오른쪽)입니다. 흉부 판독문(<code>/explain</code>)은 아직 없습니다.</p>
+      <p>오류: 413 너무 큼, 400 이미지가 아님, 503 모델 준비 중.</p>
+    </article>
+
+    <h2>이 문서가 다루지 않는 것</h2>
+    <ul>
+      <li>관리자(<code>/admin</code>) 주소. 관리자 화면은 서버가 직접 HTML을 그립니다.</li>
+      <li>팝업·Q&amp;A·용어 사전 등 흉부와 관계없는 학습자 API. 서버 <code>/docs</code>에서 확인합니다.</li>
+      <li>서버 설정. <a href="thorax-setup.html">흉부 모델 서버 설정</a>을 보세요.</li>
+    </ul>
+  </main>
+</body>
+</html>

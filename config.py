@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     nas_public_base_url: str = "https://kr.object.ncloudstorage.com"
     # 분석 완료 시 원본·overlay·result.json 자동 업로드
     nas_upload_on_analyze: bool = False
+    # 의학용어 사전 CSV(팀 RAG 자료, 칸: en, kr, definition, definition_kr). 비어 있으면 쓰지 않는다.
+    # 채점 해설의 "이 소견은"(정의)을 이 사전의 한글 정의로 채운다. 파일은 저장소에 넣지 않는다.
+    glossary_csv_path: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",

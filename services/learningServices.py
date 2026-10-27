@@ -1,6 +1,9 @@
+import httpx
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
+
+from config import settings
 
 from models.medicalTermsModel import MedicalTermsModel
 from models.reviewNodeModel import ReviewNodeModel
@@ -18,6 +21,20 @@ from schemas.studySchemas import (
 KST = timezone(timedelta(hours=9))
 
 ALLOWED_BODY_PARTS = {"brain", "chest", "abdomen", "knee", "other"}
+
+# 문제 영상 대신 받기 (/learning/problem/{idx}/image)
+PROBLEM_IMAGE_TYPES = {
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "bmp": "image/bmp",
+}
+MAX_PROBLEM_IMAGE_BYTES = 20 * 1024 * 1024
+
+
+class ProblemImageError(Exception):
+    """NAS 에서 문제 영상을 받지 못했다."""
 ALLOWED_MODALITIES = {"xray", "ct", "mri", "common"}
 
 
@@ -36,7 +53,7 @@ def get_by_body_part(
 
     modal: str | None = None
     if modality is not None and modality.strip():
-        modal = modality.strip().lower()
+        modal = modality.strip().lower().replace("-", "")  # 화면은 X-ray 로 보낸다
         if modal not in ALLOWED_MODALITIES:
             raise ValueError(
                 "영상 종류(type)는 xray, ct, mri, common 중 하나여야 합니다."
@@ -100,6 +117,45 @@ def get_random_problem(
             db, exclude_idxs=exclude_idxs, user_idx=user_idx
         ),
     )
+
+
+def list_problems(
+    db: Session,
+    *,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+    user_idx: int | None = None,
+    limit: int = 200,
+) -> dict:
+    """케이스 목록(화면 흐름도 13). 정답 병명은 넣지 않는다. user_idx 가 있으면 내 최근 결과를 붙인다."""
+    from services.reviewNodeServices import solution_label
+
+    rows = study_repositories.list_active(
+        db,
+        st_part=resolve_st_part(st_part),
+        st_modal=resolve_st_modal(st_modal),
+        limit=limit,
+    )
+    latest = (
+        review_node_repositories.latest_solutions(db, int(user_idx), [r.idx for r in rows])
+        if user_idx is not None
+        else {}
+    )
+    items = []
+    for number, row in enumerate(rows, 1):
+        last = latest.get(row.idx)
+        items.append({
+            "idx": row.idx,
+            "number": number,
+            "st_part": row.st_part,
+            "st_modal": row.st_modal,
+            "solved": last is not None,
+            "last_solution": last.rn_solution if last else None,
+            "last_solution_label": solution_label(last.rn_solution) if last else None,
+            "last_solved_at": last.created_at.isoformat() if last and last.created_at else None,
+        })
+    solved = sum(item["solved"] for item in items)
+    return {"count": len(items), "solved_count": solved, "unsolved_count": len(items) - solved, "items": items}
 
 
 def _normalize_web_path(path: str) -> str:
@@ -190,6 +246,115 @@ def resolve_roi_grade_slice(
         "image_path": paths[resolved_index],
         "slice_count": len(paths),
     }
+
+
+def resolve_roi_grade_target(
+    db: Session,
+    *,
+    study_idx: int | None,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+) -> tuple[str | None, str | None]:
+    """
+    ROI 채점에 쓸 부위·영상 종류 코드(st_part 1~4, st_modal 1~3)를 정한다.
+
+    - study_idx 가 있으면 그 문제의 값을 쓴다. 화면이 보낸 값보다 DB를 믿는다.
+    - 없으면 폼으로 받은 st_part / st_modal 을 코드로 바꿔 쓴다.
+    - 알 수 없는 값은 None 으로 둔다. 그러면 예전처럼 뇌 CT 모델로 채점한다.
+    """
+    if study_idx is not None:
+        row = study_repositories.get_by_idx(db, int(study_idx))
+        if row is not None and row.del_yn == "N":
+            return row.st_part, row.st_modal
+
+    def _safe(resolve, value):
+        try:
+            return resolve(value)
+        except ValueError:
+            return None
+
+    return _safe(resolve_st_part, st_part), _safe(resolve_st_modal, st_modal)
+
+
+def get_answer_boxes(db: Session, study_idx: int | None) -> list[dict] | None:
+    """
+    문제의 정답 박스(0~1 비율 x, y, width, height, finding 목록). 흉부 채점에 쓴다.
+
+    study 테이블에 정답 박스 칸이 아직 없다(팀 결정 전). 칸이 생기면 여기서 읽는다.
+    지금은 늘 None 이라, 흉부 채점은 예전처럼 AI 결과를 기준으로 한다.
+    """
+    return None
+
+
+def get_problem(db: Session, study_idx: int) -> StudyModel | None:
+    """문제 번호로 활성 문제 1건 (오답노트 '다시 풀기'). 삭제·비활성이면 None."""
+    row = study_repositories.get_by_idx(db, int(study_idx))
+    if row is None or row.del_yn != "N" or row.state != "N":
+        return None
+    return row
+
+
+def problem_image_paths(row: StudyModel) -> list[str]:
+    """study.st_image → 영상 웹 경로 목록. MRI 는 여러 장, 그 밖에는 한 장."""
+    paths = parse_study_image_paths(row.st_image)
+    if paths:
+        return paths
+    single = (row.st_image or "").strip()
+    return [single] if single else []
+
+
+def problem_image_url(path: str) -> str:
+    """DB 웹 경로 → NAS 공개 URL. (관리자 화면의 미리보기 주소와 같은 규칙)"""
+    web_path = path if path.startswith("/") else f"/{path}"
+    base = (settings.nas_public_base_url or "").rstrip("/")
+    return f"{base}{web_path}" if base else web_path
+
+
+async def fetch_problem_image(
+    db: Session,
+    study_idx: int,
+    slice_index: int = 0,
+) -> tuple[bytes, str, str]:
+    """
+    문제 영상 한 장을 NAS 공개 주소에서 받아 돌려준다. → (바이트, MIME, 파일 이름)
+
+    브라우저가 NAS 에서 직접 받으면 다른 출처(CORS) 때문에 채점 API 로 다시 보내지 못할 수 있어
+    같은 서버가 대신 받는다. 주소는 study 행에서만 만들고, 요청 값으로 임의 URL 을 받지 않는다.
+    """
+    row = study_repositories.get_by_idx(db, int(study_idx))
+    if row is None or row.del_yn != "N":
+        raise LookupError("학습 문제를 찾을 수 없습니다.")
+    paths = problem_image_paths(row)
+    if not paths:
+        raise LookupError("문제에 등록된 영상이 없습니다.")
+    if slice_index < 0 or slice_index >= len(paths):
+        raise ValueError(f"slice_index 는 0~{len(paths) - 1} 사이여야 합니다.")
+
+    path = paths[slice_index]
+    name = path.replace("\\", "/").rsplit("/", 1)[-1] or "problem.png"
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    media_type = PROBLEM_IMAGE_TYPES.get(ext)
+    if media_type is None:
+        raise ValueError(f"지원하지 않는 영상 형식입니다: {ext or '확장자 없음'}")
+
+    url = problem_image_url(path)
+    if not url.startswith(("http://", "https://")):
+        raise ProblemImageError("NAS_PUBLIC_BASE_URL 이 설정되지 않았습니다.")
+    try:
+        async with httpx.AsyncClient(
+            verify=settings.nas_verify_ssl,
+            timeout=settings.nas_timeout,
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(url)
+    except httpx.HTTPError as exc:
+        raise ProblemImageError(f"NAS 연결 실패: {exc.__class__.__name__}") from exc
+    if response.status_code != 200:
+        raise ProblemImageError(f"NAS 응답 {response.status_code}")
+    content = response.content
+    if len(content) > MAX_PROBLEM_IMAGE_BYTES:
+        raise ProblemImageError("영상이 너무 큽니다.")
+    return content, media_type, name
 
 
 def submit_problem(
