@@ -31,6 +31,9 @@ class PopupPublicOut(BaseModel):
     pp_image_url: str | None = None
     pp_link: str | None = None
     pp_sort: int = 0
+    state: str = "N"
+    start_at: datetime | None = None
+    end_at: datetime | None = None
 
 
 class PopupWriteResult(BaseModel):

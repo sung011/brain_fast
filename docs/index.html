@@ -21,14 +21,18 @@
     <h1>학습 문서</h1>
     <p>기능을 코드로만 두지 않고, 각 부분이 무엇을 하는지 이 목록에서 읽습니다. 파일을 브라우저로 열면 됩니다.</p>
     <ul>
-      <li><a href="account-recovery.html">아이디·비밀번호 찾기</a> — 가입 정보 확인, 화면·API 연결, 해시 저장 흐름.</li>
-      <li><a href="brain.html">뇌 CT 분석</a> — 지금 있는 분석. 화면 캡처를 받아 출혈·생식세포종양 가능성을 보고, 색으로 위치를 표시한 뒤 한국어 설명을 만듭니다.</li>
-      <li><a href="review-note.html">오답노트</a> — 채점 기록 저장, 내 오답·부분정답 목록과 상세, 같은 문제 다시 풀기. NAS가 안 돼도 기록은 남습니다.</li>
-      <li><a href="roi-grade.html">학습 ROI 채점</a> — <code>/learning/roi-grade</code>. CT는 기존과 같고, MRI는 <code>slice_index</code>·<code>image_path</code>로 제출 슬라이스를 고른 뒤 채점합니다.</li>
-      <li><a href="thorax.html">흉부 X-ray 분석</a> — 화면 캡처에서 흉부 소견 가능성과 위치를 표시하고, 흉부 문제의 ROI 채점에 씁니다. 팀 모델 연결 전에는 "모델 준비 중"을 돌려줍니다.</li>
-      <li><a href="thorax-setup.html">흉부 모델 서버 설정</a> — <code>.env</code>에 <code>THORAX_HF_REPO</code>·<code>THORAX_PACKAGES</code>를 넣어 흉부 모델을 연결하고 확인하는 법.</li>
-      <li><a href="api-spec.html">학습자 API 명세</a> — Vue 화면이 쓰는 로그인·계정 찾기·문제·ROI 채점·오답노트·흉부 분석 주소와 보내는 값·돌아오는 값·오류.</li>
-      <li class="wait">복부, 무릎, 뇌 MRI — 해당 <code>class/</code> 패키지를 만들 때 같은 형식의 HTML을 여기에 추가합니다.</li>
+<li><a href="object-storage.html">이미지 저장</a> — 스터디·팝업·채점 이미지와 분석 결과 파일을 네이버 클라우드 Object Storage 버킷에 올립니다.</li>
+<li><a href="account-recovery.html">아이디·비밀번호 찾기</a> — 가입 정보 확인, 화면·API 연결, 해시 저장 흐름.</li>
+<li><a href="brain.html">뇌 CT 분석</a> — 지금 있는 분석. 화면 캡처를 받아 출혈·생식세포종양 가능성을 보고, 색으로 위치를 표시한 뒤 한국어 설명을 만듭니다.</li>
+<li><a href="thorax.html">흉부 X-ray 분석</a> — 화면 캡처에서 흉부 소견 가능성과 위치를 표시하고, 흉부 문제의 ROI 채점에 씁니다. 팀 모델 연결 전에는 "모델 준비 중"을 돌려줍니다.</li>
+<li><a href="thorax-setup.html">흉부 모델 서버 설정</a> — <code>.env</code>에 <code>THORAX_HF_REPO</code>·<code>THORAX_PACKAGES</code>를 넣어 흉부 모델을 연결하고 확인하는 법.</li>
+<li><a href="study-create.html">학습 등록</a> — 관리자 <code>/admin/study/create</code>. X-ray·CT·MRI는 파일마다 문제(기본). 한 문제 슬라이드는 MRI만.</li>
+<li><a href="popup.html">팝업</a> — 관리자 등록 SSE와 학습자 <code>GET /popups</code>. 노출이면서 노출 기간 안인 팝업만 내려줍니다.</li>
+<li><a href="roi-grade.html">학습 ROI 채점</a> — <code>/learning/roi-grade</code>. 단일 영상은 기존과 같고, MRI 슬라이드(JSON 배열)는 <code>slice_index</code>·<code>image_path</code>로 장을 고른 뒤 채점합니다.</li>
+<li><a href="review-note.html">오답노트</a> — 채점 기록 저장, 내 오답·부분정답 목록과 상세, 같은 문제 다시 풀기.</li>
+<li><a href="learning-today.html">오늘의 학습 현황</a> — <code>GET /learning/today</code>. 부위마다 학습 시간, 문제 수, 정답률.</li>
+<li><a href="api-spec.html">학습자 API 명세</a> — Vue 화면이 쓰는 로그인·계정 찾기·문제·ROI 채점·오답노트·흉부 분석 주소와 보내는 값·돌아오는 값·오류.</li>
+<li class="wait">복부, 무릎, 뇌 MRI — 해당 <code>class/</code> 패키지를 만들 때 같은 형식의 HTML을 여기에 추가합니다.</li>
     </ul>
   </main>
 </body>

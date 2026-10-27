@@ -11,7 +11,7 @@ Swagger(/docs)에는 숨긴다 (main.py 에서 include_in_schema=False).
 - /admin/user...            : 회원 목록·가입·수정·삭제, SSE 실시간 갱신
 - /admin/reviews...         : 학습자 ROI 제출 리뷰 조회, SSE
 - /admin/study...           : 학습 문제(스터디) CRUD, NAS 이미지 업로드
-- /admin/popup...           : 홍보 팝업 CRUD
+- /admin/popup...           : 홍보 팝업 CRUD, SSE 실시간 갱신
 - /admin/qa...              : 문의 답변·종료, SSE 실시간 알림
 - /admin/nas/...            : NAS 연결 확인·파일 업로드
 """
@@ -46,13 +46,14 @@ from schemas.studySchemas import (
 )
 from schemas.userSchemas import UserCreate, UserLogin, UserOut, UserUpdate
 from services import dashboardServices as dashboard_service
-from services import nasServices as nas_service_mod
+from services import objectStorageServices as storage_mod
 from services import popupServices as popup_service
 from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import studyServices as study_service
 from services import userServices as user_service
 from utils.adminAuth import admin_session_guard
+from utils.popup_sse import popup_events
 from utils.qa_sse import qa_events
 from utils.renderHelper import render_with_layout
 from utils.review_sse import review_events
@@ -539,8 +540,8 @@ def study_get(idx: int, db: Session = Depends(get_db)):
 
 @router.get("/nas/health", response_model=NasHealthResponse)
 async def nas_health() -> NasHealthResponse:
-    """Synology NAS 로그인 가능 여부."""
-    result = await nas_service_mod.nas_service.health()
+    """Object Storage 버킷 조회 가능 여부."""
+    result = await storage_mod.storage_service.health()
     return NasHealthResponse(**result)
 
 
@@ -586,11 +587,11 @@ async def _upload_and_save_study(
         persist: bool = True,
 ) -> StudyCreateResult:
     """이미지를 NAS에 올린 뒤 study 행을 만든다. persist=False 면 경로만 돌려준다."""
-    svc = nas_service_mod.nas_service
+    svc = storage_mod.storage_service
     if not svc.enabled:
         raise HTTPException(
             status_code=503,
-            detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+            detail="Object Storage가 설정되지 않았습니다. .env 에 NCP_ACCESS_KEY, NCP_SECRET_KEY, NCP_BUCKET 을 넣으세요.",
         )
 
     data = await file.read()
@@ -611,7 +612,7 @@ async def _upload_and_save_study(
     try:
         uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {exc}") from exc
 
     remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
     # DB에는 /web/mu_shop/public 을 뺀 웹 경로만 저장
@@ -711,7 +712,10 @@ async def _create_slide_study(
         st_disease: str,
         remote_dir: str,
 ) -> StudyBatchCreateResult:
-    """MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다."""
+    """MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다.
+
+    X-ray·CT는 upload_mode=each(파일마다 문제)만 사용한다.
+    """
     try:
         modal_code = resolve_st_modal(st_modal)
     except ValueError as exc:
@@ -811,10 +815,14 @@ async def study_create(
         ),
         upload_mode: str = Form(
             default="each",
-            description="each: 파일마다 문제, slide: MRI 한 문제(JSON 배열)",
+            description="each: 파일마다 문제(X-ray/CT/MRI), slide: MRI 한 문제 슬라이드(JSON 배열)",
         ),
 ) -> StudyBatchCreateResult:
-    """학습 등록: 이미지(다수)를 NAS에 올린 뒤 study 행을 각각 저장한다."""
+    """학습 등록: 이미지를 NAS에 올린 뒤 study에 저장한다.
+
+    - each(기본): 파일마다 study 1건. X-ray·CT·MRI 동일.
+    - slide: MRI만. 파일들을 한 문제의 슬라이드로 JSON 배열 저장.
+    """
     uploads: list[UploadFile] = []
     if files:
         uploads.extend([f for f in files if f is not None and (f.filename or "").strip()])
@@ -1069,9 +1077,55 @@ def popup_detail_page(idx: int, request: Request, partial: bool = False):
     return render_with_layout(request, templates, "popup_detail", data)
 
 
+def _popup_event_payload(row) -> dict:
+    return {
+        "idx": row.idx,
+        "pp_title": row.pp_title,
+        "pp_image": row.pp_image,
+        "pp_sort": row.pp_sort or 0,
+        "state": row.state,
+    }
+
+
 @router.get("/popups_all", response_model=list[PopupOut])
 def popups_all(db: Session = Depends(get_db)):
     return [_popup_out(row) for row in popup_service.list_admin(db)]
+
+
+@router.get("/popups/next-sort")
+def popups_next_sort(db: Session = Depends(get_db)):
+    """노출 팝업이 있으면 다음 표시 순서, 없으면 0."""
+    return {"pp_sort": popup_service.next_sort_for_exposed(db)}
+
+
+@router.get("/popups/stream")
+async def popups_stream(request: Request):
+    """팝업 목록 변경을 실시간으로 알린다 (SSE)."""
+
+    async def event_generator():
+        queue = await popup_events.subscribe()
+        try:
+            yield popup_events.format_sse({"event": "connected", "data": {"ok": True}})
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    yield popup_events.format_sse(message)
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await popup_events.unsubscribe(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/popups/{idx}", response_model=PopupOut)
@@ -1096,12 +1150,12 @@ async def popup_create(
         end_at: str = Form("", description="노출 종료 datetime-local"),
         state: str = Form("N", description="N:노출 / S:숨김"),
 ) -> PopupWriteResult:
-    """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장."""
-    svc = nas_service_mod.nas_service
+    """팝업 등록: 이미지를 NAS에 올린 뒤 popup 테이블에 저장. 성공 시 SSE(popup_created)."""
+    svc = storage_mod.storage_service
     if not svc.enabled:
         raise HTTPException(
             status_code=503,
-            detail="NAS가 설정되지 않았습니다. .env 에 NAS_URL, NAS_USER, NAS_PASSWORD 를 넣으세요.",
+            detail="Object Storage가 설정되지 않았습니다. .env 에 NCP_ACCESS_KEY, NCP_SECRET_KEY, NCP_BUCKET 을 넣으세요.",
         )
     data = await file.read()
     if not data:
@@ -1113,7 +1167,7 @@ async def popup_create(
     try:
         uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {exc}") from exc
 
     remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
     pp_image = _to_public_image_path(remote_path)
@@ -1133,6 +1187,8 @@ async def popup_create(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": str(exc)},
         ) from exc
+
+    await popup_events.publish("popup_created", _popup_event_payload(row))
 
     return PopupWriteResult(
         ok=True,
@@ -1169,11 +1225,11 @@ async def popup_update(
     new_image: str | None = None
     remote_path: str | None = None
     if file and file.filename:
-        svc = nas_service_mod.nas_service
+        svc = storage_mod.storage_service
         if not svc.enabled:
             raise HTTPException(
                 status_code=503,
-                detail="NAS가 설정되지 않았습니다.",
+                detail="Object Storage가 설정되지 않았습니다.",
             )
         data = await file.read()
         if not data:
@@ -1184,7 +1240,7 @@ async def popup_update(
         try:
             uploaded = await svc.upload_bytes(data, upload_name, remote_dir=dest)
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"NAS 업로드 실패: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"이미지 업로드 실패: {exc}") from exc
         remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
         new_image = _to_public_image_path(remote_path)
 
@@ -1212,6 +1268,8 @@ async def popup_update(
             detail={"message": "팝업을 찾을 수 없습니다."},
         )
 
+    await popup_events.publish("popup_updated", _popup_event_payload(row))
+
     return PopupWriteResult(
         ok=True,
         idx=row.idx,
@@ -1225,13 +1283,14 @@ async def popup_update(
 
 
 @router.delete("/popup/{idx}")
-def popup_delete(idx: int, db: Session = Depends(get_db)):
+async def popup_delete(idx: int, db: Session = Depends(get_db)):
     row = popup_service.delete_popup(db, idx)
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"message": "팝업을 찾을 수 없습니다."},
         )
+    await popup_events.publish("popup_deleted", {"idx": row.idx})
     return {"ok": True, "idx": row.idx}
 
 

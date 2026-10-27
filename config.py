@@ -21,23 +21,22 @@ class Settings(BaseSettings):
     # 세션 쿠키 서명용. 운영에서는 .env 의 SECRET_KEY 로 바꾼다.
     secret_key: str = "dev-secret-change-me"
 
-    # Synology NAS (File Station). 비어 있으면 업로드 기능 비활성.
-    nas_url: str = ""
-    nas_user: str = ""
-    nas_password: str = ""
-    # File Station/웹 상대 경로 기본값 (실제 NAS 업로드 시 nas_public_root 를 앞에 붙임)
+    # 네이버 클라우드 Object Storage. 키가 비어 있으면 업로드 기능 비활성.
+    ncp_access_key: str = ""
+    ncp_secret_key: str = ""
+    ncp_bucket: str = ""
+    ncp_endpoint: str = "https://kr.object.ncloudstorage.com"
+    ncp_region: str = "kr-standard"
+    # 객체 키 prefix. DB에는 이 웹 경로만 저장한다.
     nas_base_path: str = "/stylesheets/assets"
-    # 학습 제출(오답 노트) 이미지. NAS에는 /web/mu_shop/public/stylesheets/assets/review
+    # 학습 제출(오답 노트) 이미지
     nas_review_path: str = "/stylesheets/assets/review"
     # 학습자 메인 홍보 팝업 이미지
     nas_popup_path: str = "/stylesheets/assets/popup"
-    # DB st_image 저장 시 이 prefix 를 제거한다. (/web/mu_shop/public + /stylesheets/...)
+    # 예전 NAS 전체 경로가 들어오면 이 prefix 를 제거하고 객체 키로 쓴다.
     nas_public_root: str = "/web/mu_shop/public"
-    # 브라우저에서 이미지 볼 때 쓰는 공개 URL prefix
-    # 예) https://host/mu_shop/public + /stylesheets/assets/...
-    nas_public_base_url: str = "https://olleh7531.synology.me/mu_shop/public"
-    nas_verify_ssl: bool = True
-    nas_timeout: float = 60.0
+    # 브라우저 <img> 용 공개 URL prefix. 버킷 + 웹 경로.
+    nas_public_base_url: str = "https://kr.object.ncloudstorage.com"
     # 분석 완료 시 원본·overlay·result.json 자동 업로드
     nas_upload_on_analyze: bool = False
     # 의학용어 사전 CSV(팀 RAG 자료, 칸: en, kr, definition, definition_kr). 비어 있으면 쓰지 않는다.
