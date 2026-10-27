@@ -16,6 +16,7 @@ MRI 모델을 불러오지 못해도 이 주소만 503 이 되고, CT 분석·�
 
 from __future__ import annotations
 
+import base64
 import time
 import uuid
 from importlib import import_module
@@ -23,11 +24,15 @@ from types import ModuleType
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from config import settings
 from schemas.brainMriSchemas import (
     BrainMriAnalyzeResponse,
+    BrainMriBox,
     BrainMriHealthResponse,
     BrainMriPrediction,
+    BrainMriUpload,
 )
+from services import brainMriServices, objectStorageServices as storage_mod
 
 router = APIRouter()
 
@@ -61,12 +66,65 @@ async def brain_mri_health() -> BrainMriHealthResponse:
     return BrainMriHealthResponse(
         status="ok" if svc.ready else "degraded",
         model=config.MODEL_NAME,
-        model_configured=bool(config.MODEL_PATH),
+        model_configured=config.model_configured(),
         model_loaded=svc.ready,
         model_error=svc.error,
         classes=list(constants.CLASSES),
         device=svc.device,
     )
+
+
+def _upload_info(result: dict | None) -> BrainMriUpload:
+    files = [
+        item.get("remote_path") or item.get("filename") or ""
+        for item in (result or {}).get("files") or []
+    ]
+    return BrainMriUpload(
+        ok=bool((result or {}).get("ok")),
+        folder=(result or {}).get("folder"),
+        files=[name for name in files if name],
+    )
+
+
+async def _maybe_upload(
+    *,
+    request_id: str,
+    image_bytes: bytes,
+    image_filename: str,
+    payload: dict,
+    overlay_b64: str | None,
+) -> BrainMriUpload | None:
+    """뇌 CT 화면 분석과 같이, 설정이 켜져 있을 때만 원본·overlay·결과를 올린다."""
+    if not settings.nas_upload_on_analyze:
+        return None
+    svc = storage_mod.storage_service
+    if not svc.enabled:
+        return BrainMriUpload(ok=False, error="Object Storage 설정이 비어 있습니다.")
+    slim = {
+        key: value
+        for key, value in payload.items()
+        if key not in ("overlay_png_base64", "nas_upload")
+    }
+    raw = (overlay_b64 or "").strip()
+    overlay_bytes = None
+    if raw:
+        if "," in raw and raw.lower().startswith("data:"):
+            raw = raw.split(",", 1)[1]
+        try:
+            overlay_bytes = base64.b64decode(raw)
+        except Exception:
+            overlay_bytes = None
+    try:
+        stored = await svc.upload_analysis_bundle(
+            request_id=request_id,
+            image_bytes=image_bytes,
+            image_filename=image_filename,
+            result=slim,
+            overlay_png_bytes=overlay_bytes,
+        )
+    except Exception as exc:
+        return BrainMriUpload(ok=False, error=exc.__class__.__name__)
+    return _upload_info(stored)
 
 
 @router.post(
@@ -77,13 +135,21 @@ async def brain_mri_health() -> BrainMriHealthResponse:
         "지원 전처리·sequence 가 확인된 8-bit PNG/JPEG 2D MRI slice 에 대한 prototype inference. "
         "학습 sequence: 전정신경초종 T1, 신경교종 T1CE, 뇌전이암 T1C, 허혈성 뇌졸중 DWI, 다발성 경화증 FLAIR. "
         "범용 MRI 모델이 아니며 DICOM 은 지원하지 않는다(415). "
-        "sequence 는 기록용이며 추론을 바꾸지 않는다. confidence 는 질병 확률이 아니다. 교육·연구용."
+        "sequence 는 기록용이며 추론을 바꾸지 않는다. confidence 는 질병 확률이 아니다. 교육·연구용. "
+        "x, y, width, height 가 있으면 뇌 CT와 같은 겹침 규칙으로 정답/부분정답/오답을 매기고 review_node 에 저장한다."
     ),
 )
 async def analyze_brain_mri(
     image: UploadFile = File(...),
     include_overlay: bool = Form(True),
     sequence: str = Form("unknown"),
+    x: float | None = Form(None),
+    y: float | None = Form(None),
+    width: float | None = Form(None),
+    height: float | None = Form(None),
+    user_idx: int | None = Form(None),
+    study_idx: int | None = Form(None),
+    slice_index: int | None = Form(None),
 ) -> BrainMriAnalyzeResponse:
     brain_mri = _load_brain_mri()
     config = import_module("class.brain_mri.config")
@@ -133,13 +199,45 @@ async def analyze_brain_mri(
         overlay = brain_mri.Localization.build_overlay_image(img_uint8, preds)
         overlay_b64 = brain_mri.Localization.overlay_to_base64(overlay)
 
-    return BrainMriAnalyzeResponse(
-        request_id=f"req_{uuid.uuid4().hex[:12]}",
+    given = [x, y, width, height]
+    if any(value is not None for value in given) and any(value is None for value in given):
+        raise HTTPException(status_code=422, detail="박스는 x, y, width, height 를 모두 보내야 합니다.")
+
+    grade = None
+    review_idx = None
+    if all(value is not None for value in given):
+        try:
+            grade = brainMriServices.grade_box(
+                h, w, preds, x=float(x), y=float(y), box_w=float(width), box_h=float(height)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        saved = await brainMriServices.save_grade(
+            image_bytes=data,
+            image_filename=filename,
+            grade=grade,
+            study_idx=study_idx,
+            user_idx=user_idx,
+            slice_index=slice_index,
+        )
+        if saved is not None:
+            review_idx = saved.get("review_idx")
+
+    request_id = f"req_{uuid.uuid4().hex[:12]}"
+    reference = None if grade is None else grade.get("reference_bbox")
+    response = BrainMriAnalyzeResponse(
+        request_id=request_id,
         model=config.MODEL_LABEL,
         image_width=w,
         image_height=h,
         predictions=[BrainMriPrediction(**p) for p in preds],
         overlay_png_base64=overlay_b64,
+        result=None if grade is None else grade["result"],
+        iou=None if grade is None else grade["iou"],
+        recall=None if grade is None else grade["recall"],
+        reference_bbox=None if reference is None else BrainMriBox(**reference),
+        review_idx=review_idx,
+        overlay_summary=None if grade is None else grade["overlay_summary"],
         sequence=seq,
         trained_sequences=dict(constants.TRAINED_SEQUENCES),
         input_scope=constants.INPUT_SCOPE,
@@ -148,3 +246,11 @@ async def analyze_brain_mri(
         disclaimer=constants.DISCLAIMER,
         latency_ms=int((time.perf_counter() - t0) * 1000),
     )
+    response.nas_upload = await _maybe_upload(
+        request_id=request_id,
+        image_bytes=data,
+        image_filename=filename,
+        payload=response.model_dump(),
+        overlay_b64=overlay_b64,
+    )
+    return response

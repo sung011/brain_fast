@@ -1,9 +1,10 @@
 """
 화면 캡처 한 장 분석 결과를 만든다 (POST /api/v1/knee/screen-roi 의 계산 부분).
 
-핵심 규칙(설계 MSN-20260930-001):
-- 한 장으로 판단해도 되는 조합은 gates.APPROVED 에 승인된 "소견 × 촬영면 × 이미지 범위"뿐이다.
-  표에 없으면 점수·판정·Grad-CAM 을 만들지 않고 `not_evaluated` 로 답한다. 그때는 모델을 불러오지도 않는다.
+핵심 규칙:
+- 그 촬영면에 모델이 있으면 한 장 점수를 낸다. 승인표(gates.APPROVED)에 없는 조합은
+  검수된 보정·성능 근거 없이 원래 모델 점수만 학습용으로 보여 준다.
+- 그 촬영면에 모델이 없으면 `not_evaluated`(model_plane_unavailable)이고 모델을 부르지 않는다.
 - ACL 위치 박스는 승인된 sagittal + full_slice 에서만 나오며 "해부학적 대략 위치"로만 표시한다.
 - HTTP 200 은 요청을 처리했다는 뜻이지 진단에 성공했다는 뜻이 아니다.
 - 이 파일은 torch 를 불러오지 않는다. 모델이 필요한 세 함수(_predict_single, _gradcam, _locate_acl)만 필요할 때 불러온다.
@@ -18,13 +19,14 @@ import time
 import numpy as np
 
 from . import gates
+from .config import GATING_BAND
 from .constants import DISCLAIMER, TASK_KO, UNCERTAIN_VERDICT, VERDICT
 from .errors import KneeAnalysisError, KneeModelNotReady
 from .explanations import EXPLANATIONS
 
 REASONS = {
     "model_plane_unavailable": "이 촬영면에는 해당 소견을 판단하는 모델이 없어 평가하지 않습니다.",
-    "single_image_not_validated": "한 장(이 촬영면·이 이미지 범위)으로 이 소견을 판단하는 방식은 아직 검증되지 않아 평가하지 않습니다.",
+    "single_image_unvalidated": "한 장으로 이 소견을 판단하는 방식은 검증되지 않았습니다. 학습용 모델 점수만 표시합니다.",
 }
 
 OVERLAY_NOTE = "오버레이는 모델이 본 224×224 입력 그림 위에 그려져 있으며, 원본 캡처와 크기와 잘린 범위가 다를 수 있습니다."
@@ -39,7 +41,7 @@ def _notices(image_scope: str) -> list[dict]:
         ("visualization_meaning", "색으로 표시되는 영역(Grad-CAM)은 모델이 참고한 곳일 뿐 병변의 위치나 윤곽이 아닙니다. ACL 위치 박스는 ACL 이 있는 대략적인 해부학적 위치이며 파열 위치가 아닙니다."),
         ("learning_only", DISCLAIMER + " 이 서비스는 의료 판단 도구가 아니라 의료 판단을 보조하는 학습 도구이며, 자세한 결과는 전문가와 상의해야 합니다."),
         ("deidentify", "전송하기 전에 환자 이름 등 개인정보가 화면에 보이지 않는지 직접 확인해 주세요. 서버는 자동으로 가려 주지 않습니다."),
-        ("deletion", "서버는 이 이미지를 분석 직후 삭제하며 저장하지 않습니다. 화면 공유 중인 외부 뷰어의 원본은 삭제되지 않습니다."),
+        ("deletion", "서버는 올린 이미지를 분석 직후 삭제하며 이미지 파일은 저장하지 않습니다. 소견 점수 문구는 학습 기록으로 남을 수 있습니다. 화면 공유 중인 외부 뷰어의 원본은 삭제되지 않습니다."),
     ]
     if image_scope == "roi_crop":
         items.insert(1, ("roi_crop", "선택한 영역만 잘라 보낸 이미지는 전체 슬라이스와 다른 조건이며, 이 조건은 검증되지 않았습니다."))
@@ -116,19 +118,28 @@ def _evaluate(finding: str, plane: str, image_scope: str, gray: np.ndarray):
         return result, None, None
 
     gate = gates.find_gate(finding, plane, image_scope)
-    if gate is None:
-        result.update(reason_code="single_image_not_validated", reason=REASONS["single_image_not_validated"])
-        return result, None, None
-
-    prob = _calibrated(_predict_single(finding, plane, gray), gate.calibration)
-    lo, hi = gate.band
+    raw = _predict_single(finding, plane, gray)
+    if gate is not None:
+        prob = _calibrated(raw, gate.calibration)
+        lo, hi = gate.band
+        score_label = "모델 점수(임상적 발병 확률이 아님)"
+        reason_code, reason = None, None
+    else:
+        prob = float(raw)
+        if not np.isfinite(prob) or not 0.0 <= prob <= 1.0:
+            raise KneeAnalysisError("모델 점수가 정상 범위(0~1)가 아닙니다.")
+        lo, hi = GATING_BAND[finding]
+        score_label = "모델 점수(한 장·미검증, 임상적 발병 확률이 아님)"
+        reason_code, reason = "single_image_unvalidated", REASONS["single_image_unvalidated"]
     confident = not (lo <= prob <= hi)
     high_text, low_text = VERDICT[finding]
     verdict = UNCERTAIN_VERDICT if not confident else (high_text if prob >= 0.5 else low_text)
     result.update(
         status="evaluated",
+        reason_code=reason_code,
+        reason=reason,
         prob=round(prob, 3),
-        score_label="모델 점수(임상적 발병 확률이 아님)",
+        score_label=score_label,
         confidence_band="confident" if confident else "uncertain",
         verdict=verdict,
         planes_used=[plane],
@@ -142,14 +153,17 @@ def analyze(gray: np.ndarray, *, plane: str, image_scope: str, include_overlay: 
     started = time.perf_counter()
 
     findings: dict[str, dict] = {}
+    scored: dict[str, float] = {}
     evaluated: dict[str, tuple] = {}
     for finding in gates.FINDINGS:
         result, gate, prob = _evaluate(finding, plane, image_scope, gray)
         findings[finding] = result
-        if gate is not None:
+        if result["status"] == "evaluated" and prob is not None:
+            scored[finding] = prob
+        if gate is not None and prob is not None:
             evaluated[finding] = (gate, prob)
 
-    n_eval = len(evaluated)
+    n_eval = len(scored)
     analysis_status = "not_evaluated" if n_eval == 0 else ("evaluated" if n_eval == len(gates.FINDINGS) else "partially_evaluated")
 
     visualization = {
@@ -157,8 +171,8 @@ def analyze(gray: np.ndarray, *, plane: str, image_scope: str, include_overlay: 
         "acl_location_status": "not_evaluated", "acl_box": None,
         "acl_box_note": None,
     }
-    if evaluated and include_overlay:
-        top = max(evaluated, key=lambda f: evaluated[f][1])
+    if scored and include_overlay:
+        top = max(scored, key=lambda f: scored[f])
         image, activated = _gradcam(top, plane, gray)
         if activated:
             buf = io.BytesIO()

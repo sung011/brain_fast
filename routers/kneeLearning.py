@@ -18,12 +18,7 @@ prefix 없음. 주소: POST /learning/roi-grade/knee
 
 안전 규칙(Codex 재검증 MSN-20260930-001 반영):
 - 기본은 꺼져 있다. KNEE_ROI_GRADE_ENABLED=1 일 때만 동작한다.
-- 로그인한 학습자(세션 `learner`)만 쓸 수 있다. 사용자 번호는 세션에서만 얻고 요청 값은 믿지 않는다.
-  관리자 로그인이 채우는 `session["user"]` 는 학습자로 쓰지 않는다. 이메일 인증이 끝난 사용자만 쓸 수 있다(D-033).
-  세션 learner 에 idx(양의 정수)와 email_verified(정확히 True)가 있어야 한다. 이 세션은 학습자 로그인(`POST /login`, 공용)이 성공할 때
-  만든다. **발표 한정 관리자 승인 예외**(사용자 결정 2026-10-13, DECISIONS·AUTH_SESSION_CONTRACT 7장): 관리자(팀)가 직접 만든 활성
-  회원이 로그인에 성공하면 승인된 학습자로 보고 `email_verified=True` 를 넣는다. 이 값은 이메일 인증 완료가 아니라 관리자 승인 표시다.
-  DB 인증 칸·auth_version 재확인·로그아웃은 없다(발표 후 서비스를 이어가면 원래 D-033 로 되돌린다).
+- 로그인 세션이 있는지는 보지 않는다. 세션이나 폼 user_idx 로 회원을 알 수 있으면 그 번호를 기록에 쓰고, 없으면 채점만 진행한다.
 - study_idx 는 필수이고, 활성화된 무릎 MRI 문제여야 한다. 촬영면은 요청이 아니라 기준 ROI(서버 기록)에서 얻는다.
 - 도형은 박스만 받는다(사용자 결정 2026-10-06). 원은 400 으로 거절하고, 박스는 이미지 안에 있어야 한다.
 - 문제 이미지가 한 장이면 단일 이미지 흐름이다. 여러 장(슬라이드, st_image 가 JSON 배열)이면 **대표 슬라이스 흐름**이다:
@@ -57,6 +52,7 @@ from models.studyModel import StudyModel
 from repositories import reviewNodeRepositories as review_node_repositories
 from repositories import studyRepositories as study_repositories
 from services import kneeRoiGradeServices as knee_grade
+from services import kneeScreenServices as knee_screen
 from services import kneeSliceGradeServices as slice_grade
 from services import learningServices as learning_service
 from services import reviewNodeServices as review_node_service
@@ -74,26 +70,36 @@ def _setting(name: str, default: str) -> str:
     return import_module("class.knee.config").get_setting(name, default)
 
 
-def _learner_idx(request: Request, db: Session) -> int:
-    """세션 `learner` 의 로그인 사용자 번호. 로그인 안 했거나 DB 에 없는(삭제된) 회원이면 401, 이메일 미인증이면 403.
+def _positive_idx(value: object) -> int | None:
+    """회원 번호로 쓸 수 있는 양의 정수만 통과시킨다. bool 은 int 의 하위 타입이라 거절한다."""
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
-    학습자 세션 키는 `session["learner"]` 로 분리한다(설계 8장). 관리자 로그인이 채우는 `session["user"]` 는 학습자로 쓰지 않는다.
-    세션 값만 믿지 않고 DB 에서 회원이 실제로 있는지 다시 확인한다.
 
-    구현되지 않은 것: 이메일 인증 완료 시각·auth_version 의 DB 재확인(user_member 에 그 열이 없다). 그래서 세션의 email_verified(정확히
-    True)만 본다. 이 값은 발표 한정 관리자 승인 예외의 승인 표시이며 이메일 인증 완료가 아니다. 세션은 `POST /login` 성공 때 만들어지고,
-    이 함수는 요청마다 DB 에서 회원이 실제로 있고 삭제되지 않았는지 다시 확인한다.
+def _learner_idx(request: Request, db: Session, requested_user_idx: int | None = None) -> int | None:
+    """기록에 넣을 회원 번호. 세션이 없어도 요청을 거절하지 않는다.
+
+    활성 회원을 이 순서로 찾는다. 없으면 None.
+    1. POST /login 의 session["learner"]
+    2. 관리자 로그인의 session["user"]
+    3. 폼 user_idx
     """
     session = request.scope.get("session")
-    learner = session.get("learner") if isinstance(session, dict) else None
-    idx = learner.get("idx") if isinstance(learner, dict) else None
-    if not isinstance(idx, int) or isinstance(idx, bool) or idx <= 0:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="로그인이 필요합니다.")
-    if user_service.get_user(db, idx) is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="로그인이 필요합니다.")
-    if learner.get("email_verified") is not True:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="이메일 인증을 마친 뒤 사용할 수 있습니다.")
-    return idx
+    session = session if isinstance(session, dict) else {}
+    learner = session.get("learner") if isinstance(session.get("learner"), dict) else None
+    admin = session.get("user") if isinstance(session.get("user"), dict) else None
+    candidates = []
+    if learner is not None:
+        candidates.append(learner.get("idx"))
+    if admin is not None:
+        candidates.append(admin.get("idx"))
+    candidates.append(requested_user_idx)
+    for value in candidates:
+        idx = _positive_idx(value)
+        if idx is not None and user_service.get_user(db, idx) is not None:
+            return idx
+    return None
 
 
 def _problem_payload(row) -> dict:
@@ -296,7 +302,7 @@ def knee_learning_page(request: Request, demo: str | None = None, study_idx: int
 def learning_knee_task(request: Request, study_idx: int, db: Session = Depends(get_db)):
     """화면이 대표 영상을 열 때 쓰는 문제 제시. 설계 4-1 의 `knee_task` 를 돌려준다(토큰이 있어 저장 금지).
 
-    - 꺼짐 503, 비로그인 401, 이메일 미인증 403, 무릎 MRI 문제가 아니면 404(채점 API 와 같은 검사).
+    - 꺼짐 503, 무릎 MRI 문제가 아니면 404. 로그인 세션은 검사하지 않는다.
     - 승인된 대표가 없거나 모호하면 200 + grading_available=false 와 사유만 준다(토큰·영상 주소 없음).
     - 승인된 대표가 있어도 영상 공급자(`set_asset_provider`)가 연결되지 않았으면 503 이다. 내부 경로를 그대로 내려주지 않는다.
     - 영상 공급과 토큰 발급은 같은 snapshot(manifest, 승인 기준)으로 한다. 공급하는 동안 문제 목록·승인 기준이 바뀌면 409 로 닫는다(섞지 않는다).
@@ -341,7 +347,7 @@ def learning_knee_task(request: Request, study_idx: int, db: Session = Depends(g
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=SNAPSHOT_CHANGED_DETAIL)
             try:
                 payload = slice_grade.build_knee_task_for_snapshot(
-                    manifest=manifest, reference=reference, user_idx=user_idx, study_idx=study.idx,
+                    manifest=manifest, reference=reference, user_idx=user_idx or 0, study_idx=study.idx,
                     image_url=image_url, image_width=image_width, image_height=image_height, now=int(time.time()),
                     series_id=_series_id_for(study.idx, manifest),
                 )
@@ -354,7 +360,7 @@ def learning_knee_task(request: Request, study_idx: int, db: Session = Depends(g
     # 승인된 대표가 없음·모호·목록 사용 불가: 사유만 알린다(토큰·영상 주소 없음)
     try:
         payload = slice_grade.build_knee_task(
-            user_idx=user_idx, study_idx=study.idx, st_image=study.st_image,
+            user_idx=user_idx or 0, study_idx=study.idx, st_image=study.st_image,
             image_url=None, image_width=None, image_height=None, now=int(time.time()),
         )
     except slice_grade.SlideRequestError as exc:
@@ -818,10 +824,11 @@ async def learning_roi_grade_knee(
     height: float | None = Form(None, description="박스 높이 (0~1)"),
     slice_index: str | None = Form(None, description="슬라이드 문제에서 화면이 보여 준 슬라이스의 등록 배열 위치(0부터). 슬라이드 문제에서만 필수"),
     problem_token: str | None = Form(None, description="문제를 열 때 서버가 준 problem_token. 슬라이드 문제에서 승인된 대표가 있을 때 필수"),
+    user_idx: int | None = Form(None, description="POST /login 응답의 idx. 세션 쿠키가 없으면 이 값으로 회원을 확인한다."),
 ):
     if _setting("KNEE_ROI_GRADE_ENABLED", "0") != "1":
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="이 기능은 지금 사용할 수 없습니다.")
-    user_idx = _learner_idx(request, db)
+    user_idx = _learner_idx(request, db, user_idx)
 
     study = study_repositories.get_by_idx(db, study_idx)
     if study is None or study.del_yn != "N" or study.st_part != ST_PART_KNEE or study.st_modal != ST_MODAL_MRI:
@@ -841,7 +848,7 @@ async def learning_roi_grade_knee(
             # 설정돼 있으면 그 검증, 아니면 시험의 명시 주입, 아니면 항상 "확인할 수 없음"(미채점·저장 0). 느릴 수 있어 스레드풀에서 돈다.
             outcome = await run_in_threadpool(
                 slice_grade.grade_slide,
-                user_mask=user, user_idx=user_idx, study_idx=study.idx, st_image=study.st_image,
+                user_mask=user, user_idx=user_idx or 0, study_idx=study.idx, st_image=study.st_image,
                 slice_index_raw=slice_index, problem_token=problem_token, now=int(time.time()),
                 asset_verifier=_grade_verifier(),
             )
@@ -879,6 +886,27 @@ async def learning_roi_grade_knee(
             {"review_idx": row.idx, "user_idx": user_idx, "study_idx": study.idx,
              "rn_image": row.rn_image, "rn_solution": row.rn_solution},
         )
+    elif _setting("KNEE_SLICE_READING_ENABLED", "1") == "1":
+        # 기준 ROI 가 없어 채점이 안 되면, 화면이 연 그 장을 모델로 읽는다. 실패하면 미채점 응답을 그대로 둔다.
+        try:
+            reading = await knee_screen.read_problem_slice(
+                db, study_idx=study.idx, slice_index_raw=slice_index, user_idx=user_idx,
+                user_mask=user, plane="sagittal",
+            )
+        except Exception as exc:
+            _log.error("knee slice reading failed error_type=%s", type(exc).__name__)
+            reading = None
+        if reading is not None:
+            result["reading"] = reading["public"]
+            result["result"] = reading["grade_result"]
+            result["graded"] = True
+            result["iou"] = reading["iou"]
+            result["recall"] = reading["recall"]
+            result["reference_bbox"] = reading["reference_bbox"]
+            result["feedback"] = reading["summary"]
+            result["not_graded_reason"] = None
+            result["not_graded_message"] = None
+            result["review_idx"] = reading["review_idx"]
 
     try:
         next_row = learning_service.get_random_problem(

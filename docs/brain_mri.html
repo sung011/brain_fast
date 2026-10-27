@@ -80,10 +80,10 @@
       <h3>routers/brain_mri.py</h3>
       <dl>
         <dt>한 줄로</dt><dd>MRI 분석 주소 두 개를 열고 <code>class/brain_mri</code>를 호출합니다.</dd>
-        <dt>받는 것</dt><dd><code>image</code> 파일 하나와 <code>include_overlay</code>(기본 true).</dd>
-        <dt>하는 일</dt><dd>크기 검사, 디코딩, 모델 로드 확인, 추론 호출, 응답 조립.</dd>
-        <dt>돌려주는 것</dt><dd>분석 응답, 또는 <code>GET /api/v1/brain-mri/health</code>의 로드 상태.</dd>
-        <dt>하지 않는 일</dt><dd>NAS 업로드, DB 저장, 판독문 생성은 하지 않습니다.</dd>
+        <dt>받는 것</dt><dd><code>image</code> 파일과 <code>include_overlay</code>(기본 true). 학습 화면은 박스 <code>x, y, width, height</code>와 <code>user_idx</code>도 보냅니다.</dd>
+        <dt>하는 일</dt><dd>크기 검사, 디코딩, 첫 요청에서 모델 로드, 추론. 박스가 있으면 뇌 CT와 같은 겹침 규칙으로 정답/부분정답/오답을 매깁니다.</dd>
+        <dt>돌려주는 것</dt><dd>검출 목록과 overlay. 박스가 있으면 채점 결과와 <code>review_idx</code>. 화면 분석 저장이 켜져 있으면 Object Storage 경로.</dd>
+        <dt>하지 않는 일</dt><dd>판독문은 만들지 않습니다. 박스가 없으면 review_node 에 채점을 남기지 않습니다.</dd>
         <dt>헷갈리기 쉬운 점</dt><dd>모델을 못 불러오면 이 주소만 503입니다. CT 분석과 관리자 화면은 그대로 동작합니다.</dd>
       </dl>
     </article>
@@ -107,7 +107,7 @@
         <dt>받는 것</dt><dd>전처리된 이미지.</dd>
         <dt>하는 일</dt><dd>첫 요청 때 가중치를 읽고, 클래스 순서가 학습 때와 같은지 확인한 뒤 추론합니다.</dd>
         <dt>돌려주는 것</dt><dd>검출 목록. 각 항목은 class_id, disease, disease_ko, confidence, bbox, polygon입니다.</dd>
-        <dt>하지 않는 일</dt><dd>가중치를 내려받지 않습니다. 파일 경로는 환경 변수로만 받습니다.</dd>
+        <dt>하지 않는 일</dt><dd>가중치 파일을 이 깃 저장소에 넣지 않습니다. 로컬 경로가 없으면 <code>BRAIN_MRI_HF_REPO</code>에서 받습니다.</dd>
         <dt>헷갈리기 쉬운 점</dt><dd>좌표는 업로드한 이미지의 픽셀 기준입니다.</dd>
       </dl>
     </article>
@@ -137,9 +137,9 @@
       <h3>class/brain_mri/config.py</h3>
       <dl>
         <dt>한 줄로</dt><dd>MRI 분석 환경 변수를 읽습니다.</dd>
-        <dt>값</dt><dd><code>BRAIN_MRI_MODEL_PATH</code>(가중치 경로), <code>BRAIN_MRI_CONF_THRESHOLD</code>(기본 0.25), <code>BRAIN_MRI_MAX_UPLOAD_BYTES</code>(기본 20MB).</dd>
+        <dt>값</dt><dd><code>BRAIN_MRI_MODEL_PATH</code>(로컬 가중치), <code>BRAIN_MRI_HF_REPO</code>(없으면 받을 저장소, 기본 예: uonco/brain-mri-5disease-yolo26s-seg), <code>BRAIN_MRI_HF_FILENAME</code>(기본 best.pt), <code>BRAIN_MRI_CONF_THRESHOLD</code>(기본 0.25), <code>BRAIN_MRI_MAX_UPLOAD_BYTES</code>(기본 20MB).</dd>
         <dt>하지 않는 일</dt><dd>루트 <code>config.py</code>의 DB·NAS 설정을 건드리지 않습니다.</dd>
-        <dt>헷갈리기 쉬운 점</dt><dd>가중치 파일은 저장소에 넣지 않습니다. 각자 PC 경로를 <code>.env</code>에 적습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>가중치 파일은 깃에 넣지 않습니다. 로컬 파일이 있으면 그 파일을 쓰고, 없으면 Hugging Face에서 받습니다.</dd>
       </dl>
     </article>
 

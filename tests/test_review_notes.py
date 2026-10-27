@@ -113,6 +113,24 @@ def test_bad_filter_and_missing_user(client):
     assert client.get("/learning/reviews?user_idx=7&limit=1").json()["count"] == 1
 
 
+def test_note_disease_uses_review_node_not_the_problem_name(client, engine):
+    """문제 병명이 '테스트'여도 오답노트는 review_node.rn_disease 를 보여 준다."""
+    with Session(engine) as db:
+        db.add(StudyModel(
+            idx=9, del_yn="N", state="N", st_part="1", st_modal="3",
+            st_image="/brain/mri.png", st_disease="테스트",
+        ))
+        db.add(ReviewNodeModel(
+            idx=40, del_yn="N", state="N", rn_u_idx=35, rn_s_idx=9,
+            rn_disease="신경교종", rn_solution="W", created_at=NOW,
+        ))
+        db.commit()
+    body = client.get("/learning/reviews?user_idx=35").json()
+    assert body["items"][0]["disease"] == "신경교종"
+    detail = client.get("/learning/reviews/40?user_idx=35").json()["review"]
+    assert detail["disease"] == "신경교종"
+
+
 def test_detail_includes_problem_without_answer(client):
     review = client.get("/learning/reviews/10?user_idx=7").json()["review"]
     assert review["disease"] == "흉막삼출"
@@ -140,7 +158,7 @@ def test_retry_problem_by_idx_hides_answer(client):
     (FakeNas(), True, None),
 ])
 def test_submission_is_recorded_even_if_nas_fails(engine, monkeypatch, nas, saved, error_word):
-    monkeypatch.setattr(reviewNodeServices, "nas_service", nas)
+    monkeypatch.setattr(reviewNodeServices, "storage_service", nas)
     with Session(engine) as db:
         result = asyncio.run(reviewNodeServices.save_submission(
             db, image_bytes=png_bytes(), image_filename="a.png",
@@ -159,7 +177,7 @@ def test_submission_is_recorded_even_if_nas_fails(engine, monkeypatch, nas, save
 def test_roi_grade_passes_rois_and_rejects_bad_json(client, monkeypatch):
     """흉부 ROI 여러 개(rois JSON)를 서비스로 넘기고, 형식이 틀리면 400."""
     seen = {}
-    monkeypatch.setattr(reviewNodeServices, "nas_service", FakeNas(enabled=False))
+    monkeypatch.setattr(reviewNodeServices, "storage_service", FakeNas(enabled=False))
     monkeypatch.setattr(roiGradeServices, "grade_image_roi",
                         lambda *a, **k: seen.update(k) or {"ok": True, "result": "정답", "_review_png": png_bytes()})
     form = {"roi_type": "box", "x": 0, "y": 0, "width": 0.5, "height": 0.5, "study_idx": 2, "user_idx": 7}
@@ -178,7 +196,7 @@ def test_roi_grade_passes_rois_and_rejects_bad_json(client, monkeypatch):
 
 
 def test_roi_grade_still_answers_when_nas_is_off(client, monkeypatch):
-    monkeypatch.setattr(reviewNodeServices, "nas_service", FakeNas(enabled=False))
+    monkeypatch.setattr(reviewNodeServices, "storage_service", FakeNas(enabled=False))
     monkeypatch.setattr(roiGradeServices, "grade_image_roi",
                         lambda *a, **k: {"ok": True, "result": "부분정답", "_review_png": png_bytes()})
     response = client.post("/learning/roi-grade", files={"image": ("a.png", png_bytes(), "image/png")},

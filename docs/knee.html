@@ -60,6 +60,7 @@
         <li><a href="#imageio">이미지 읽기</a></li>
         <li><a href="#screenroi">판정</a></li>
         <li><a href="#router">라우터·스키마</a></li>
+        <li><a href="#screen-save">판독 저장</a></li>
         <li><a href="#experiment">단일 슬라이스 실험</a></li>
         <li><a href="#apitests">API 테스트</a></li>
         <li><a href="#grade">학습 ROI 채점</a></li>
@@ -213,7 +214,7 @@
     <h2 id="screen">화면 캡처 한 장 분석 (API)</h2>
     <p><code>POST /api/v1/knee/screen-roi</code>는 사용자가 화면 공유 중인 외부 뷰어에서 캡처한 <strong>이미지 한 장</strong>을 받습니다. 뇌 CT 화면 공유 분석(<code>routers/brain.py</code>)과 같은 자리에 있지만, 요청·응답 형식은 따로 정합니다(무릎은 부위·촬영면·이미지 범위를 함께 받음).</p>
     <div class="note">
-      <p><strong>왜 대부분 “평가하지 않음”인가요?</strong> 무릎 분류 모델은 원래 촬영면별 <em>슬라이스 묶음</em>을 보고 판단하도록 만들어졌습니다. 한 장만 넣으면 돌아가지만 학습 조건과 달라서 믿을 만한지 따로 확인해야 하는데, 실험(2026-09-30) 결과 확인한 33개 조합이 모두 통과하지 못했습니다. 한 장의 점수는 슬라이스를 늘릴수록 좋아지고, 한 장일 때는 검사의 이상 여부와 거의 무관하거나 거꾸로 움직이는 경우도 있었습니다. 그래서 통과한 조합만 점수를 보이도록 “게이트 표”를 두었고, 지금 표는 비어 있습니다.</p>
+      <p><strong>한 장 점수는 학습용입니다.</strong> 무릎 분류 모델은 원래 촬영면별 슬라이스 묶음을 보고 판단하도록 만들어졌습니다. 실험(2026-09-30)에서 한 장 조합 33개는 검증을 통과하지 못했고, 승인표(<code>gates.APPROVED</code>)는 비어 있습니다. 그래도 그 촬영면에 모델이 있으면 화면 분석은 원래 모델 점수를 보여 줍니다. 검수된 보정·성능 수치·고정 설명은 승인된 조합에만 붙습니다. 반월판은 시상면 모델이 없어 그 면에서는 평가하지 않습니다. 이미지 파일은 저장하지 않고, 소견 점수 문구는 <code>review_node</code>에 남깁니다(<code>KNEE_SCREEN_SAVE_ENABLED=0</code>이면 저장만 건너뜁니다). 이 결과는 진단이 아닙니다.</p>
     </div>
     <h3>요청</h3>
     <ul>
@@ -226,7 +227,7 @@
       <li><code>analysis_status</code>: <code>evaluated</code>(세 소견 모두) · <code>partially_evaluated</code> · <code>not_evaluated</code>.</li>
       <li><code>findings</code>: <code>abnormal</code>·<code>acl</code>·<code>meniscus</code>마다 <code>status</code>가 <code>evaluated</code> 또는 <code>not_evaluated</code>. 평가하지 않은 소견은 <code>prob</code>·<code>confidence_band</code>·<code>verdict</code>가 모두 <code>null</code>이고 이유(<code>reason</code>)와 빠진 촬영면(<code>missing_planes</code>)이 적힙니다.</li>
       <li><code>visualization</code>: Grad-CAM(<code>shown</code>·<code>no_activation</code>·<code>not_evaluated</code>)과 ACL 위치 박스. 박스는 승인된 sagittal + 전체 슬라이스에서만 나오며 “해부학적 대략 위치, 파열 위치 아님”을 함께 적습니다.</li>
-      <li><code>notices</code>(한 장 한계·학습용·전문가 상담·개인정보 확인·삭제 안내), <code>evidence</code>(승인 근거·성능), <code>explanations</code>(사람이 검수한 고정 설명), <code>retention</code>(서버가 이미지를 지웠다는 사실만), <code>latency_ms</code>, <code>models_loaded</code>.</li>
+      <li><code>notices</code>(한 장 한계·학습용·전문가 상담·개인정보 확인·삭제 안내), <code>evidence</code>(승인 근거·성능. 미검증 점수는 여기 들어가지 않음), <code>explanations</code>(사람이 검수한 고정 설명. 승인된 소견만), <code>retention</code>(서버가 이미지를 지웠다는 사실만), <code>review_idx</code>(<code>review_node</code> 번호. 저장을 끄거나 실패하면 null), <code>latency_ms</code>, <code>models_loaded</code>.</li>
     </ul>
 
     <article id="gates">
@@ -269,15 +270,15 @@
       <h3><code>class/knee/screen_roi.py</code> — 판정</h3>
       <dl>
         <dt>한 줄</dt>
-        <dd>게이트 표를 지키며 응답 본문을 만듭니다.</dd>
+        <dd>촬영면에 모델이 있으면 학습용 점수를 내고, 승인된 조합만 검수 보정과 근거를 붙입니다.</dd>
         <dt>받는 것</dt>
         <dd>회색조 이미지, 촬영면, 이미지 범위, 오버레이 요청 여부.</dd>
         <dt>하는 일</dt>
-        <dd>소견마다 “이 촬영면에 모델이 있는가 → 표에 승인이 있는가”를 차례로 확인합니다. 승인이 있을 때만 모델을 불러 점수를 구하고, 그 조합의 보정값과 구간으로 판정 문구를 정합니다. 점수가 가장 높은 평가 소견에 대해서만 Grad-CAM을 만들고, 강조할 곳이 없으면 그림을 색칠된 근거처럼 내지 않습니다(<code>no_activation</code>).</dd>
+        <dd>소견마다 이 촬영면에 모델이 있는지 확인합니다. 있으면 점수를 냅니다. 승인표에 있으면 그 조합의 보정값과 구간을 쓰고, 없으면 원래 모델 점수와 공통 구간(0.40~0.60은 판단 어려움)을 씁니다. 점수가 가장 높은 소견에 Grad-CAM을 만들고, 강조할 곳이 없으면 <code>no_activation</code>입니다.</dd>
         <dt>돌려주는 것</dt>
         <dd>응답 본문(위 “응답” 항목).</dd>
         <dt>하지 않는 일</dt>
-        <dd>승인 없이 모델을 부르지 않습니다(그래서 지금은 모델이 로드되지도 않습니다). 반월판은 sagittal 모델이 없어 어떤 경우에도 그 촬영면에서 점수를 만들지 않습니다.</dd>
+        <dd>모델이 없는 촬영면은 점수를 만들지 않습니다. 반월판은 sagittal 모델이 없습니다. 승인되지 않은 조합에 성능 수치·검수 설명을 붙이지 않습니다. ACL 위치 박스는 승인된 sagittal 전체 슬라이스에서만 만듭니다.</dd>
         <dt>헷갈리기 쉬운 점</dt>
         <dd>Grad-CAM 그림은 모델이 본 224×224 입력 위에 그려지므로 원본 캡처와 크기와 잘린 범위가 다를 수 있습니다(<code>overlay_note</code>). 세 함수(<code>_predict_single</code>, <code>_gradcam</code>, <code>_locate_acl</code>)만 모델을 쓰기 때문에 테스트에서는 가짜로 바꿔 끼웁니다.</dd>
       </dl>
@@ -291,13 +292,31 @@
         <dt>받는 것</dt>
         <dd>multipart 요청(위 “요청” 항목).</dd>
         <dt>하는 일</dt>
-        <dd>필드 검사 → 크기 검사 → 이미지 읽기 → 별도 스레드에서 판정(제한 시간 기본 30초, 넘으면 504) → <strong>응답을 보내기 전에 업로드 파일을 닫고 지운 뒤</strong> 결과를 돌려줍니다. 모델이 없거나 준비에 실패하면 내부 이유를 숨기고 503, 예상 못 한 오류는 500(오류 종류만 로그에 남김)입니다.</dd>
+        <dd>필드 검사 → 크기 검사 → 이미지 읽기 → 별도 스레드에서 판정(제한 시간 기본 30초, 넘으면 504) → 판독 문구를 <code>review_node</code>에 저장(<code>services/kneeScreenServices.py</code>, 이미지 바이트는 넣지 않음, <code>review_idx</code>로 번호를 돌려줌) → <strong>응답을 보내기 전에 업로드 파일을 닫고 지운 뒤</strong> 결과를 돌려줍니다. 저장이 실패해도 판독 응답은 주고 <code>review_idx</code>는 비웁니다. 모델이 없거나 준비에 실패하면 내부 이유를 숨기고 503, 예상 못 한 오류는 500(오류 종류만 로그에 남김)입니다.</dd>
         <dt>돌려주는 것</dt>
         <dd>응답 JSON 또는 안전한 오류 JSON.</dd>
         <dt>하지 않는 일</dt>
-        <dd>DB, NAS 업로드, 로그인 검사, 이미지·파일 이름 로그를 하지 않습니다. 뇌 CT의 NAS 업로드 함수를 재사용하지 않습니다. <code>main.py</code>는 앱 시작 때 무릎 모델을 불러오지 않습니다.</dd>
+        <dd>이미지 파일 저장, Object Storage 업로드, 로그인 검사를 하지 않습니다. 판독 문구만 <code>review_node</code>에 남깁니다. <code>main.py</code>는 앱 시작 때 무릎 모델을 불러오지 않습니다.</dd>
         <dt>헷갈리기 쉬운 점</dt>
         <dd>이 앱에는 학습자 로그인 세션이 아직 없어 주소가 인증 없이 열려 있습니다. 실제 사용자에게 공개하기 전에 인증·요청 위조 방지·공용 오류 로그의 입력 원문 문제를 먼저 해결해야 하며, 그 전에는 <code>KNEE_SCREEN_ROI_ENABLED=0</code>으로 닫을 수 있습니다.</dd>
+      </dl>
+    </article>
+
+    <article id="screen-save">
+      <h3><code>services/kneeScreenServices.py</code> — 판독 저장</h3>
+      <dl>
+        <dt>한 줄</dt>
+        <dd>화면 분석이 만든 소견 문구를 <code>review_node</code> 한 줄로 남깁니다.</dd>
+        <dt>받는 것</dt>
+        <dd>회원 번호(없으면 비움)와 판정 결과(소견 이름, 점수, 판정 문구, 촬영면). 이미지 바이트는 받지 않습니다.</dd>
+        <dt>하는 일</dt>
+        <dd>점수가 가장 높은 소견 이름을 <code>rn_disease</code>에, 판정 문장을 <code>rn_overlay_summary</code>에, 소견별 점수 JSON을 <code>rn_findings</code>에 넣습니다. 로그인 세션이 있으면 그 회원 번호를 넣고, 없으면 회원 칸을 비웁니다.</dd>
+        <dt>돌려주는 것</dt>
+        <dd>저장된 <code>review_node.idx</code>.</dd>
+        <dt>하지 않는 일</dt>
+        <dd>이미지 파일, 오버레이 그림, 환자 이름을 저장하지 않습니다. 승인된 기준 ROI가 없으면 뇌 CT와 같이 ACL 위치 박스와 그린 박스의 겹침으로 정답·부분정답·오답을 내고 <code>rn_solution</code>에 저장합니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt>
+        <dd>이 줄은 화면 분석 기록입니다. 문제 번호(<code>rn_s_idx</code>)와 채점 결과(<code>rn_solution</code>)는 비어 있습니다. <code>KNEE_SCREEN_SAVE_ENABLED=0</code>이면 라우터가 이 함수를 부르지 않습니다.</dd>
       </dl>
     </article>
 
@@ -327,7 +346,7 @@
         <dt>받는 것</dt>
         <dd>없음(라우터만 붙인 작은 앱과 가짜 모델을 씁니다).</dd>
         <dt>하는 일</dt>
-        <dd>기본 상태에서 모든 촬영면·범위가 “평가하지 않음”이고 모델을 부르지 않는지, 잘못된 부위·촬영면·범위·중복·모르는 필드·이상한 파일의 오류 코드, 오류 본문에 올린 값이나 예외 문구가 새지 않는지, 승인된 조합에서만 점수·Grad-CAM·ACL 박스가 나오는지, 검수 없는 승인이 무시되는지, 시간 초과·모델 준비 실패·삭제 실패, 여러 요청이 동시에 와도 섞이지 않는지를 확인합니다. 코드를 일부러 망가뜨려 테스트가 잡는지도 확인했습니다.</dd>
+        <dd>모델이 있는 촬영면은 승인표가 비어도 학습용 점수를 내는지, 없는 촬영면은 평가하지 않는지, 잘못된 부위·촬영면·범위·중복·모르는 필드·이상한 파일의 오류 코드, 오류 본문에 올린 값이나 예외 문구가 새지 않는지, 승인된 조합만 보정·근거·설명을 붙이는지, 검수 없는 승인은 보정에 쓰지 않는지, 시간 초과·모델 준비 실패·삭제 실패, 여러 요청이 동시에 와도 섞이지 않는지를 확인합니다.</dd>
         <dt>돌려주는 것</dt>
         <dd>통과/실패.</dd>
         <dt>하지 않는 일</dt>

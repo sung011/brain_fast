@@ -12,6 +12,7 @@ import base64
 import importlib
 import io
 import logging
+import os
 import threading
 import time
 import unittest
@@ -58,6 +59,10 @@ def jpeg_bytes(width: int = 200, height: int = 200) -> bytes:
     return buf.getvalue()
 
 
+def screen_roi_verdict(name: str) -> str:
+    return importlib.import_module("class.knee.constants").VERDICT[name][0]
+
+
 def good_fields(**override) -> list[tuple]:
     fields = {"body_part": "knee", "plane": "sagittal", "image_scope": "full_slice"}
     fields.update(override)
@@ -101,6 +106,8 @@ class _ApprovedGate:
 
 class KneeApiBase(unittest.TestCase):
     def setUp(self) -> None:
+        self._save_flag = os.environ.get("KNEE_SCREEN_SAVE_ENABLED")
+        os.environ["KNEE_SCREEN_SAVE_ENABLED"] = "0"
         self.client = TestClient(_app())
         self._saved = (dict(gates.APPROVED), dict(gates.APPROVED_LOCATION), dict(explanations.EXPLANATIONS))
         self._hooks = (screen_roi._predict_single, screen_roi._gradcam, screen_roi._locate_acl)
@@ -137,50 +144,65 @@ class KneeApiBase(unittest.TestCase):
         gates.APPROVED_LOCATION.clear(); gates.APPROVED_LOCATION.update(self._saved[1])
         explanations.EXPLANATIONS.clear(); explanations.EXPLANATIONS.update(self._saved[2])
         screen_roi._predict_single, screen_roi._gradcam, screen_roi._locate_acl = self._hooks
+        if self._save_flag is None:
+            os.environ.pop("KNEE_SCREEN_SAVE_ENABLED", None)
+        else:
+            os.environ["KNEE_SCREEN_SAVE_ENABLED"] = self._save_flag
 
 
 class DefaultLockedTests(KneeApiBase):
-    """AC-03: 승인된 실험표가 없으면 모든 점수·판정·Grad-CAM 이 비고 not_evaluated 다."""
+    """승인표가 비어 있어도 모델이 있는 촬영면은 학습용 점수를 낸다. 검수 근거와 ACL 위치 박스는 비어 있다."""
 
     def test_gate_table_is_empty_by_default(self) -> None:
         self.assertEqual(self._saved[0], {})
         self.assertEqual(self._saved[1], {})
         self.assertEqual(self._saved[2], {})
 
-    def test_every_plane_and_scope_is_not_evaluated_and_never_touches_the_model(self) -> None:
+    def test_planes_with_a_model_are_scored_without_an_approval_record(self) -> None:
+        predict_calls = 0
         for plane in gates.PLANES:
             for scope in gates.SCOPES:
                 with self.subTest(plane=plane, scope=scope):
                     response = post(self.client, png_bytes(), fields=good_fields(plane=plane, image_scope=scope))
                     self.assertEqual(response.status_code, 200)
                     body = response.json()
-                    self.assertEqual(body["analysis_status"], "not_evaluated")
+                    available = [name for name in gates.FINDINGS if gates.model_plane_available(name, plane)]
+                    predict_calls += len(available)
+                    self.assertEqual(body["analysis_status"], "evaluated" if len(available) == len(gates.FINDINGS) else "partially_evaluated")
                     self.assertEqual(body["body_part"], "knee")
                     self.assertEqual(body["image"], {"width": 200, "height": 200, "plane": plane, "image_scope": scope, "source": "screen_capture"})
                     self.assertEqual(set(body["findings"]), {"abnormal", "acl", "meniscus"})
-                    for finding in body["findings"].values():
-                        self.assertEqual(finding["status"], "not_evaluated")
-                        self.assertIsNone(finding["prob"])
-                        self.assertIsNone(finding["verdict"])
-                        self.assertIsNone(finding["confidence_band"])
-                        self.assertTrue(finding["reason"])
+                    for name, finding in body["findings"].items():
+                        if name in available:
+                            self.assertEqual(finding["status"], "evaluated")
+                            self.assertEqual(finding["prob"], 0.7)
+                            self.assertEqual(finding["verdict"], screen_roi_verdict(name))
+                            self.assertEqual(finding["reason_code"], "single_image_unvalidated")
+                        else:
+                            self.assertEqual(finding["status"], "not_evaluated")
+                            self.assertEqual(finding["reason_code"], "model_plane_unavailable")
+                            self.assertIsNone(finding["prob"])
                     viz = body["visualization"]
-                    self.assertEqual((viz["gradcam_status"], viz["overlay_png_base64"], viz["acl_location_status"], viz["acl_box"]),
-                                     ("not_evaluated", None, "not_evaluated", None))
+                    self.assertEqual(viz["gradcam_status"], "shown")
+                    self.assertTrue(viz["overlay_png_base64"])
+                    self.assertEqual((viz["acl_location_status"], viz["acl_box"]), ("not_evaluated", None))
                     self.assertEqual(body["explanations"], [])
                     self.assertEqual(body["evidence"]["validated"], [])
                     self.assertEqual(body["evidence"]["gates_version"], gates.GATES_VERSION)
-        self.assertEqual(self.calls, {"predict": 0, "gradcam": 0, "locate": 0})
+                    self.assertIsNone(body["review_idx"])
+        self.assertEqual(self.calls, {"predict": predict_calls, "gradcam": len(gates.PLANES) * len(gates.SCOPES), "locate": 0})
 
     def test_meniscus_has_no_sagittal_model_and_missing_planes_are_reported(self) -> None:
         body = post(self.client, png_bytes(), fields=good_fields(plane="sagittal")).json()
         meniscus = body["findings"]["meniscus"]
         self.assertEqual(meniscus["reason_code"], "model_plane_unavailable")
         self.assertEqual(meniscus["missing_planes"], ["axial", "coronal"])
-        self.assertEqual(body["findings"]["abnormal"]["reason_code"], "single_image_not_validated")
+        self.assertEqual(body["findings"]["abnormal"]["status"], "evaluated")
+        self.assertEqual(body["findings"]["abnormal"]["reason_code"], "single_image_unvalidated")
         self.assertEqual(body["findings"]["abnormal"]["missing_planes"], ["axial", "coronal"])
         axial = post(self.client, png_bytes(), fields=good_fields(plane="axial")).json()
-        self.assertEqual(axial["findings"]["meniscus"]["reason_code"], "single_image_not_validated")
+        self.assertEqual(axial["findings"]["meniscus"]["status"], "evaluated")
+        self.assertEqual(axial["findings"]["meniscus"]["reason_code"], "single_image_unvalidated")
         self.assertEqual(axial["findings"]["meniscus"]["missing_planes"], ["coronal"])
 
     def test_notices_and_retention_are_always_present(self) -> None:
@@ -385,22 +407,27 @@ class ApprovedGateTests(KneeApiBase):
         self.assertEqual((abnormal["status"], abnormal["prob"], abnormal["confidence_band"]), ("evaluated", 0.7, "confident"))
         self.assertEqual(abnormal["verdict"], "이상 소견 가능성 높음")
         self.assertEqual(abnormal["planes_used"], ["sagittal"])
+        self.assertIsNone(abnormal["reason_code"])
         self.assertIn("임상적 발병 확률이 아님", abnormal["score_label"])
-        for other in ("acl", "meniscus"):
-            self.assertEqual(body["findings"][other]["status"], "not_evaluated")
-            self.assertIsNone(body["findings"][other]["prob"])
-        self.assertEqual(self.calls["predict"], 1)  # 승인 안 된 소견은 모델을 부르지도 않는다
+        self.assertEqual(body["findings"]["acl"]["status"], "evaluated")
+        self.assertEqual(body["findings"]["acl"]["reason_code"], "single_image_unvalidated")
+        self.assertEqual(body["findings"]["meniscus"]["status"], "not_evaluated")
+        self.assertIsNone(body["findings"]["meniscus"]["prob"])
+        self.assertEqual(self.calls["predict"], 2)  # 시상면 모델이 있는 이상·ACL. 반월판 모델은 없다
         self.assertEqual(body["explanations"], [{"finding": "abnormal", "id": "abnormal_test", "version": "t1", "text": "테스트용 고정 설명입니다."}])
+        self.assertEqual(len(body["evidence"]["validated"]), 1)
         self.assertEqual(body["evidence"]["validated"][0]["validation_id"], "test-exp-1")
         self.assertEqual(body["evidence"]["validated"][0]["performance"], {"auc": 0.9})
 
-    def test_other_planes_and_scopes_stay_locked(self) -> None:
+    def test_unapproved_planes_still_return_a_learning_score(self) -> None:
         self.gate.approve_finding("abnormal", "sagittal", "full_slice")
         for plane, scope in (("axial", "full_slice"), ("coronal", "full_slice"), ("sagittal", "roi_crop")):
             with self.subTest(plane=plane, scope=scope):
                 body = post(self.client, png_bytes(), fields=good_fields(plane=plane, image_scope=scope)).json()
-                self.assertEqual(body["analysis_status"], "not_evaluated")
-        self.assertEqual(self.calls["predict"], 0)
+                self.assertIn(body["analysis_status"], ("evaluated", "partially_evaluated"))
+                self.assertEqual(body["findings"]["abnormal"]["status"], "evaluated")
+                self.assertEqual(body["findings"]["abnormal"]["reason_code"], "single_image_unvalidated")
+                self.assertEqual(body["evidence"]["validated"], [])
 
     def test_meniscus_is_never_produced_from_sagittal(self) -> None:
         self.gate.approve_finding("meniscus", "sagittal", "full_slice")
@@ -416,8 +443,10 @@ class ApprovedGateTests(KneeApiBase):
                 explanations.EXPLANATIONS.clear()
                 self.gate.approve_finding("abnormal", "sagittal", "full_slice", **kwargs)
                 body = post(self.client, png_bytes()).json()
-                self.assertEqual(body["analysis_status"], "not_evaluated")
-        self.assertEqual(self.calls["predict"], 0)
+                self.assertEqual(body["findings"]["abnormal"]["reason_code"], "single_image_unvalidated")
+                self.assertEqual(body["findings"]["abnormal"]["prob"], 0.7)
+                self.assertEqual(body["evidence"]["validated"], [])
+        self.assertGreater(self.calls["predict"], 0)
 
     def test_gate_specific_calibration_and_band_are_used(self) -> None:
         self.gate.approve_finding("abnormal", "sagittal", "full_slice", calibration=(2.0, 0.0), band=(0.4, 0.9))
@@ -543,7 +572,7 @@ class ConcurrencyAndWiringTests(KneeApiBase):
             self.assertEqual(r["status"], 200)
             self.assertEqual(r["body"]["image"]["width"], 100 + i)
             self.assertEqual(r["body"]["image"]["plane"], r["plane"])
-            self.assertEqual(r["body"]["findings"]["abnormal"]["status"], "evaluated" if r["plane"] == "axial" else "not_evaluated")
+            self.assertEqual(r["body"]["findings"]["abnormal"]["status"], "evaluated")
             ids.add(r["body"]["request_id"])
         self.assertEqual(len(ids), 8)
 
@@ -552,7 +581,7 @@ class ConcurrencyAndWiringTests(KneeApiBase):
         for banned in ("import torch", "get_db", "Session", "nas_service", "nasServices", "upload_analysis_bundle", "print("):
             self.assertNotIn(banned, source, f"라우터에 {banned!r} 가 있으면 안 됩니다")
         main = (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("from routers import admin, commonness, brain, knee, kneeLearning, user", main)
+        self.assertIn("from routers import admin, commonness, brain, brain_mri, knee, kneeLearning, user, account, thorax", main)
         self.assertIn('app.include_router(knee.router, prefix="/api/v1", tags=["knee"])', main)
         self.assertIn("app.include_router(kneeLearning.router)", main)
         self.assertNotIn("class.knee", main)  # 앱 시작 때 무릎 모델을 불러오지 않는다

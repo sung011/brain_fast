@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     nas_public_root: str = "/web/mu_shop/public"
     # 브라우저 <img> 용 공개 URL prefix. 버킷 + 웹 경로.
     nas_public_base_url: str = "https://kr.object.ncloudstorage.com"
+    # 문제 영상을 서버가 대신 받을 때. 공개 HTTPS면 인증서 검사를 켠다.
+    nas_verify_ssl: bool = True
+    nas_timeout: float = 20.0
     # 분석 완료 시 원본·overlay·result.json 자동 업로드
     nas_upload_on_analyze: bool = False
     # 의학용어 사전 CSV(팀 RAG 자료, 칸: en, kr, definition, definition_kr). 비어 있으면 쓰지 않는다.

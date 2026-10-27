@@ -48,7 +48,14 @@
       <h3><span class="method post">POST</span><code>/login</code></h3>
       <p>보내는 값(JSON): <code>user_id</code>, <code>user_pw</code></p>
       <p>성공: <code>{"ok": true, "idx": 3, "user_id": "...", "user_name": "...", "mb_level": 1}</code></p>
-      <p>실패 401: "아이디 또는 비밀번호가 올바르지 않습니다." — 어느 쪽이 틀렸는지는 일부러 알려 주지 않습니다.</p>
+      <p>실패 401: <code>{"message": "아이디 또는 비밀번호가 올바르지 않습니다."}</code> — 어느 쪽이 틀렸는지는 알려 주지 않고, 비밀번호와 해시도 응답에 넣지 않습니다.</p>
+    </article>
+    <article>
+      <h3><span class="method post">POST</span><code>/signup</code></h3>
+      <p>학습자 가입. 관리자 세션이 필요 없습니다. <code>POST /admin/user/signup</code> 과 주소가 다릅니다.</p>
+      <p>보내는 값(JSON): <code>user_id</code>(아이디·이메일, 최대 30자), <code>user_pw</code>(4~72자), <code>user_name</code>(닉네임, 1~10자), <code>user_birth</code>(<code>YYYY-MM-DD</code> 또는 여섯 자리 <code>YYMMDD</code>, 만 14세 이상), <code>user_un</code>(학교, 최대 20자), <code>user_sp</code>(전공, 최대 20자).</p>
+      <p>성공: <code>{"ok": true, "idx": 3, "user_id": "...", "user_name": "..."}</code>. 비밀번호는 들어 있지 않습니다. 화면은 이어서 <code>POST /login</code> 으로 로그인합니다.</p>
+      <p>오류: 409 이미 있는 아이디, 422 생년월일·나이·글자 수.</p>
     </article>
 
     <h2>2. 아이디·비밀번호 찾기</h2>
@@ -142,7 +149,7 @@
     <article>
       <h3><span class="method">GET</span><code>/learning/reviews?user_idx=3&amp;solution=W,H</code></h3>
       <p>내 풀이 목록(최신순). <code>solution</code>: <code>C</code>정답·<code>H</code>부분정답·<code>W</code>오답을 쉼표로, <code>all</code>이면 전부. 기본 <code>W,H</code>. <code>limit</code> 기본 50(최대 200).</p>
-      <p>항목: <code>review_idx</code>, <code>study_idx</code>, <code>st_part</code>/<code>st_part_label</code>, <code>st_modal</code>/<code>st_modal_label</code>, <code>disease</code>, <code>solution</code>/<code>solution_label</code>, <code>image_url</code>(내 ROI가 그려진 제출 이미지), <code>created_at</code></p>
+      <p>항목: <code>review_idx</code>, <code>study_idx</code>, <code>st_part</code>/<code>st_part_label</code>, <code>st_modal</code>/<code>st_modal_label</code>, <code>disease</code>(<code>review_node.rn_disease</code>. 비어 있을 때만 문제 병명), <code>solution</code>/<code>solution_label</code>, <code>image_url</code>(내 ROI가 그려진 제출 이미지), <code>created_at</code></p>
     </article>
     <article>
       <h3><span class="method">GET</span><code>/learning/reviews/{review_idx}?user_idx=3</code></h3>
@@ -152,7 +159,7 @@
     <h2>7. 화면 공유 분석 (흉부)</h2>
     <article>
       <h3><span class="method">GET</span><code>/api/v1/thorax/health</code></h3>
-      <p><code>status</code>(<code>ok</code>/<code>degraded</code>), <code>models_loaded</code>, <code>models_error</code>. 흉부 모델은 첫 요청 때 불러오므로 처음에는 <code>degraded</code>가 정상입니다.</p>
+      <p><code>status</code>(<code>ok</code>/<code>degraded</code>), <code>models_loaded</code>, <code>models_error</code>. 모델 위치가 정해져 있으면 이 주소에서 가중치를 불러 <code>models_loaded</code>를 분석 가능 여부와 맞춥니다. 화면 공유는 이 값이 true일 때 분석을 진행합니다.</p>
     </article>
     <article>
       <h3><span class="method post">POST</span><code>/api/v1/thorax/analyze/screen-roi</code> <small>(multipart)</small></h3>

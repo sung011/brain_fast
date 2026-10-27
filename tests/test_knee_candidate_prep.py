@@ -295,7 +295,10 @@ class OutputTests(unittest.TestCase):
         out2 = Path(self.tmp.name) / "out2"
         report = prep.write_cases([self.case], out2, private_dir=private_dir)
         private = json.loads((private_dir / "PRIVATE_provenance.json").read_text(encoding="utf-8"))
-        self.assertEqual(report["private"], str(private_dir / "PRIVATE_provenance.json"))
+        self.assertEqual(
+            Path(report["private"]).resolve(),
+            (private_dir / "PRIVATE_provenance.json").resolve(),
+        )
         self.assertIn("공유 금지", private["WARNING"])
         self.assertEqual(private["cases"][0]["exam_id"], 111111)
         self.assertEqual(private["cases"][0]["acl_diagnosis_label"], 2)

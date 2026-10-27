@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from repositories import reviewNodeRepositories as repositories
+from repositories import studyRepositories as study_repositories
 from services.objectStorageServices import StorageNotConfiguredError, storage_service
 
 SOLUTION_MAP = {
@@ -175,7 +176,7 @@ async def save_submission(
     제출 이미지를 Object Storage review 경로에 올리고 review_node 행을 만든다.
     DB rn_image 예) /stylesheets/assets/review/{file}
 
-    NAS 가 설정되지 않았거나 업로드에 실패해도 review_node 행은 만든다(rn_image 는 비움).
+    Object Storage 가 설정되지 않았거나 업로드에 실패해도 review_node 행은 만든다(rn_image 는 비움).
     그림 하나 때문에 채점 결과와 오답 기록을 잃지 않기 위해서다. 결과의 image_saved / image_error 로 알린다.
     """
 
@@ -218,11 +219,17 @@ async def save_submission(
             )
             image_error = "이미지 업로드에 실패해 제출 이미지를 저장하지 못했습니다."
 
+    disease = highest_percent_disease(grade)
+    if disease is None and study_idx is not None:
+        study = study_repositories.get_by_idx(db, int(study_idx))
+        if study is not None:
+            disease = _clip_disease(study.st_disease)
+
     row = repositories.create(
         db,
         rn_u_idx=user_idx,
         rn_s_idx=study_idx,
-        rn_disease=highest_percent_disease(grade),
+        rn_disease=disease,
         rn_image=rn_image,
         rn_solution=solution_code(grade.get("result")),
         rn_recall=_ratio(grade.get("recall")),
@@ -259,6 +266,15 @@ def parse_solutions(value: str | None) -> list[str] | None:
     return codes
 
 
+def _note_disease(review_disease: str | None, study_disease: str | None) -> str | None:
+    """오답노트에 보여줄 병명. review_node.rn_disease 를 쓰고, 비어 있을 때만 문제 병명을 쓴다."""
+    text = (review_disease or "").strip()
+    if text:
+        return text
+    fallback = (study_disease or "").strip()
+    return fallback or None
+
+
 def _learner_item(review, study) -> dict[str, Any]:
     from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
     from services.learningServices import problem_image_url
@@ -272,8 +288,7 @@ def _learner_item(review, study) -> dict[str, Any]:
         "st_part_label": ST_PART_LABELS.get(part or "", part),
         "st_modal": modal,
         "st_modal_label": ST_MODAL_LABELS.get(modal or "", modal),
-        # 이미 제출한 문제라 정답 병명을 보여 줘도 된다
-        "disease": (study.st_disease if study else None) or review.rn_disease,
+        "disease": _note_disease(review.rn_disease, study.st_disease if study else None),
         "solution": review.rn_solution,
         "solution_label": solution_label(review.rn_solution),
         "image_url": problem_image_url(review.rn_image) if review.rn_image else None,
@@ -346,7 +361,7 @@ def list_wrong_notes(db: Session, user_idx: int) -> list[dict[str, Any]]:
             {
                 "idx": row.get("idx"),
                 "study_idx": study_idx,
-                "disease": row.get("st_disease") or row.get("rn_disease") or "",
+                "disease": _note_disease(row.get("rn_disease"), row.get("st_disease")) or "",
                 "solution": code,
                 "solution_label": row.get("rn_solution_label") or solution_label(code),
                 "part_label": row.get("st_part_label") or "",
@@ -376,7 +391,7 @@ def get_saved_review(db: Session, review_idx: int, user_idx: int) -> dict[str, A
     return {
         "idx": review.idx,
         "study_idx": review.rn_s_idx,
-        "disease": (study.st_disease if study else None) or review.rn_disease or "",
+        "disease": _note_disease(review.rn_disease, study.st_disease if study else None) or "",
         "solution": code,
         "solution_label": solution_label(code),
         "part_label": ST_PART_LABELS.get(part, ""),
@@ -412,7 +427,7 @@ def list_learning_history(db: Session, user_idx: int) -> dict[str, Any]:
             {
                 "idx": row.get("idx"),
                 "study_idx": study_idx,
-                "disease": row.get("st_disease") or row.get("rn_disease") or "",
+                "disease": _note_disease(row.get("rn_disease"), row.get("st_disease")) or "",
                 "solution": code,
                 "solution_label": row.get("rn_solution_label") or solution_label(code),
                 "part_label": row.get("st_part_label") or "",

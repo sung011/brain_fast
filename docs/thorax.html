@@ -126,7 +126,7 @@
       <dl>
         <dt>한 줄로</dt><dd>흉부 분석 주소를 열고 <code>class/thorax/</code>를 부릅니다.</dd>
         <dt>받는 것</dt><dd><code>GET /api/v1/thorax/health</code>, <code>POST /api/v1/thorax/analyze/screen-roi</code>(image, modality, include_overlay).</dd>
-        <dt>하는 것</dt><dd>크기(최대 5MB)를 확인하고 분석한 뒤 뇌 CT와 같은 형식으로 응답합니다. <code>NAS_UPLOAD_ON_ANALYZE</code>가 켜져 있으면 NAS에도 올립니다.</dd>
+        <dt>하는 것</dt><dd>health는 모델 위치가 있으면 가중치를 불러 <code>models_loaded</code>를 분석 가능 여부와 맞춥니다. 분석은 크기(최대 5MB)를 확인한 뒤 뇌 CT와 같은 형식으로 응답합니다. <code>NAS_UPLOAD_ON_ANALYZE</code>가 켜져 있으면 Object Storage에도 올립니다.</dd>
         <dt>돌려주는 것</dt><dd>소견별 점수, overlay, 요약, 면책 문구.</dd>
         <dt>하지 않는 일</dt><dd>판독문(<code>/explain</code>)은 없습니다.</dd>
         <dt>헷갈리기 쉬운 점</dt><dd>뇌 CT 주소는 <code>/api/v1/analyze/...</code>, 흉부는 가운데에 <code>/thorax</code>가 들어갑니다.</dd>

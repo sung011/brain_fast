@@ -77,9 +77,11 @@ class SignupPageTests(unittest.TestCase):
         self.assertEqual(js.status_code, 200)
         self.assertIn("javascript", js.headers["content-type"])
 
-    def test_page_is_not_in_api_docs(self) -> None:
+    def test_html_page_is_not_in_api_docs(self) -> None:
         schema = self.client.get("/openapi.json").json()
-        self.assertNotIn("/signup", schema["paths"])
+        signup = schema["paths"].get("/signup", {})
+        self.assertNotIn("get", signup)
+        self.assertIn("post", signup)
 
     def test_inputs_have_no_name_attribute_so_values_never_go_to_url(self) -> None:
         html = self.client.get("/signup").text

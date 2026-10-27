@@ -66,7 +66,7 @@ class Base(unittest.TestCase):
             self.next_args.append(kw)
             return self.next_row
 
-        env = mock.patch.dict(os.environ, {"KNEE_ROI_GRADE_ENABLED": "1"})
+        env = mock.patch.dict(os.environ, {"KNEE_ROI_GRADE_ENABLED": "1", "KNEE_SLICE_READING_ENABLED": "0"})
         env.start()
         self.addCleanup(env.stop)
         patches = [
@@ -107,19 +107,18 @@ class AccessControlTests(Base):
         self.assertEqual(res.status_code, 503)
         self.assertEqual(self.created, [])
 
-    def test_requires_login(self):
+    def test_grade_without_login_is_allowed(self):
         self.approve()
         res = self.post()
-        self.assertEqual(res.status_code, 401)
-        self.assertEqual(self.created, [])
-        self.assertEqual(self.published, [])
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(self.created[0]["rn_u_idx"], None)
 
-    def test_requires_verified_email(self):
+    def test_unverified_session_still_grades(self):
         self.login(verified=False)
         self.approve()
         res = self.post()
-        self.assertEqual(res.status_code, 403)
-        self.assertEqual(self.created, [])
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(self.created[0]["rn_u_idx"], 5)
 
     def test_bad_session_values_are_rejected(self):
         self.approve()
@@ -141,10 +140,10 @@ class AccessControlTests(Base):
                 client = TestClient(app, raise_server_exceptions=False)
                 client.post("/_set")
                 res = client.post("/learning/roi-grade/knee", data={"study_idx": "3", "roi_type": "box", "x": "0.3", "y": "0.3", "width": "0.4", "height": "0.4"})
-                self.assertEqual(res.status_code, 401, res.text)
+                self.assertEqual(res.status_code, 200, res.text)
 
-    def test_admin_session_key_is_not_a_learner_login(self):
-        """관리자 로그인이 채우는 session["user"] 는 학습자 로그인으로 보지 않는다(설계 8장). 이메일 인증 값이 있어도 401."""
+    def test_admin_session_counts_as_login(self):
+        """관리자 로그인(session["user"])도 같은 활성 회원의 로그인으로 본다."""
         self.approve()
         app = FastAPI()
         app.add_middleware(SessionMiddleware, secret_key="s")
@@ -159,17 +158,16 @@ class AccessControlTests(Base):
         client = TestClient(app, raise_server_exceptions=False)
         client.post("/_admin")
         res = client.post("/learning/roi-grade/knee", data={"study_idx": "3", "roi_type": "box", "x": "0.3", "y": "0.3", "width": "0.4", "height": "0.4"})
-        self.assertEqual(res.status_code, 401, res.text)
-        self.assertEqual(self.created, [])
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(self.created[0]["rn_u_idx"], 5)
 
-    def test_user_missing_in_db_is_rejected(self):
-        """세션에 번호가 있어도 DB 에 없거나 삭제된 회원이면 로그인으로 보지 않는다."""
+    def test_missing_user_does_not_block_grade(self):
+        """세션 번호가 DB 에 없어도 채점은 진행하고, 기록에는 회원 번호를 넣지 않는다."""
         self.gone_users = {5}
         self.ready()
         res = self.post()
-        self.assertEqual(res.status_code, 401)
-        self.assertEqual(self.created, [])
-        self.assertEqual(self.published, [])
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(self.created[0]["rn_u_idx"], None)
 
     def test_user_comes_from_session_not_request(self):
         self.login(idx=42)

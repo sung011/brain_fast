@@ -46,7 +46,7 @@
     <h2>주소</h2>
     <table>
       <tr><th>주소</th><th>받는 값</th><th>돌려주는 것</th></tr>
-      <tr><td><code>GET /learning/reviews</code></td><td><code>user_idx</code>(필수), <code>solution</code>(예: <code>W,H</code>, <code>all</code>, 기본 <code>W,H</code>), <code>limit</code>(1~200, 기본 50)</td><td>본인 기록 최신순. 문제 부위·영상 종류, 정답 병명, 결과 코드, 제출 그림 주소, 제출 시각</td></tr>
+      <tr><td><code>GET /learning/reviews</code></td><td><code>user_idx</code>(필수), <code>solution</code>(예: <code>W,H</code>, <code>all</code>, 기본 <code>W,H</code>), <code>limit</code>(1~200, 기본 50)</td><td>본인 기록 최신순. 문제 부위·영상 종류, <code>review_node.rn_disease</code>, 결과 코드, 제출 그림 주소, 제출 시각</td></tr>
       <tr><td><code>GET /learning/reviews/{번호}</code></td><td><code>user_idx</code>(필수)</td><td>위 항목 + <code>problem</code>(다시 풀 문제. 정답 병명 없음). 문제가 지워졌으면 <code>problem</code>은 null. 남의 기록이면 404</td></tr>
       <tr><td><code>GET /learning/problem/{문제번호}</code></td><td>-</td><td>문제 1건(정답 병명 없음). 삭제·비활성 문제는 404</td></tr>
     </table>
@@ -64,7 +64,7 @@
       <dl>
         <dt>한 줄로</dt><dd>채점 기록 저장, 오답노트 목록·상세를 화면용 모양으로 만듭니다.</dd>
         <dt>하는 것</dt><dd><code>solution</code> 값을 코드 목록으로 바꾸고(<code>parse_solutions</code>), 제출 그림 경로를 NAS 공개 주소로 바꿉니다.</dd>
-        <dt>헷갈리기 쉬운 점</dt><dd>목록에 정답 병명이 들어가는 건 이미 제출한 문제이기 때문입니다. 문제를 처음 받을 때는 정답을 숨깁니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>목록의 병명은 문제 등록명(<code>st_disease</code>)이 아니라 그 풀이의 <code>rn_disease</code>입니다. <code>rn_disease</code>가 비어 있을 때만 문제 병명을 씁니다. 문제를 처음 받을 때는 정답을 숨깁니다.</dd>
       </dl>
     </article>
     <article>
