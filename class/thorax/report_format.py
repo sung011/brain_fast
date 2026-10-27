@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from .constants import LABELS, class_ko, class_label, finding_code
 
-NOTE_DISCLAIMER = "학습용 참고 정보이며 진단이 아닙니다. 실제 판단은 임상 정보와 함께 의사가 합니다."
+NOTE_DISCLAIMER = "의학 검토를 거치지 않은 학습용 참고 자료이며, 진단이 아닙니다."
 
 # 이렇게 보이면(next_steps) 출처
 _BTS_PLEURAL = {"title": "British Thoracic Society Guideline for pleural disease (Thorax 2023)",

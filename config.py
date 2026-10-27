@@ -42,6 +42,8 @@ class Settings(BaseSettings):
     # 의학용어 사전 CSV(팀 RAG 자료, 칸: en, kr, definition, definition_kr). 비어 있으면 쓰지 않는다.
     # 채점 해설의 "이 소견은"(정의)을 이 사전의 한글 정의로 채운다. 파일은 저장소에 넣지 않는다.
     glossary_csv_path: str = ""
+    # 흉부 전용 의학용어 사전 CSV(같은 4칸). 있으면 흉부 해설은 이 사전을 먼저 보고, 없는 용어만 위 사전에서 찾는다.
+    thorax_glossary_csv_path: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
