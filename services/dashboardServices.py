@@ -151,9 +151,9 @@ def get_stats(db: Session) -> dict[str, Any]:
 
 
 def quick_health() -> dict[str, Any]:
-    """네트워크 호출 없이 DB ping + NAS 설정 여부만."""
+    """네트워크 호출 없이 DB ping + Object Storage 설정 여부만."""
     from db import ping_db
-    from services.nasServices import nas_service
+    from services.objectStorageServices import storage_service
 
     health: dict[str, Any] = {
         "db": {"ok": False, "name": None},
@@ -164,9 +164,9 @@ def quick_health() -> dict[str, Any]:
     except Exception as exc:
         health["db"] = {"ok": False, "name": None, "error": str(exc)}
 
-    configured = bool(nas_service.enabled)
+    configured = bool(storage_service.enabled)
     health["nas"] = {
-        # 대시보드에서는 로그인 시도하지 않음 (느림). 설정 여부만.
+        # 대시보드에서는 버킷 조회를 하지 않음. 키·버킷 설정 여부만.
         "ok": configured,
         "enabled": configured,
         "error": None if configured else "미설정",

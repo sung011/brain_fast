@@ -36,6 +36,17 @@ def list_public(db: Session) -> list[PopupModel]:
     return repositories.list_public_active(db)
 
 
+def next_exposed_sort(max_sort: int | None) -> int:
+    """노출 팝업이 없으면 0, 있으면 가장 큰 표시 순서의 다음 번호."""
+    if max_sort is None:
+        return 0
+    return int(max_sort) + 1
+
+
+def next_sort_for_exposed(db: Session) -> int:
+    return next_exposed_sort(repositories.max_exposed_sort(db))
+
+
 def get_popup(db: Session, idx: int) -> PopupModel | None:
     row = repositories.get_by_idx(db, idx)
     if row is None or row.del_yn == "Y":
@@ -64,12 +75,14 @@ def create_popup(
     end = _parse_dt(end_at)
     if start and end and end < start:
         raise ValueError("종료 시각이 시작 시각보다 빠를 수 없습니다.")
+    # 노출로 등록하면 이미 노출 중인 팝업 다음 번호. 없으면 0.
+    sort = next_sort_for_exposed(db) if st == "N" else int(pp_sort or 0)
     return repositories.create(
         db,
         pp_title=(pp_title or "").strip() or None,
         pp_image=image,
         pp_link=(pp_link or "").strip() or None,
-        pp_sort=int(pp_sort or 0),
+        pp_sort=sort,
         start_at=start,
         end_at=end,
         state=st,

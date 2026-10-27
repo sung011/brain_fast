@@ -33,7 +33,7 @@ from schemas.analyzeSchemas import (
     RoiInfo,
     ScreenRoiResponse,
 )
-from services import nasServices as nas_service_mod
+from services import objectStorageServices as storage_mod
 
 router = APIRouter()
 _brain_mod: ModuleType | None = None
@@ -142,14 +142,14 @@ async def _maybe_upload_analysis(
 ) -> NasUploadInfo | None:
     if not settings.nas_upload_on_analyze:
         return None
-    svc = nas_service_mod.nas_service
+    svc = storage_mod.storage_service
     if not svc.enabled:
         return NasUploadInfo(
             ok=False,
-            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 NAS 계정 설정이 비어 있습니다.",
+            error="NAS_UPLOAD_ON_ANALYZE=true 이지만 Object Storage 설정이 비어 있습니다.",
         )
     try:
-        # base64 overlay는 NAS에 중복 저장하지 않도록 JSON에서 제외
+        # base64 overlay는 저장소에 중복 저장하지 않도록 JSON에서 제외
         slim = {
             k: v
             for k, v in response_payload.items()

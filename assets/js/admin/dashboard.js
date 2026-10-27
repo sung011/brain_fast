@@ -194,7 +194,7 @@
         list.innerHTML =
             row('PostgreSQL', !!db.ok, db.name || db.error || '', '정상') +
             row(
-                'NAS',
+                '이미지 저장소',
                 !!nas.enabled || !!nas.ok,
                 nas.enabled || nas.ok ? '설정됨 (연결 검사는 생략)' : (nas.error || '미설정'),
                 '설정됨'

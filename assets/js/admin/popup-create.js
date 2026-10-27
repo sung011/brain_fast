@@ -4,11 +4,61 @@
 (function () {
     'use strict';
 
+    async function fillNextSort(form) {
+        const sortInput = form.pp_sort;
+        if (!sortInput) return;
+        if (!form.state || form.state.value !== 'N') {
+            sortInput.readOnly = false;
+            return;
+        }
+        sortInput.readOnly = true;
+        try {
+            const res = await fetch('/admin/popups/next-sort', {
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+            });
+            const data = await res.json().catch(function () { return {}; });
+            if (res.ok && data && data.pp_sort != null && form.state.value === 'N') {
+                sortInput.value = String(data.pp_sort);
+            }
+        } catch (error) {
+            // 조회에 실패해도 등록 시 서버가 노출 다음 번호를 다시 계산한다.
+        }
+    }
+
+    function refreshOpenCreateSorts() {
+        document.querySelectorAll('#popupCreateForm').forEach(function (form) {
+            if (form.state && form.state.value === 'N') fillNextSort(form);
+        });
+    }
+
+    function bindSortRefresh() {
+        if (window.__popupCreateSortSSEBound) return;
+        window.__popupCreateSortSSEBound = true;
+        if (window.AdminPopupSSE) {
+            AdminPopupSSE.on('popup_created', refreshOpenCreateSorts);
+            AdminPopupSSE.on('popup_updated', refreshOpenCreateSorts);
+            AdminPopupSSE.on('popup_deleted', refreshOpenCreateSorts);
+        }
+    }
+
     function initPopupCreate(scope) {
         const root = scope || document;
         const form = root.querySelector('#popupCreateForm') || document.forms['popupCreate'];
         if (!form || form.dataset.bound === '1') return;
         form.dataset.bound = '1';
+        bindSortRefresh();
+        fillNextSort(form);
+
+        if (form.state) {
+            form.state.addEventListener('change', function () {
+                if (form.state.value === 'N') {
+                    fillNextSort(form);
+                    return;
+                }
+                form.pp_sort.readOnly = false;
+                form.pp_sort.value = '0';
+            });
+        }
 
         form.addEventListener('submit', async function (event) {
             event.preventDefault();
@@ -40,8 +90,8 @@
                 }
                 if (utils && utils.showAlert) utils.showAlert('팝업이 등록되었습니다.');
                 form.reset();
-                form.pp_sort.value = '0';
                 form.state.value = 'N';
+                fillNextSort(form);
             } catch (err) {
                 if (utils && utils.showError) utils.showError(String(err.message || err));
                 else alert(String(err.message || err));

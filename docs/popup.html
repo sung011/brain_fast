@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>팝업 등록 SSE — brain_fast</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.6; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 42rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.6rem; margin-bottom: 0.4rem; }
+    h2 { font-size: 1.15rem; margin-top: 1.75rem; }
+    p, li { margin: 0.4rem 0; }
+    a { color: #1a6b73; }
+    code { background: #e8eef3; padding: 0.1em 0.35em; border-radius: 0.25rem; font-size: 0.92em; }
+    dl { margin: 0.75rem 0; }
+    dt { font-weight: 600; margin-top: 0.75rem; }
+    dd { margin: 0.2rem 0 0 1rem; color: #334155; }
+    .note { background: #eef5ff; border: 1px solid #c5d8f0; padding: 0.75rem 1rem; border-radius: 0.4rem; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">← 학습 문서 목록</a></p>
+    <h1>팝업 등록과 목록 SSE</h1>
+    <p>관리자가 홍보 팝업을 등록·수정·삭제하면, 열려 있는 팝업 목록이 새로고침 없이 다시 불러옵니다. 팝업은 학습자 메인 홍보용이고, 영상 분석이나 진단이 아닙니다.</p>
+
+    <div class="note">
+      목록 화면은 <code>GET /admin/popups/stream</code> 을 계속 열어 둡니다. 등록이 끝나면 서버가 <code>popup_created</code> 를 보내고, 목록 스크립트가 <code>GET /admin/popups_all</code> 로 표를 다시 그립니다.
+    </div>
+
+    <h2>파일마다 보기</h2>
+    <dl>
+      <dt><code>routers/commonness.py</code> — <code>GET /popups</code></dt>
+      <dd>한 줄: 학습자 메인에 띄울 홍보 팝업만 돌려줍니다.</dd>
+      <dd>받음: 요청 본문 없음. 서버 시각으로 기간을 판단합니다.</dd>
+      <dd>함: 삭제되지 않았고 상태가 노출(N)이며, 지금이 노출 시작과 종료 사이인 행만 <code>pp_sort</code> 순으로 고릅니다. 시작이 비어 있으면 이미 시작된 것으로, 종료가 비어 있으면 종료가 없는 것으로 봅니다.</dd>
+      <dd>돌림: 번호, 제목, 이미지 경로와 공개 URL, 링크, 순서, 상태, 시작·종료 시각.</dd>
+      <dd>안 함: 숨김, 삭제, 시작 전, 종료 지난 팝업은 넣지 않습니다. 관리자 목록(<code>GET /admin/popups_all</code>)을 이 조건으로 줄이지 않습니다.</dd>
+      <dd>헷갈림: 노출이어도 기간 밖이면 빠집니다. 기간 안이어도 숨김이면 빠집니다. 두 조건을 같이 봐야 합니다.</dd>
+
+      <dt><code>utils/popup_sse.py</code></dt>
+      <dd>한 줄: 팝업 변경 알림을 구독자에게 전달하는 통로.</dd>
+      <dd>받음: 이벤트 이름과 JSON으로 보낼 수 있는 데이터.</dd>
+      <dd>함: 구독 큐에 메시지를 넣고, SSE 한 줄(<code>event</code> / <code>data</code>)로 바꿉니다.</dd>
+      <dd>돌림: 구독 큐, 또는 <code>text/event-stream</code> 본문.</dd>
+      <dd>안 함: DB 저장, 이미지 업로드, 목록 HTML.</dd>
+      <dd>헷갈림: 이 통로는 관리자 목록용입니다. 학습자 <code>GET /popups</code> 와는 별개입니다.</dd>
+
+      <dt><code>services/popupServices.py</code> · <code>repositories/popupRepositories.py</code></dt>
+      <dd>한 줄: 노출로 등록할 때 표시 순서를 다음 번호로 정합니다.</dd>
+      <dd>받음: 등록 값. 노출(state=N)이면 이미 저장된 노출 팝업의 가장 큰 <code>pp_sort</code>.</dd>
+      <dd>함: 노출 팝업이 있으면 그 최대값에 1을 더합니다. 없으면 0을 저장합니다. 숨김(state=S)은 화면에서 보낸 순서를 그대로 둡니다.</dd>
+      <dd>돌림: 저장된 팝업 행. 미리 보기는 <code>GET /admin/popups/next-sort</code> 의 <code>pp_sort</code>.</dd>
+      <dd>안 함: 이미 노출 중인 팝업의 순서를 다시 매기지 않습니다. 숨김 팝업은 다음 번호 계산에 넣지 않습니다.</dd>
+      <dd>헷갈림: 숫자가 작을수록 먼저 보입니다. 그래서 새 노출 팝업은 맨 뒤 번호가 됩니다.</dd>
+
+      <dt><code>routers/admin.py</code> — <code>POST /admin/popup</code>, <code>PUT</code>, <code>DELETE</code>, <code>GET /admin/popups/stream</code></dt>
+      <dd>한 줄: 팝업을 저장한 뒤 목록에 알리고, 스트림으로 그 알림을 흘려보냅니다.</dd>
+      <dd>받음: 등록은 이미지 파일과 제목·링크·순서·기간·상태. 스트림은 관리자 세션.</dd>
+      <dd>함: 등록 성공 후 <code>popup_created</code>, 수정 후 <code>popup_updated</code>, 삭제 후 <code>popup_deleted</code> 를 보냅니다. 스트림은 연결 직후 <code>connected</code> 를 보내고 30초마다 keepalive 를 넣습니다.</dd>
+      <dd>돌림: 등록·수정은 저장된 팝업 정보. 삭제는 idx. 스트림은 이벤트 줄.</dd>
+      <dd>안 함: 저장에 실패하면 이벤트를 보내지 않습니다. 학습자 공개 목록을 이 스트림으로 바꾸지 않습니다.</dd>
+      <dd>헷갈림: <code>/admin/popups/stream</code> 은 <code>/admin/popups/{idx}</code> 보다 먼저 등록되어 있습니다. 숫자 idx 조회와 주소가 겹치지 않게 하기 위해서입니다.</dd>
+
+      <dt><code>assets/js/admin/popup-sse.js</code></dt>
+      <dd>한 줄: 관리자 레이아웃에서 팝업 스트림을 엽니다.</dd>
+      <dd>받음: <code>popup_created</code>, <code>popup_updated</code>, <code>popup_deleted</code>.</dd>
+      <dd>함: <code>EventSource</code> 로 연결하고, 등록된 콜백과 <code>admin:popup:...</code> 이벤트로 넘깁니다.</dd>
+      <dd>돌림: <code>window.AdminPopupSSE</code>.</dd>
+      <dd>안 함: 표 HTML을 직접 그리지 않습니다.</dd>
+      <dd>헷갈림: 레이아웃이 한 번 로드되면 팝업 화면이 아니어도 연결을 유지합니다. 회원·학습 SSE와 같은 방식입니다.</dd>
+
+      <dt><code>templates/admin/popup_create.html</code> · <code>assets/js/admin/popup-create.js</code></dt>
+      <dd>한 줄: 등록 화면에서 노출일 때 다음 표시 순서를 보여 줍니다.</dd>
+      <dd>받음: 상태 선택, <code>GET /admin/popups/next-sort</code>, 팝업 SSE.</dd>
+      <dd>함: 노출이면 순서 칸을 읽기 전용으로 두고 다음 번호를 채웁니다. 다른 관리자가 팝업을 바꾸면 그 번호를 다시 불러옵니다. 숨김이면 0을 넣고 직접 수정할 수 있습니다.</dd>
+      <dd>돌림: 순서 입력값.</dd>
+      <dd>안 함: 저장 순서를 화면 값만으로 확정하지 않습니다. 노출 등록의 최종 번호는 서버가 저장 직전에 다시 계산합니다.</dd>
+      <dd>헷갈림: 화면의 번호와 저장 번호가 잠깐 다를 수 있습니다. 그 사이에 다른 노출 팝업이 등록되면 서버 번호가 하나 더 큽니다.</dd>
+
+      <dt><code>assets/js/admin/popup-manager.js</code></dt>
+      <dd>한 줄: 팝업 목록 표를 그리고, SSE가 오면 표를 다시 불러옵니다.</dd>
+      <dd>받음: <code>#popupTable</code>, SSE 세 이벤트.</dd>
+      <dd>함: <code>GET /admin/popups_all</code> 로 행을 채웁니다. 등록·수정·삭제 알림이 오면 열려 있는 표를 다시 조회합니다.</dd>
+      <dd>돌림: 표 안의 행.</dd>
+      <dd>안 함: 이벤트의 필드만으로 행을 끼워 넣지 않습니다. 항상 목록 API를 다시 부릅니다.</dd>
+      <dd>헷갈림: 같은 브라우저에서 삭제한 경우 삭제 응답과 SSE가 둘 다 목록을 다시 부를 수 있습니다. 결과는 같은 목록입니다.</dd>
+    </dl>
+  </main>
+</body>
+</html>

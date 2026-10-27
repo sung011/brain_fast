@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import CHAR, DateTime, Identity, Integer, String, Text, text
+from sqlalchemy import CHAR, DateTime, Identity, Integer, Numeric, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db import Base
@@ -19,6 +19,11 @@ class ReviewNodeModel(Base):
     rn_disease: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
     rn_image: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rn_solution: Mapped[Optional[str]] = mapped_column(CHAR(1), nullable=True)
+    rn_recall: Mapped[Optional[float]] = mapped_column(Numeric(6, 4), nullable=True)
+    rn_iou: Mapped[Optional[float]] = mapped_column(Numeric(6, 4), nullable=True)
+    rn_overlay_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rn_findings: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rn_slice_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
