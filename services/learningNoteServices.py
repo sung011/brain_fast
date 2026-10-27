@@ -59,7 +59,7 @@ def get_learning_note(st_part: str | None, disease: str | None, targets: list[di
     for source, provider in (("rag", _from_rag), ("static", _from_static)):
         note = provider(st_part, disease, targets)
         if note:
-            return _with_glossary_definition(_normalize(note, source, st_part), st_part)
+            return _with_glossary_definition(_normalize(note, source, st_part))
     return None
 
 
@@ -75,11 +75,10 @@ def _from_static(st_part: str | None, disease: str, targets: list[dict] | None) 
     return import_module("class.thorax.report_format").learning_note(disease, targets)
 
 
-def _with_glossary_definition(note: dict, st_part: str | None = None) -> dict:
+def _with_glossary_definition(note: dict) -> dict:
     """의학용어 사전(팀 RAG 자료 CSV)에 같은 영문 용어가 있으면 "이 소견은" 정의를 사전 글로 바꾼다.
-    검색(RAG)이 아니라 영문 이름이 정확히 같은 행만 쓴다. 사전이 없거나 못 찾으면 그대로 둔다.
-    흉부면 흉부 전용 사전(THORAX_GLOSSARY_CSV_PATH)을 먼저 보고, 없는 용어만 팀 사전에서 찾는다."""
-    definition = glossary_definition(note.get("name_en") or note.get("code") or "", st_part)
+    검색(RAG)이 아니라 영문 이름이 정확히 같은 행만 쓴다. 사전이 없거나 못 찾으면 그대로 둔다."""
+    definition = glossary_definition(note.get("name_en") or note.get("code") or "")
     if definition:
         note["summary"] = definition
         note["summary_source"] = "glossary"
@@ -88,16 +87,12 @@ def _with_glossary_definition(note: dict, st_part: str | None = None) -> dict:
     return note
 
 
-def glossary_definition(term_en: str, st_part: str | None = None) -> str:
-    """영문 용어 → 사전의 한글 정의(첫 문장 두 개까지). 없으면 빈 문자열.
-    st_part 가 흉부면 흉부 전용 사전을 먼저 본다."""
+def glossary_definition(term_en: str) -> str:
+    """영문 용어 → 사전의 한글 정의(첫 문장 두 개까지). 없으면 빈 문자열."""
     key = term_en.strip().lower().replace("_", " ")
     if not key:
         return ""
-    paths = [settings.glossary_csv_path]
-    if st_part == THORAX_PART:
-        paths.insert(0, settings.thorax_glossary_csv_path)
-    text = next((t for p in paths if (t := _glossary(p).get(key))), "")
+    text = _glossary(settings.glossary_csv_path).get(key, "")
     if not text:
         return ""
     sentences = [s.strip() for s in text.replace("\n", " ").split(". ") if s.strip()]
@@ -105,7 +100,7 @@ def glossary_definition(term_en: str, st_part: str | None = None) -> str:
     return short if short.endswith(".") else short + "."
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)
 def _glossary(path: str) -> dict[str, str]:
     """사전 CSV 를 한 번만 읽어 {영문 소문자: 한글 정의} 로 둔다. 같은 용어가 여러 번이면 처음 것."""
     if not path or not Path(path).is_file():
