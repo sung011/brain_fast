@@ -10,7 +10,7 @@ FastAPI 앱의 시작 파일 (진입점).
 4. 주소 연결:
    - /          → 화면 공유 분석 페이지
    - /admin     → 관리자 페이지
-   - /api/...   → JSON API (commonness, user, brain)
+   - /api/...   → JSON API (commonness, user, brain, brain_mri)
    - /assets/... → CSS, JS, 이미지
 """
 
@@ -34,6 +34,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
+from routers import admin, commonness, brain, brain_mri, user
 from routers import admin, commonness, brain, knee, kneeLearning, user
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
@@ -177,6 +178,8 @@ app.include_router(user.router)
 # brain: 화면 공유 ROI 분석·판독문. 앞에 /api/v1 을 붙임
 app.include_router(brain.router, prefix="/api/v1", tags=["brain"])
 
+# brain_mri: 뇌 MRI 5질환 세그멘테이션(YOLO26s-Seg). CT 와 별개. 앞에 /api/v1 을 붙임
+app.include_router(brain_mri.router, prefix="/api/v1", tags=["brain_mri"])
 # knee: 무릎 MRI 화면 캡처 한 장 분석. 앞에 /api/v1 을 붙임 (POST /api/v1/knee/screen-roi)
 # 모델(torch)은 승인된 조합이 있는 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
 app.include_router(knee.router, prefix="/api/v1", tags=["knee"])
