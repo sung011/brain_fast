@@ -50,6 +50,9 @@
         <dd><code>image</code>, <code>roi_type</code>, 좌표, <code>study_idx</code>, optional <code>slice_index</code>·<code>image_path</code>, <code>user_idx</code>, <code>st_part</code>/<code>st_modal</code>.</dd>
         <dt>하는 일</dt>
         <dd>MRI 슬라이드 문제면 <code>learningServices.resolve_roi_grade_slice</code>로 배열 항목을 고릅니다. 없거나 범위 밖이면 400과 한글 <code>detail</code>을 돌립니다. 그다음 기존처럼 채점·리뷰 저장합니다.</dd>
+        <dt>무릎 문제 거절</dt>
+        <dd>보낸 <code>study_idx</code>가 서버 DB에서 무릎(<code>study.st_part = 4</code>, 삭제 표시된 행 포함)이면 채점·저장 없이 400 <code>무릎 문제는 이 주소로 채점하지 않습니다. POST /learning/roi-grade/knee 를 사용하세요.</code>를 돌립니다. 무릎은 전용 <code>POST /learning/roi-grade/knee</code>만 씁니다. 판단은 요청의 <code>st_part</code>·<code>user_idx</code>·슬라이스 값이 아니라 그때 DB를 새로 읽은 값이고, 저장 함수 <code>reviewNodeServices.save_submission</code>도 업로드 전에 한 번 더 같은 확인을 합니다(그 사이 부위가 바뀐 경우 대비). 뇌·흉부·복부·<code>study_idx</code> 없음·없는 번호는 예전과 같습니다.</dd>
+        <dd>한계: 두 번째 확인 뒤 업로드·저장 사이에 부위가 또 바뀌는 틈은 막지 않습니다. 문제 번호 없이 올린 영상이 무릎인지 알아내거나, <code>user_idx</code>가 로그인 본인인지 확인하는 기능은 아닙니다.</dd>
         <dt>돌려주는 것</dt>
         <dd>기존과 동일: <code>ok</code>, <code>result</code>, IoU·overlay, 리뷰 경로, <code>next</code>.</dd>
         <dt>하지 않는 일</dt>

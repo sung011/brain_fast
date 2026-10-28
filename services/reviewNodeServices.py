@@ -5,9 +5,11 @@ import json
 import uuid
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import settings
+from models.studyModel import StudyModel
 from repositories import reviewNodeRepositories as repositories
 from services.objectStorageServices import StorageNotConfiguredError, storage_service
 
@@ -169,7 +171,17 @@ async def save_submission(
     """
     제출 이미지를 Object Storage review 경로에 올리고 review_node 행을 만든다.
     DB rn_image 예) /stylesheets/assets/review/{file}
+    무릎 문제(서버 DB study.st_part = 4)는 저장하지 않고 ValueError(공용 라우트에서 400).
     """
+    # 무릎 문제 2차 차단(MSN-20260930-001): 저장 설정 확인·화상 처리·업로드보다 먼저, 같은 세션의 캐시가 아닌 지금 DB 값을 새로 읽는다.
+    if study_idx is not None:
+        with db.no_autoflush:
+            part = db.execute(
+                select(StudyModel.st_part).where(StudyModel.idx == int(study_idx))
+            ).scalar_one_or_none()
+        if str(part or "").strip() == "4":
+            raise ValueError("무릎 문제는 이 주소로 채점하지 않습니다. POST /learning/roi-grade/knee 를 사용하세요.")
+
     if not storage_service.enabled:
         raise StorageNotConfiguredError(
             "Object Storage가 설정되지 않았습니다. "
