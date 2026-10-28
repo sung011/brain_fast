@@ -1424,6 +1424,7 @@
     let scrollAnalyzing = false;
     const collector = KneeScrollCapture.createCollector({
       getCanvas: () => cropRoiToCanvas(),
+      getVideo: () => video,   // 새 프레임마다 확인(capture_profile_v4). 지원하지 않는 브라우저는 100ms 간격 확인
       getKey: () => roiKey(),
       onChange: renderScroll,
       onDone: onScrollDone,
@@ -1440,6 +1441,7 @@
         : phase === "enough" ? `분석 가능(권장 ${p.recommend}장 미만) · 조금 더 넘기면 좋아요`
         : (collector.running ? "수집 중 · 천천히 넘겨 주세요" : "");
       if (collector.hiddenSeen) scrollPhase.textContent += " · ⚠ 이 분석 화면이 가려지거나 최소화된 동안은 수집이 멈춥니다. 두 창을 겹치지 않게 나란히 두세요.";
+      if (collector.running && collector.stalled) scrollPhase.textContent += " · ⚠ 최근 5초간 새 화면이 추가되지 않았어요. MRI를 넘기고 있다면 공유 대상과 수집 목록을 확인해 주세요.";
       if (collector.merged) scrollPhase.textContent += ` · 같은 장이 화면에서 다듬어진 ${collector.merged}번은 한 장으로 합쳤습니다(아주 비슷한 다른 장이 합쳐졌을 수 있음)`;
       scrollThumbs.innerHTML = "";
       for (const f of collector.frames) {
@@ -1470,6 +1472,7 @@
       }
       renderScroll(info);
       if (reason === "user") return;
+      if (reason === "ended") { setStatus(`화면 공유가 끝나 수집을 멈췄습니다(${info.count}장).`); return; }
       setStatus(info.count >= p.min
         ? `수집을 멈췄습니다(${reason === "idle" ? "화면 변화 없음" : "시간 제한"}) · '여기까지 분석'을 누르세요.`
         : `수집 부족 — 서로 다른 장이 ${info.count}장입니다. 최소 ${p.min}장이 필요합니다. '다시 모으기'를 눌러 천천히 넘겨 주세요.`);

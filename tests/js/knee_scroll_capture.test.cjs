@@ -146,7 +146,7 @@ t("어댑터: 서버 비교선·참고구간을 그대로 표시, 계산하지 �
 });
 
 t("다듬어짐 합치기(v3) 순수 결정: 기준 장 고정·0.7초·기준 변화의 40% 이하만 교체, 작은 변화 연속은 새 장", () => {
-  assert.strictEqual(K.PROFILE.id, "capture_profile_v3");
+  assert.strictEqual(K.PROFILE.id, "capture_profile_v4");
   const a = flat(100), big = flat(130), ref = patch(big, 140, 0, 1200);   // big: 큰 변화 0.118, ref: 그 장 대비 약 0.0115(=약 10%) 다듬어짐
   let d = K.settleDecision(null, a, null, 0);
   assert.deepStrictEqual([d.replace, d.anchor.transMad], [false, K.PROFILE.madNew]);   // 수집 첫 장 = 기준 장

@@ -218,6 +218,8 @@
     <p>이 파일은 위치 안내만 담당하고 분류 입력·점수·보정·DB·NAS를 바꾸지 않습니다. 결과는 같은 화면 칸에 나타나며, 원본 영상/그림을 저장하지 않습니다. 운영에서 문제가 생기면 승인된 시작 스크립트의 <code>-LocationOff</code>로 위치만 보류하고 <code>--expect-location-off</code>로 점검합니다. 실제 설정 변경과 서버 재시작은 별도 실행 범위입니다.</p>
 
     <p><code>POST /api/v1/knee/screen-analysis</code>(<code>routers/kneeScreenAnalysis.py</code>, 검증·응답 <code>class/knee/scroll_analysis.py</code>, 모델 <code>class/knee/acl_volume.py</code>). 화면 <code>/</code>에서 부위 무릎 MRI·박스를 정한 뒤 <strong>넘기며 분석</strong>을 누르고 시상면 MRI 를 넘기면, 브라우저(<code>assets/js/knee-scroll-capture.js</code>)가 바뀐 장을 자동으로 모아(최소 10·권장 15·최대 20, 같은 화면은 원 화소 해시로 한 번만) 보냅니다.</p>
+    <p>수집 방식(<code>capture_profile_v4</code>): 브라우저가 지원하면 공유 영상에 <strong>새 프레임이 올 때마다</strong> 박스를 확인하고, 같은 그림이 0.1초 이상 유지될 때 한 장으로 채택합니다. 지원하지 않는 브라우저는 예전처럼 0.1초 간격으로 확인합니다(<code>capture_profile_v4_interval</code>). 새 장이 5초 동안 추가되지 않으면 화면에 "공유 대상과 수집 목록을 확인해 주세요" 안내를 띄우지만, 자동으로 다시 시작하거나 제출하지는 않습니다(정지한 화면일 수도 있음). 공유 종료·박스/해상도 변경·전체 120초는 창이 가려져 있어도 수집을 멈춥니다.</p>
+    <p>한계: 한 PC·한 Chrome에서 고정 시범 6케이스로 확인한 수집 개선이며(첫 시도 6/12 → 11/12), 다른 장치·브라우저·모바일 실제 공유에서의 효과는 확인하지 않았습니다. 장이 빠졌는지는 사용자가 수집 목록에서 확인해야 하며, 이 변경은 점수·진단 성능과 무관합니다.</p>
     <ul>
       <li>입력: multipart <code>frames</code>(PNG/JPEG 반복, 장별 1MiB·전체 16MiB·한 변 64~512px·모두 같은 크기), <code>manifest</code>(JSON: schema_version=1·plane=sagittal·image_scope·capture_intent=scroll|single·capture_profile_id·frames[{sequence,file_index,captured_at_ms}]), 선택 <code>include_overlay</code>. 모르는 필드는 400.</li>
       <li>장 수는 <strong>서버가 디코딩하고 같은 화소를 뺀 수</strong>로 정합니다. 넘기며 10~20장 → ACL 시상면 여러 장 모델(best_acl_combined 하나만 처음 쓸 때 불러옴). 9장 이하 422, 21장 이상 413. 넘기며 분석이 중복을 뺀 뒤 1장이어도 한 장 모델로 바꾸지 않고 422.</li>
