@@ -34,7 +34,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, commonness, brain, knee, kneeLearning, user
+from routers import admin, commonness, brain, knee, kneeLearning, kneeScreenAnalysis, user
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -207,6 +207,8 @@ app.include_router(brain.router, prefix="/api/v1", tags=["brain"])
 # knee: 무릎 MRI 화면 캡처 한 장 분석. 앞에 /api/v1 을 붙임 (POST /api/v1/knee/screen-roi)
 # 모델(torch)은 승인된 조합이 있는 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
 app.include_router(knee.router, prefix="/api/v1", tags=["knee"])
+# 무릎 화면 분석(넘기며 분석 10~20장 / 한 장, MSN-20261021-001). 기존 /knee/screen-roi 는 그대로 둔다.
+app.include_router(kneeScreenAnalysis.router, prefix="/api/v1", tags=["knee"])
 
 # knee 학습 채점: 학습자가 그린 ROI 를 AI 가 찾은 ACL 위치와 비교 (POST /learning/roi-grade/knee, prefix 없음)
 app.include_router(kneeLearning.router)

@@ -246,6 +246,16 @@
     .options.is-knee .knee-only { display: flex; }
     .knee-notice { font-size: 12px; color: var(--muted); margin: 6px 0 0; line-height: 1.5; }
     .knee-status-tag { font-size: 12px; color: var(--warn); }
+    /* 무릎 넘기며 분석 수집 패널 */
+    .scroll-panel { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line, #2a3446); border-radius: 10px; font-size: 13px; }
+    .scroll-panel[hidden] { display: none; }
+    .scroll-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+    .scroll-head .phase { color: var(--muted); font-size: 12px; }
+    .scroll-hint { color: var(--muted); font-size: 12px; margin: 6px 0; line-height: 1.5; }
+    .scroll-thumbs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+    .scroll-thumbs img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; border: 1px solid var(--line, #2a3446); }
+    .scroll-panel .toolbar { margin-top: 6px; }
+    #btnScroll[hidden] { display: none; }
 
     /*
       [중요] 화면 공유가 나오는 상자
@@ -550,6 +560,7 @@
           <button id="btnShare">화면 공유 시작</button>
           <button id="btnClear" class="secondary" disabled>박스 지우기</button>
           <button id="btnAnalyze" disabled>선택 영역 분석</button>
+          <button id="btnScroll" disabled hidden title="박스를 그린 뒤 MRI 를 넘기면 바뀐 장을 자동으로 모아 분석합니다(시상면).">넘기며 분석</button>
           <button id="btnExplain" class="secondary" disabled>AI 해설 (MedGemma)</button>
           <button id="btnStop" class="secondary" disabled>공유 종료</button>
         </div>
@@ -607,6 +618,17 @@
       </div>
 
       <div class="panel-scroll">
+      <div class="scroll-panel" id="scrollPanel" hidden>
+        <div class="scroll-head"><strong id="scrollCount">0장</strong><span>/ 최소 10 · 권장 15 · 최대 20</span><span class="phase" id="scrollPhase"></span></div>
+        <div class="bar"><span id="scrollBar" style="width:0%"></span></div>
+        <div class="scroll-hint">같은 케이스·같은 영상 패널을 <strong>한 방향으로 천천히</strong> 넘겨 주세요. 수집 중에는 박스·창 크기·확대·밝기를 바꾸지 마세요. <strong>이 분석 화면이 MRI 창에 가려지면 수집이 멈추니 두 창을 나란히</strong> 두세요. 20장이 모이면 자동으로 분석합니다.</div>
+        <div class="scroll-thumbs" id="scrollThumbs" aria-label="수집한 장"></div>
+        <div class="toolbar">
+          <button id="btnScrollAnalyze" disabled>여기까지 분석</button>
+          <button id="btnScrollRestart" class="secondary">다시 모으기</button>
+          <button id="btnScrollCancel" class="secondary">취소</button>
+        </div>
+      </div>
       <img id="cropPreview" alt="선택한 ROI 미리보기" />
       <img id="overlayPreview" alt="이상 부위 오버레이" />
 
@@ -634,18 +656,21 @@
       <div class="disclaimer">
         ※ 본 화면은 <strong>가능성 검증용 프로토타입</strong>입니다.
         실제 의료 진단이 아니며, 최종 판단은 의사에게 있습니다.
-        분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.
+        <span id="analysisEngineNote">분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.</span>
       </div>
       <div class="disclaimer" id="kneeDisclaimer" style="display:none">
-        ※ 무릎 분석은 <strong>한 장짜리 화면 캡처</strong>를 기준으로 하는 학습·연구용 기능입니다.
-        검증을 통과한 조건에서만 점수를 보여 주며, 그 밖의 조건은 "평가하지 않음"으로 표시합니다.
-        점수는 임상적 발병 확률이 아니고 실제 의료 진단이 아니며, 최종 판단은 의사에게 있습니다.
-        올린 영상은 분석 후 저장하지 않습니다.
+        ※ 무릎 분석은 <strong>학습용 시연</strong>입니다. <strong>'선택 영역 분석'</strong>은 박스 안 한 장을 ACL 시상면 <strong>한 장 모델</strong>에,
+        <strong>'넘기며 분석'</strong>은 시상면 MRI 를 넘기는 동안 모은 10~20장을 <strong>여러 장 모델</strong>에 넣습니다.
+        점수는 구분 기준 보정 전의 모델 점수(학습용 참고)이며 임상적 발병 확률·진단이 아닙니다. 한 장 모델은 데이터셋의 ACL 중간 장 조건으로만 평가돼
+        임의로 고른 장·화면 캡처에서의 성능은 확인되지 않았고, 시연 자료는 모델 학습에 쓰인 공개 데이터셋이라 독립 검증이 아닙니다.
+        최종 판단은 의사에게 있으며, 올린 영상은 분석 후 저장하지 않습니다.
       </div>
       </div>
     </section>
   </main>
 
+  <script src="/assets/js/screen-result-adapter.js"></script>
+  <script src="/assets/js/knee-scroll-capture.js"></script>
   <script>
     /*
       =========================================================
@@ -702,6 +727,15 @@
     const planeSelect = document.getElementById("planeSelect");
     const scopeSelect = document.getElementById("scopeSelect");
     const kneeDisclaimer = document.getElementById("kneeDisclaimer");
+    const btnScroll = document.getElementById("btnScroll");
+    const scrollPanel = document.getElementById("scrollPanel");
+    const scrollCount = document.getElementById("scrollCount");
+    const scrollPhase = document.getElementById("scrollPhase");
+    const scrollBar = document.getElementById("scrollBar");
+    const scrollThumbs = document.getElementById("scrollThumbs");
+    const btnScrollAnalyze = document.getElementById("btnScrollAnalyze");
+    const btnScrollRestart = document.getElementById("btnScrollRestart");
+    const btnScrollCancel = document.getElementById("btnScrollCancel");
 
     // ----- 상태 변수 -----
     let stream = null;          // 화면 공유 스트림 (브라우저가 보내주는 실시간 화면)
@@ -712,6 +746,13 @@
     let resizeObserver = null;  // 상자 크기 변화를 감시하는 관찰자
     let lastAnalysis = null;    // 최근 API 분석 결과 (해설 요청용)
     let lastRoiBlob = null;     // 최근 ROI 이미지 blob
+    let lastModel = null;       // 최근 공통 표시 모델(해설 패널 모드 판단)
+    let analysisGen = 0;        // 분석 요청 세대. 부위·촬영면·범위·박스가 바뀌면 올라가고, 늦게 온 옛 응답은 버린다
+    let busyGen = -1;           // 진행 중인 분석 요청의 세대. 현재 세대와 같을 때만 분석 버튼을 잠근다(옛 요청이 새 화면을 잠그지 않게)
+    let sourceDims = null;      // 공유 원본의 실제 해상도(videoWidth×videoHeight). 화면(CSS) 크기 변화와는 따로 본다
+    let sourceTrackId = null;   // 공유 영상 트랙(소스가 바뀌면 달라짐)
+    let roiSrc = null;          // ROI 의 원본 영상 픽셀 좌표 {x,y,w,h}(정수) — 분석·수집이 쓰는 정본
+    let roiSrcFor = null;       // roiSrc 가 어느 화면 박스(roi 객체)에서 왔는지. 사용자가 새로 그리면 객체가 바뀌어 다시 계산
 
     /**
      * setStep(n)
@@ -737,6 +778,7 @@
     }
 
     function resetAnalysisResults() {
+      analysisGen += 1;   // 화면을 비우는 모든 경로에서 늦게 온 옛 분석·해설이 다시 붙지 않게
       resultEmpty.style.display = "block";
       resultBox.style.display = "none";
       explainBox.style.display = "none";
@@ -752,6 +794,59 @@
       lastAnalysis = null;
       lastRoiBlob = null;
       if (resultScroll) resultScroll.scrollTop = 0;
+    }
+
+    /** 분석·넘기며 분석·지우기 버튼을 지금 상태(박스·공유·현재 세대 요청 진행 여부)로 다시 계산한다. */
+    function refreshButtons() {
+      const busy = busyGen === analysisGen;
+      const box = !!(roi && roi.w > 8 && roi.h > 8 && !drawing);   // 다 그린 박스만(드래그 중인 0 크기 박스 제외)
+      const ok = box && !!stream && !busy;
+      btnClear.disabled = !roi;
+      btnAnalyze.disabled = !ok;
+      btnScroll.disabled = !ok;
+    }
+
+    /** 공유 원본 열쇠: 실제 해상도 + 트랙. CSS 크기·창 크기 변화는 포함하지 않는다. */
+    function sourceKey() {
+      return stream && video.videoWidth ? `${sourceTrackId}|${video.videoWidth}x${video.videoHeight}` : null;
+    }
+
+    /** 공유 원본의 실제 해상도가 바뀜 → 그 전 해상도로 모은 장·분석·히트맵·해설은 지금 화면과 다르므로 모두 버린다. */
+    function onSourceChanged() {
+      roiSrcFor = null;   // 원본이 바뀌면 지금 화면 박스로 새 원본 좌표를 다시 정한다
+      const hadWork = collector.running || collector.frames.length > 0 || resultBox.style.display !== "none" || busyGen === analysisGen;
+      clearScroll();
+      resetAnalysisResults();
+      lastModel = null;
+      btnExplain.disabled = true;
+      refreshButtons();
+      if (hadWork) {
+        setStep(roi ? 2 : 1);
+        setStatus("공유 화면의 원본 크기(해상도)가 바뀌어 이전 수집·분석 결과를 지웠습니다. 박스 위치를 확인한 뒤 다시 분석해 주세요.");
+      }
+    }
+
+    /** video 의 resize/loadedmetadata 에서만 부른다(실제 해상도 변화). 첫 값은 기록만 한다. */
+    function noteSourceSize() {
+      if (!video.videoWidth || !video.videoHeight) return;
+      const dims = `${video.videoWidth}x${video.videoHeight}`;
+      const changed = sourceDims !== null && sourceDims !== dims;
+      sourceDims = dims;
+      if (changed) onSourceChanged();
+    }
+
+    /** 화면 박스(roi, overlay 픽셀)를 원본 영상 픽셀 좌표로. 같은 박스에 대해서는 한 번 정한 값을 그대로 돌려준다(창 크기와 무관). */
+    function roiSource() {
+      if (!roi || !video.videoWidth || !overlay.width) return null;
+      if (roiSrcFor !== roi) {
+        const sx = video.videoWidth / overlay.width;
+        const sy = video.videoHeight / overlay.height;
+        const x = Math.max(0, Math.floor(roi.x * sx));
+        const y = Math.max(0, Math.floor(roi.y * sy));
+        roiSrc = { x, y, w: Math.min(video.videoWidth - x, Math.floor(roi.w * sx)), h: Math.min(video.videoHeight - y, Math.floor(roi.h * sy)) };
+        roiSrcFor = roi;
+      }
+      return roiSrc;
     }
 
     function showExplainLoading() {
@@ -797,8 +892,13 @@
 
       // canvas 내부 해상도 = CSS 크기 (1:1) → 좌표 계산이 단순해짐
       if (overlay.width !== cssW || overlay.height !== cssH) {
+        const keep = !drawing && vw > 0 ? roiSource() : null;   // 크기를 바꾸기 전 박스의 원본 좌표를 고정
         overlay.width = cssW;
         overlay.height = cssH;
+        if (keep && roi) {   // 화면 박스를 같은 원본 영역으로 다시 투영(STEP2-011) — 결과·수집은 같은 영역이라 그대로 유효
+          roi = { x: keep.x * cssW / vw, y: keep.y * cssH / vh, w: keep.w * cssW / vw, h: keep.h * cssH / vh };
+          roiSrcFor = roi;
+        }
       }
       overlay.style.width = cssW + "px";
       overlay.style.height = cssH + "px";
@@ -862,6 +962,9 @@
       overlay.style.touchAction = "none"; // 그리는 중 터치 스크롤 방지
       try { overlay.setPointerCapture(e.pointerId); } catch (_) {}
 
+      clearScroll();   // 박스를 새로 그리면 이전 수집·결과는 다른 영역의 것이므로 버린다
+      resetAnalysisResults();
+      setStatus("박스를 그리는 중…");
       const p = pointerPos(e);
       startX = p.x;
       startY = p.y;
@@ -915,6 +1018,7 @@
       if (roi && roi.w > 8 && roi.h > 8) {
         btnClear.disabled = false;
         btnAnalyze.disabled = false;
+        btnScroll.disabled = false;
         setStep(2);
         setStatus("ROI 선택 완료 · ‘선택 영역 분석’을 누르세요.");
       } else {
@@ -948,6 +1052,8 @@
           audio: false,
         });
 
+        sourceDims = null;
+        sourceTrackId = (stream.getVideoTracks()[0] || {}).id || String(Date.now());
         video.srcObject = stream;
         placeholder.style.display = "none";
         stage.classList.add("is-active");
@@ -957,6 +1063,7 @@
         setStatus("화면 공유 중 · 휠로 스크롤, 드래그로 영역 선택");
 
         const ready = () => {
+          noteSourceSize();
           syncOverlaySize();
           requestAnimationFrame(() => {
             syncOverlaySize();
@@ -996,11 +1103,15 @@
         resizeObserver = null;
       }
       video.srcObject = null;
+      sourceDims = null;
+      sourceTrackId = null;
       stage.classList.remove("is-active");
       placeholder.style.display = "block";
       mediaStack.style.height = "";
+      clearScroll();
       roi = null;
       drawRoi();
+      btnScroll.disabled = true;
       btnShare.disabled = false;
       btnStop.disabled = true;
       btnClear.disabled = true;
@@ -1018,6 +1129,8 @@
      * 기능: ROI만 지우고, 화면 공유는 유지한다.
      */
     btnClear.addEventListener("click", () => {
+      clearScroll();
+      btnScroll.disabled = true;
       roi = null;
       drawRoi();
       btnClear.disabled = true;
@@ -1038,12 +1151,9 @@
       if (!roi || !video.videoWidth) return null;
       syncOverlaySize();
 
-      const scaleX = video.videoWidth / overlay.width;
-      const scaleY = video.videoHeight / overlay.height;
-      const sx = Math.max(0, Math.floor(roi.x * scaleX));
-      const sy = Math.max(0, Math.floor(roi.y * scaleY));
-      const sw = Math.min(video.videoWidth - sx, Math.floor(roi.w * scaleX));
-      const sh = Math.min(video.videoHeight - sy, Math.floor(roi.h * scaleY));
+      const src = roiSource();   // 원본 좌표 정본(STEP2-011) — roiKey·수집과 같은 경계
+      if (!src) return null;
+      const sx = src.x, sy = src.y, sw = src.w, sh = src.h;
       if (sw < 4 || sh < 4) return null;
 
       const c = document.createElement("canvas");
@@ -1187,41 +1297,47 @@
         .join("");
     }
 
-    function renderAnalysis(out) {
+    /** 공통 결과 패널: 뇌·무릎 모두 같은 제목·메타·소견 막대·히트맵·안내 자리에 그린다(ScreenResultAdapter 표시 모델). */
+    function renderResult(model) {
+      lastModel = model;
       resultEmpty.style.display = "none";
       resultBox.style.display = "block";
       explainBox.style.display = "none";
       explainLoading.classList.remove("is-active");
       explainText.innerHTML = "";
 
-      const top = out.classification;
-      const g = out.germinoma;
-      let title = `출혈 최상위: ${top.top_label_ko}`;
-      if (g) {
-        title += ` · germinoma: ${g.top_label_ko} ${(g.confidence * 100).toFixed(0)}%`;
-      }
-      resultTitle.textContent = title;
-      resultMeta.innerHTML = `
-        <div>ROI 크기: <strong>${out.roi.width}×${out.roi.height}</strong></div>
-        <div>밝기 평균/편차: <strong>${out.image_stats.mean}</strong> / <strong>${out.image_stats.std}</strong></div>
-        <div>추론 시간: <strong>${out.latency_ms}ms</strong></div>
-        ${out.overlay_summary ? `<div>이상 부위: <strong>${escapeHtml(out.overlay_summary)}</strong></div>` : ""}
-      `;
+      resultTitle.textContent = model.title;
+      resultMeta.innerHTML = model.meta.map((m) => `<div>${escapeHtml(m.label)}: <strong>${escapeHtml(String(m.value))}</strong></div>`).join("");
 
-      let listHtml = `<div style="font-size:12px;opacity:.75;margin:8px 0 4px">출혈 (ICH)</div>`;
-      listHtml += renderFindingsList(out.classification.findings);
-      if (g && g.findings) {
-        listHtml += `<div style="font-size:12px;opacity:.75;margin:12px 0 4px">Germinoma</div>`;
-        listHtml += renderFindingsList(g.findings);
+      let html = "";
+      for (const g of model.groups) {
+        html += `<div style="font-size:12px;opacity:.75;margin:8px 0 4px">${escapeHtml(g.title)}</div>`;
+        for (const f of g.findings) {
+          if (f.score === null) {
+            html += `<div style="font-size:13px;margin-bottom:2px">${escapeHtml(f.label)}
+              <strong style="float:right;color:var(--muted)">${f.status === "invalid_score" ? "점수 없음" : "평가하지 않음"}</strong></div>
+              <div class="meta" style="margin-bottom:10px">${escapeHtml(f.reason || "점수를 표시할 수 없습니다.")}</div>`;
+            continue;
+          }
+          const pct = (f.score * 100).toFixed(0);
+          html += `<div style="font-size:13px;margin-bottom:2px">${escapeHtml(f.label)}<strong style="float:right">${pct}%</strong></div>
+            <div class="bar"><span style="width:${pct}%"></span></div>
+            ${f.note ? `<div class="meta" style="margin-bottom:10px">${escapeHtml(f.note)}</div>` : ""}`;
+        }
       }
-      probList.innerHTML = listHtml;
+      if (model.overlay.note) html += `<div class="knee-notice">${escapeHtml(model.overlay.note)}</div>`;
+      for (const n of model.notices) html += `<div class="knee-notice">· ${escapeHtml(n)}</div>`;
+      probList.innerHTML = html;
 
-      if (out.overlay_png_base64) {
+      overlayPreview.alt = model.overlay.alt || "이상 부위 오버레이";
+      if (model.overlay.src) {
         overlayPreview.style.display = "block";
-        overlayPreview.src = "data:image/png;base64," + out.overlay_png_base64;
+        overlayPreview.src = model.overlay.src;
       } else {
         overlayPreview.style.display = "none";
       }
+      btnExplain.disabled = model.explain.mode === "none";
+      btnExplain.title = model.explain.disabledReason || "";
     }
 
     // ----- 무릎 MRI 분석 (POST /api/v1/knee/screen-roi) -----
@@ -1240,96 +1356,200 @@
       const knee = isKnee();
       optionsEl.classList.toggle("is-knee", knee);
       kneeDisclaimer.style.display = knee ? "block" : "none";
+      analysisGen += 1;
+      clearScroll();
+      btnScroll.hidden = !knee;
+      btnExplain.textContent = knee ? "해설" : "AI 해설 (MedGemma)";
+      document.getElementById("analysisEngineNote").textContent = knee
+        ? "무릎 점수는 ACL 시상면 분류 모델(한 장/여러 장)로 계산합니다. ACL 위치 박스를 켠 경우 별도 위치 모델을 쓰며, 해설은 고정 설명(생성형 AI 아님)입니다."
+        : "분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.";
+      explainText.innerHTML = "";
       lastAnalysis = null;
       lastRoiBlob = null;
+      lastModel = null;
       btnExplain.disabled = true;
-      btnExplain.title = knee ? "AI 해설(MedGemma)은 뇌 분석에서만 사용합니다." : "";
+      btnExplain.title = "";
       resultBox.style.display = "none";
       resultEmpty.style.display = "block";
       explainBox.style.display = "none";
       overlayPreview.style.display = "none";
+      refreshButtons();
+      if (roi && stream) {
+        setStep(2);
+        setStatus("조건을 바꿨습니다 · 이전 분석은 취소했습니다. 다시 '선택 영역 분석' 또는 '넘기며 분석'을 누르세요.");
+      }
     }
     partSelect.addEventListener("change", applyPart);
+    planeSelect.addEventListener("change", applyPart);   // 촬영면·범위가 바뀌면 이전 결과는 다른 조건의 결과이므로 지운다
+    scopeSelect.addEventListener("change", applyPart);
 
-    async function analyzeKneeViaApi(canvas) {
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    /** 화면 캡처 캔버스를 최대 변 512px(확대 없음)로 줄인 PNG Blob. */
+    function kneeFrameBlob(canvas) {
+      const size = KneeScrollCapture.targetSize(canvas.width, canvas.height);
+      const c = document.createElement("canvas");
+      c.width = size.w;
+      c.height = size.h;
+      c.getContext("2d").drawImage(canvas, 0, 0, size.w, size.h);
+      return new Promise((resolve) => c.toBlob(resolve, "image/png"));
+    }
+
+    /** 무릎 화면 분석 API(POST /api/v1/knee/screen-analysis). frames: Blob 배열, manifest: 객체. 오류는 서버 안내 문구로 던진다. */
+    async function postKneeScreen(frames, manifest) {
       const form = new FormData();
-      form.append("image", blob, "roi.png");
-      form.append("body_part", "knee");
-      form.append("plane", planeSelect.value);
-      form.append("image_scope", scopeSelect.value);
+      frames.forEach((b, i) => form.append("frames", b, `f${String(i).padStart(3, "0")}.png`));
+      form.append("manifest", JSON.stringify(manifest));
       form.append("include_overlay", "true");
-
-      const res = await fetch("/api/v1/knee/screen-roi", { method: "POST", body: form });
+      const res = await fetch("/api/v1/knee/screen-analysis", { method: "POST", body: form });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        // 무릎 API 오류는 {code, message} 형식이다(내부 정보 없음).
-        throw new Error(body.message || `무릎 API 오류 (${res.status})`);
-      }
+      if (!res.ok) throw new Error(body.message || `무릎 분석 API 오류 (${res.status})`);
       return body;
     }
 
-    function renderKneeFinding(f) {
-      const label = escapeHtml(f.label_ko);
-      if (f.status !== "evaluated" || typeof f.prob !== "number") {
-        return `
-          <div style="font-size:13px;margin-bottom:2px">${label}
-            <strong style="float:right;color:var(--muted)">평가하지 않음</strong>
-          </div>
-          <div class="meta" style="margin-bottom:10px">${escapeHtml(f.reason || "이 조건에서는 평가하지 않습니다.")}</div>`;
-      }
-      const pct = (f.prob * 100).toFixed(0);
-      const band = f.confidence_band === "uncertain" ? " · 판단 어려움 구간" : "";
-      return `
-        <div style="font-size:13px;margin-bottom:2px">${label}
-          <strong style="float:right">${pct}%</strong>
-        </div>
-        <div class="bar"><span style="width:${pct}%"></span></div>
-        <div class="meta" style="margin-bottom:10px">
-          ${escapeHtml(f.score_label || "모델 점수(임상 확률 아님)")}${band}
-          ${f.verdict ? ` · ${escapeHtml(f.verdict)}` : ""}
-        </div>`;
+    async function analyzeKneeSingle(canvas) {
+      const blob = await kneeFrameBlob(canvas);
+      return postKneeScreen([blob], {
+        schema_version: 1, plane: planeSelect.value, image_scope: scopeSelect.value, capture_intent: "single",
+        capture_profile_id: KneeScrollCapture.PROFILE.id, frames: [{ sequence: 0, file_index: 0, captured_at_ms: 0 }],
+      });
     }
 
-    function renderKneeAnalysis(out) {
-      resultEmpty.style.display = "none";
-      resultBox.style.display = "block";
-      explainBox.style.display = "none";
-      explainLoading.classList.remove("is-active");
-      explainText.innerHTML = "";
+    // ----- 무릎 넘기며 분석 -----
+    /** ROI 의 원본 영상 좌표·영상 크기·촬영면·범위를 묶은 열쇠. 바뀌면 수집을 버린다(CSS 크기만 바뀐 것은 같은 열쇠). */
+    function roiKey() {
+      const src = roiSource();   // 원본 좌표 정본(STEP2-011): 창·CSS 크기가 바뀌어도 같은 값
+      if (!src) return null;
+      return [src.x, src.y, src.w, src.h, video.videoWidth, video.videoHeight, planeSelect.value, scopeSelect.value].join(",");
+    }
 
-      resultTitle.textContent = KNEE_STATUS_TITLES[out.analysis_status] || "무릎 분석 결과";
-      resultMeta.innerHTML = `
-        <div>이미지 크기: <strong>${out.image.width}×${out.image.height}</strong></div>
-        <div>촬영면 / 범위: <strong>${escapeHtml(out.image.plane)}</strong> / <strong>${escapeHtml(out.image.image_scope)}</strong></div>
-        <div>추론 시간: <strong>${out.latency_ms}ms</strong></div>
-      `;
+    let scrollAnalyzing = false;
+    const collector = KneeScrollCapture.createCollector({
+      getCanvas: () => cropRoiToCanvas(),
+      getKey: () => roiKey(),
+      onChange: renderScroll,
+      onDone: onScrollDone,
+    });
 
-      let html = "";
-      for (const f of Object.values(out.findings || {})) html += renderKneeFinding(f);
-
-      const vis = out.visualization || {};
-      if (vis.acl_box_note) html += `<div class="knee-notice">${escapeHtml(vis.acl_box_note)}</div>`;
-      if (vis.overlay_note) html += `<div class="knee-notice">${escapeHtml(vis.overlay_note)}</div>`;
-
-      for (const ex of out.explanations || []) {
-        html += `<div class="knee-notice"><strong>${escapeHtml(ex.finding)}</strong> · ${escapeHtml(ex.text)}</div>`;
+    function renderScroll(info) {
+      const p = KneeScrollCapture.PROFILE;
+      const n = info ? info.count : 0;
+      scrollCount.textContent = `${n}장`;
+      scrollBar.style.width = `${Math.min(100, (n / p.max) * 100).toFixed(0)}%`;
+      const phase = info ? info.phase : "collecting";
+      scrollPhase.textContent = phase === "max" ? "최대 장 수 도달 — 분석합니다"
+        : phase === "recommended" ? "권장 장 수 도달 · 더 넘기거나 '여기까지 분석'"
+        : phase === "enough" ? `분석 가능(권장 ${p.recommend}장 미만) · 조금 더 넘기면 좋아요`
+        : (collector.running ? "수집 중 · 천천히 넘겨 주세요" : "");
+      if (collector.hiddenSeen) scrollPhase.textContent += " · ⚠ 이 분석 화면이 가려지거나 최소화된 동안은 수집이 멈춥니다. 두 창을 겹치지 않게 나란히 두세요.";
+      if (collector.merged) scrollPhase.textContent += ` · 같은 장이 화면에서 다듬어진 ${collector.merged}번은 한 장으로 합쳤습니다(아주 비슷한 다른 장이 합쳐졌을 수 있음)`;
+      scrollThumbs.innerHTML = "";
+      for (const f of collector.frames) {
+        const img = document.createElement("img");
+        img.src = f.url;
+        img.alt = `수집 ${f.sequence + 1}`;
+        scrollThumbs.appendChild(img);
       }
-      for (const n of out.notices || []) {
-        html += `<div class="knee-notice">· ${escapeHtml(n.text)}</div>`;
-      }
-      if (out.retention && out.retention.scope_note) {
-        html += `<div class="knee-notice">${escapeHtml(out.retention.scope_note)}</div>`;
-      }
-      probList.innerHTML = html;
+      btnScrollAnalyze.disabled = scrollAnalyzing || n < p.min;
+    }
 
-      if (vis.overlay_png_base64) {
-        overlayPreview.style.display = "block";
-        overlayPreview.src = "data:image/png;base64," + vis.overlay_png_base64;
-      } else {
-        overlayPreview.style.display = "none";
+    function clearScroll() {   // 이벤트 처리기에서만 불린다(스크립트 실행이 끝난 뒤라 collector 가 준비돼 있음)
+      analysisGen += 1;        // 박스 새로 그리기·지우기·공유 종료 등: 진행 중 분석/해설 응답을 무효화(Codex STEP2-003)
+      collector.clear();
+      scrollAnalyzing = false;
+      scrollPanel.hidden = true;
+      renderScroll(null);
+    }
+
+    function onScrollDone(reason, info) {
+      const p = KneeScrollCapture.PROFILE;
+      if (reason === "max") return analyzeScroll();
+      if (reason === "reset") {
+        clearScroll();
+        analysisGen += 1;
+        setStatus("박스·화면 크기·촬영면·범위가 바뀌어 수집을 처음부터 다시 해야 합니다.");
+        return;
+      }
+      renderScroll(info);
+      if (reason === "user") return;
+      setStatus(info.count >= p.min
+        ? `수집을 멈췄습니다(${reason === "idle" ? "화면 변화 없음" : "시간 제한"}) · '여기까지 분석'을 누르세요.`
+        : `수집 부족 — 서로 다른 장이 ${info.count}장입니다. 최소 ${p.min}장이 필요합니다. '다시 모으기'를 눌러 천천히 넘겨 주세요.`);
+    }
+
+    async function analyzeScroll() {
+      const p = KneeScrollCapture.PROFILE;
+      if (collector.running) collector.stop("user");
+      const frames = collector.frames.slice();
+      if (frames.length < p.min || scrollAnalyzing) return;
+      scrollAnalyzing = true;
+      renderScroll({ count: frames.length, phase: KneeScrollCapture.phase(frames.length) });
+      const gen = ++analysisGen;
+      const src = sourceKey();   // 요청 때의 공유 원본(해상도·트랙). 응답 때 다르면 버린다(STEP2-003 잔여)
+      busyGen = gen;
+      refreshButtons();
+      setStep(3);
+      setStatus(`무릎 분석 중… (${frames.length}장)`, true);
+      try {
+        const out = await postKneeScreen(frames.map((f) => f.blob), collector.manifest(scopeSelect.value, planeSelect.value));
+        if (gen !== analysisGen) return;
+        if (src !== sourceKey()) { onSourceChanged(); return; }
+        lastAnalysis = null;
+        lastRoiBlob = null;
+        cropPreview.style.display = "block";
+        cropPreview.src = frames[0].url;
+        renderResult(ScreenResultAdapter.toDisplayModel("knee_screen", out));
+        setStatus(`분석 완료 (${out.latency_ms}ms · ${out.capture.used_count}장) · 학습용 참고 점수(보정 전)입니다. '해설'에서 설명을 볼 수 있습니다.`);
+      } catch (err) {
+        if (gen !== analysisGen) return;
+        if (src !== sourceKey()) { onSourceChanged(); return; }
+        setStatus("무릎 분석 실패: " + err.message + " (박스는 그대로입니다. '여기까지 분석'으로 다시 시도할 수 있습니다)");
+        console.error(err);
+      } finally {
+        if (busyGen === gen) busyGen = -1;
+        if (gen === analysisGen) {
+          scrollAnalyzing = false;
+          renderScroll({ count: collector.frames.length, phase: KneeScrollCapture.phase(collector.frames.length) });
+        }
+        refreshButtons();   // 옛 요청이 끝나도 새 조건(박스·공유·범위)에 맞게 다시 계산(STEP2-008). 새 요청 진행 중이면 잠금 유지
       }
     }
+
+    btnScroll.addEventListener("click", () => {
+      if (!isKnee() || !roi || !stream) return;
+      if (planeSelect.value !== "sagittal") {
+        setStatus("넘기며 분석은 지금 시상면(sagittal)만 지원합니다. 촬영면을 sagittal 로 바꿔 주세요.");
+        return;
+      }
+      const probe = cropRoiToCanvas();
+      if (!probe || probe.width < 64 || probe.height < 64) {
+        setStatus("박스가 너무 작습니다. 영상 한 장이 다 들어가도록 한 변 64px 이상으로 다시 그려 주세요.");
+        return;
+      }
+      analysisGen += 1;
+      resetAnalysisResults();
+      scrollPanel.hidden = false;
+      collector.start();
+      setStatus("수집 중 — 공유한 화면에서 MRI 를 천천히 넘겨 주세요. (최소 10 · 권장 15 · 최대 20장)", true);
+    });
+    btnScrollAnalyze.addEventListener("click", analyzeScroll);
+    // 분석 화면이 가려졌다가 다시 보이면(실제 화면 공유 시범에서 수집이 1~5장에 그친 원인) 안내한다
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && collector.running && collector.hiddenSeen) {
+        renderScroll({ count: collector.frames.length, phase: KneeScrollCapture.phase(collector.frames.length) });
+        setStatus("이 분석 화면이 가려져 있는 동안은 수집이 멈췄습니다. 분석 화면과 MRI 창을 겹치지 않게 나란히 두고 계속 넘겨 주세요.", true);
+      }
+    });
+    btnScrollRestart.addEventListener("click", () => {
+      analysisGen += 1;
+      resetAnalysisResults();
+      collector.start();
+      scrollPanel.hidden = false;
+      setStatus("다시 모으는 중 — 천천히 넘겨 주세요.", true);
+    });
+    btnScrollCancel.addEventListener("click", () => {
+      analysisGen += 1;
+      clearScroll();
+      setStatus("수집을 취소했습니다.");
+    });
 
     /**
      * [버튼 핸들러] 선택 영역 분석
@@ -1350,23 +1570,31 @@
       cropPreview.style.display = "block";
       cropPreview.src = canvas.toDataURL("image/png");
 
+      const gen = ++analysisGen;
       if (isKnee()) {
-        setStatus("무릎 분석 중…");
+        setStatus("무릎 분석 중…", true);
+        const src = sourceKey();
+        busyGen = gen;
+        refreshButtons();
         try {
-          const out = await analyzeKneeViaApi(canvas);
+          const out = await analyzeKneeSingle(canvas);
+          if (gen !== analysisGen) { refreshButtons(); return; }   // 그 사이 부위·조건·박스가 바뀜 → 옛 응답 버림, 버튼은 새 조건으로
+          if (src !== sourceKey()) { onSourceChanged(); return; }   // 공유 원본 해상도·트랙이 바뀜(STEP2-003 잔여)
           lastAnalysis = null;
           lastRoiBlob = null;
-          renderKneeAnalysis(out);
-          setStatus(
-            out.analysis_status === "not_evaluated"
-              ? `분석 완료 (${out.latency_ms}ms) · 이 조건은 아직 검증되지 않아 평가하지 않았습니다.`
-              : `분석 완료 (${out.latency_ms}ms)`
-          );
+          renderResult(ScreenResultAdapter.toDisplayModel("knee_screen", out));
+          setStatus(out.model_kind === "single_2d"
+            ? `분석 완료 (${out.latency_ms}ms · 한 장) · 학습용 참고 점수(보정 전)입니다. '해설'에서 설명을 볼 수 있습니다.`
+            : `분석 완료 (${out.latency_ms}ms)`);
         } catch (err) {
-          setStatus("무릎 분석 실패: " + err.message);
+          if (gen !== analysisGen) { refreshButtons(); return; }
+          if (src !== sourceKey()) { onSourceChanged(); return; }
+          setStatus("무릎 한 장 분석: " + err.message);
           console.error(err);
+        } finally {
+          if (busyGen === gen) busyGen = -1;
         }
-        btnAnalyze.disabled = false;
+        refreshButtons();
         return;
       }
 
@@ -1374,12 +1602,13 @@
 
       try {
         const out = await analyzeViaApi(canvas);
+        if (gen !== analysisGen) { btnAnalyze.disabled = false; return; }
         lastAnalysis = out;
         lastRoiBlob = await new Promise((r) => canvas.toBlob(r, "image/png"));
-        renderAnalysis(out);
-        btnExplain.disabled = false;
+        renderResult(ScreenResultAdapter.toDisplayModel("brain", out));
         setStatus(`분석 완료 (${out.latency_ms}ms) · AI 해설을 요청할 수 있습니다.`);
       } catch (err) {
+        if (gen !== analysisGen) { btnAnalyze.disabled = false; return; }
         setStatus("분석 실패: " + err.message);
         console.error(err);
       }
@@ -1388,7 +1617,14 @@
     });
 
     btnExplain.addEventListener("click", async () => {
+      if (lastModel && lastModel.explain.mode === "fixed") {   // 무릎: 검수된 고정 설명(D-072). 생성 모델 호출 없음
+        explainBox.style.display = "block";
+        explainText.innerHTML = lastModel.explain.items
+          .map((it) => `<div class="report-body"><strong>${escapeHtml(it.title)}</strong> · ${escapeHtml(it.text)}</div>`).join("");
+        return;
+      }
       if (!lastAnalysis || !lastRoiBlob) return;
+      const gen = analysisGen;
       btnExplain.disabled = true;
       btnExplain.classList.add("is-loading");
       setStatus("MedGemma 해설 생성 중… (HF Inference API)", true);
@@ -1396,12 +1632,14 @@
 
       try {
         const out = await explainViaApi(lastRoiBlob, lastAnalysis);
+        if (gen !== analysisGen) { btnExplain.classList.remove("is-loading"); return; }
         hideExplainLoading();
         explainBox.style.display = "block";
         renderRadiologyReport(out.explanation);
         setStep(3);
         setStatus(`해설 완료 (${out.latency_ms}ms)`);
       } catch (err) {
+        if (gen !== analysisGen) { btnExplain.classList.remove("is-loading"); return; }
         hideExplainLoading();
         explainBox.style.display = "block";
         explainText.innerHTML = `<div class="report-body" style="color:#fca5a5">해설 생성 실패: ${escapeHtml(err.message)}</div>`;

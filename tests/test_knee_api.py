@@ -552,8 +552,19 @@ class ConcurrencyAndWiringTests(KneeApiBase):
         for banned in ("import torch", "get_db", "Session", "nas_service", "nasServices", "upload_analysis_bundle", "print("):
             self.assertNotIn(banned, source, f"라우터에 {banned!r} 가 있으면 안 됩니다")
         main = (ROOT / "main.py").read_text(encoding="utf-8")
-        self.assertIn("from routers import admin, commonness, brain, knee, kneeLearning, user", main)
+        self.assertIn("from routers import admin, commonness, brain, knee, kneeLearning, kneeScreenAnalysis, user", main)
         self.assertIn('app.include_router(knee.router, prefix="/api/v1", tags=["knee"])', main)
+        self.assertIn('app.include_router(kneeScreenAnalysis.router, prefix="/api/v1", tags=["knee"])', main)   # 넘기며 분석(MSN-20261021-001)
+        scroll_src = (ROOT / "routers" / "kneeScreenAnalysis.py").read_text(encoding="utf-8")
+        for banned in ("import torch", "get_db", "Session", "nas_service", "nasServices", "upload_analysis_bundle", "print(", "reviewNodeRepositories", "review_node_repositories"):
+            self.assertNotIn(banned, scroll_src, f"넘기며 분석 라우터에 {banned!r} 가 있으면 안 됩니다")
+        single_src = (ROOT / "class" / "knee" / "single_image.py").read_text(encoding="utf-8")   # 한 장 2D 모델(SINGLE07)
+        for banned in ("get_db", "Session", "nas_service", "nasServices", "upload_analysis_bundle", "print(", "reviewNodeRepositories",
+                       "review_node_repositories", "hf_hub_download", "weights_only=False", "IMAGENET1K", "exec(", "importlib"):
+            self.assertNotIn(banned, single_src, f"한 장 모델에 {banned!r} 가 있으면 안 됩니다")
+        ref_src = (ROOT / "class" / "knee" / "score_reference.py").read_text(encoding="utf-8")   # 보정 sidecar 읽기(DB·NAS·외부 호출 없음)
+        for banned in ("get_db", "Session", "nas_service", "nasServices", "print(", "reviewNodeRepositories", "hf_hub_download", "requests", "urllib", "exec(", "pickle"):
+            self.assertNotIn(banned, ref_src, f"score_reference 에 {banned!r} 가 있으면 안 됩니다")
         self.assertIn("app.include_router(kneeLearning.router)", main)
         self.assertNotIn("class.knee", main)  # 앱 시작 때 무릎 모델을 불러오지 않는다
 

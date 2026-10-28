@@ -210,6 +210,26 @@
       </dl>
     </article>
 
+    <h2 id="scroll">넘기며 분석 (API, 화면 공유 여러 장)</h2>
+    <h3>ACL 위치 안내를 점수와 분리하기</h3>
+    <p><code>class/knee/screen_localization.py</code>는 중복을 뺀 사용 목록의 가운데 한 장만 받아, 고정 SHA의 로컬 캐시 YOLO로 대략적 ACL 위치를 찾습니다. 다른 장·정답 박스로 대신하지 않습니다. 박스는 그 캡처의 0~1 좌표이며, 종횡비를 유지한 그림에 테두리만 그립니다. 원 좌표가 무한대·범위 밖이면 먼저 거절합니다.</p>
+    <p>서버의 <code>KNEE_SCREEN_LOCALIZATION_ENABLED</code>가 정확히 <code>1</code>일 때만 위치 모델을 호출합니다. 미설정·빈 값·<code>0</code>·잘못된 값은 <code>disabled_by_policy</code>로 보류합니다. 꺼짐이면 캐시 조회·모델 로드·탐지·그림 생성 모두 하지 않으며, 볼륨 점수와 해설·한 장 참고 열지도·뇌 분석은 유지합니다. 요청 데이터로 이 서버 설정을 바꿀 수 없습니다.</p>
+    <p><code>visualization.kind=anatomical_box</code>는 별도 ACL 위치 모델의 참고 박스, <code>grad_cam</code>은 한 장 모델의 참고 열지도입니다. 위치가 없거나 오류·부분 입력·설정 꺼짐이면 <code>kind=none</code>과 고정 안내만 냅니다. 미검출은 정상이라는 뜻이 아닙니다. YOLO도 학습·선정 자료에 노출됐으며 화면 캡처의 해부학/병변 정확도를 검증한 결과가 아닙니다.</p>
+    <p>이 파일은 위치 안내만 담당하고 분류 입력·점수·보정·DB·NAS를 바꾸지 않습니다. 결과는 같은 화면 칸에 나타나며, 원본 영상/그림을 저장하지 않습니다. 운영에서 문제가 생기면 승인된 시작 스크립트의 <code>-LocationOff</code>로 위치만 보류하고 <code>--expect-location-off</code>로 점검합니다. 실제 설정 변경과 서버 재시작은 별도 실행 범위입니다.</p>
+
+    <p><code>POST /api/v1/knee/screen-analysis</code>(<code>routers/kneeScreenAnalysis.py</code>, 검증·응답 <code>class/knee/scroll_analysis.py</code>, 모델 <code>class/knee/acl_volume.py</code>). 화면 <code>/</code>에서 부위 무릎 MRI·박스를 정한 뒤 <strong>넘기며 분석</strong>을 누르고 시상면 MRI 를 넘기면, 브라우저(<code>assets/js/knee-scroll-capture.js</code>)가 바뀐 장을 자동으로 모아(최소 10·권장 15·최대 20, 같은 화면은 원 화소 해시로 한 번만) 보냅니다.</p>
+    <ul>
+      <li>입력: multipart <code>frames</code>(PNG/JPEG 반복, 장별 1MiB·전체 16MiB·한 변 64~512px·모두 같은 크기), <code>manifest</code>(JSON: schema_version=1·plane=sagittal·image_scope·capture_intent=scroll|single·capture_profile_id·frames[{sequence,file_index,captured_at_ms}]), 선택 <code>include_overlay</code>. 모르는 필드는 400.</li>
+      <li>장 수는 <strong>서버가 디코딩하고 같은 화소를 뺀 수</strong>로 정합니다. 넘기며 10~20장 → ACL 시상면 여러 장 모델(best_acl_combined 하나만 처음 쓸 때 불러옴). 9장 이하 422, 21장 이상 413. 넘기며 분석이 중복을 뺀 뒤 1장이어도 한 장 모델로 바꾸지 않고 422.</li>
+      <li><strong>한 장(<code>capture_intent=single</code>, 화면의 '선택 영역 분석')</strong>: 정확히 1장 → ACL 시상면 <strong>한 장 2D 모델</strong>(<code>class/knee/single_image.py</code>, 사용자 Colab 학습 반입본 v1, ResNet18·logit 1개). 응답 <code>model_kind=single_2d</code>·<code>profile_id=knee_single_demo_v1</code>, 점수는 raw 만(<code>score_only</code>·<code>band=null</code>·보정 미사용), 같은 logit 의 Grad-CAM(모델 입력 224×224 위), 한 장용 고정 해설. 모델 폴더는 서버 설정 <code>KNEE_SINGLE_BUNDLE_DIR</code> 로만 정하고(요청으로 경로를 받지 않음), 코드에 고정한 SHA-256 과 다르거나 설정이 없으면 503 <code>model_single_not_ready</code>(여러 장 모델로 대신하지 않음). 전처리는 학습 때와 같음: 회색 → 이미지별 min-max → 224 bilinear(antialias) → 3채널 → ImageNet 정규화. 근거(<code>evidence</code>): 검사 그룹 내부 holdout 181(데이터셋 ACL 중간 장 조건, AUROC ≠ 정확도)·약한 라벨·외부 확인 미실시·높은 쪽 오판 목표 미충족(판정에 안 씀)·독립 검증 아님.</li>
+      <li>응답: 실제 모델 점수(<code>acl.raw_score</code>, 보정 전이면 <code>score_kind=raw</code>·<code>decision=score_only</code>), 별도 위치 모델의 ACL 참고 박스(허용·검출된 경우만)와 수집 순번, 결과 값으로 만든 고정 해설(생성형 AI 아님). 볼륨 Grad-CAM은 계산·표시하지 않습니다. 점수 모델의 판단 근거·파열 위치 안내가 아닙니다.</li>
+      <li>자원: 본문은 파싱 전에 실제 바이트로 세어 한도를 넘으면 바로 413. 계산은 하나씩(진행 중이면 429), 시간 초과 504 뒤에도 그 계산이 끝날 때까지 429. 이미지는 저장하지 않으며 DB·NAS·학습 기록을 쓰지 않습니다.</li>
+      <li>설정(선택): <code>KNEE_SCREEN_ANALYSIS_ENABLED</code>(기본 1), <code>KNEE_SCREEN_ANALYSIS_TIMEOUT_S</code>(기본 60), <code>KNEE_SCROLL_DEVICE</code>(기본 cpu), <code>KNEE_SINGLE_BUNDLE_DIR</code>(한 장 모델 폴더, 비우면 한 장 분석 503. 모델은 Git·공개 정적 폴더·NAS 웹 폴더에 두지 않음).</li>
+      <li><strong>비교 기준선(보정 v2)</strong>: <code>class/knee/score_reference.py</code>. 서버 설정 <code>KNEE_SINGLE_CALIBRATION_FILE</code>·<code>KNEE_VOLUME_REFERENCE_FILE</code> 의 sidecar JSON 을 코드에 고정한 SHA 와 대조한 뒤에만 쓴다(형식·모델 SHA·입력 정책·범위 불일치 → raw 만, <code>acl.reference_status</code> 에 사유).
+        한 장: <code>decision=reference_compared</code>, <code>acl.reference</code>(데이터셋 기준 비교선·위/아래), <code>acl.band</code>(high/low/uncertain 참고구간). calibration 181 로 고정하고 이미 사용한 내부 test 181 로 버전별 감사 1회 확인(새 독립 시험 아님). 감사에서 보정 점수 표시는 미채택이라 점수는 raw 그대로. 적용: 시상면·영상 한 장 전체(데이터셋 가운데 장 조건이라고 가정, 서버가 확인하지 못함).
+        넘기며: '학습 노출 자료 기준선(탐색)'은 서버가 가운데 연속 15장 조건을 확인한 통제 시연에서만 쓰며, 일반 화면 공유에서는 확인할 수 없어 참고선을 생략한다(점수·해설은 유지, 위치 표시는 별도 설정). 해설은 0.5 같은 임의 기준으로 방향을 나누지 않으며 '의료 진단이 아님'을 항상 포함한다.</li>
+    </ul>
+
     <h2 id="screen">화면 캡처 한 장 분석 (API)</h2>
     <p><code>POST /api/v1/knee/screen-roi</code>는 사용자가 화면 공유 중인 외부 뷰어에서 캡처한 <strong>이미지 한 장</strong>을 받습니다. 뇌 CT 화면 공유 분석(<code>routers/brain.py</code>)과 같은 자리에 있지만, 요청·응답 형식은 따로 정합니다(무릎은 부위·촬영면·이미지 범위를 함께 받음).</p>
     <div class="note">
