@@ -111,6 +111,26 @@
         }
     }
 
+    function reloadPopupTables() {
+        document.querySelectorAll('#popupTable').forEach(function (table) {
+            loadPopups(table);
+        });
+    }
+
+    function bindSse() {
+        if (window.__popupManagerSSEBound) return;
+        window.__popupManagerSSEBound = true;
+        if (window.AdminPopupSSE) {
+            AdminPopupSSE.on('popup_created', reloadPopupTables);
+            AdminPopupSSE.on('popup_updated', reloadPopupTables);
+            AdminPopupSSE.on('popup_deleted', reloadPopupTables);
+        } else {
+            document.addEventListener('admin:popup:popup_created', reloadPopupTables);
+            document.addEventListener('admin:popup:popup_updated', reloadPopupTables);
+            document.addEventListener('admin:popup:popup_deleted', reloadPopupTables);
+        }
+    }
+
     function bindActions(scope) {
         const root = scope || document;
         root.querySelectorAll('#popupTable').forEach(function (table) {
@@ -128,6 +148,7 @@
         root.querySelectorAll('#popupTable').forEach(function (table) {
             loadPopups(table);
         });
+        bindSse();
         bindActions(root);
         if (window.feather) feather.replace();
     }

@@ -1,9 +1,30 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from models.reviewNodeModel import ReviewNodeModel
 from models.studyModel import StudyModel
 from models.userModel import UserModel
+
+
+def get_owned(
+    db: Session, idx: int, user_idx: int
+) -> tuple[ReviewNodeModel, StudyModel | None] | None:
+    """그 사용자의 제출 1건과 연결된 study."""
+    stmt = (
+        select(ReviewNodeModel, StudyModel)
+        .outerjoin(StudyModel, StudyModel.idx == ReviewNodeModel.rn_s_idx)
+        .where(
+            ReviewNodeModel.idx == idx,
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+        )
+    )
+    row = db.execute(stmt).first()
+    if row is None:
+        return None
+    return row[0], row[1]
 
 
 def list_solved_study_idxs(db: Session, user_idx: int) -> list[int]:
@@ -41,6 +62,28 @@ def list_with_details(
     return list(db.execute(stmt).all())
 
 
+def list_between_for_user(
+    db: Session,
+    user_idx: int,
+    *,
+    start: datetime,
+    end: datetime,
+) -> list[tuple[ReviewNodeModel, StudyModel | None]]:
+    """한 회원의 기간 안 제출과 연결된 study. start 이상, end 미만."""
+    stmt = (
+        select(ReviewNodeModel, StudyModel)
+        .outerjoin(StudyModel, StudyModel.idx == ReviewNodeModel.rn_s_idx)
+        .where(
+            ReviewNodeModel.del_yn == "N",
+            ReviewNodeModel.rn_u_idx == user_idx,
+            ReviewNodeModel.created_at >= start,
+            ReviewNodeModel.created_at < end,
+        )
+        .order_by(ReviewNodeModel.created_at.asc(), ReviewNodeModel.idx.asc())
+    )
+    return list(db.execute(stmt).all())
+
+
 def count_by_user(db: Session, user_idx: int) -> int:
     """해당 사용자의 풀이(제출) 건수."""
     stmt = (
@@ -62,6 +105,11 @@ def create(
     rn_disease: str | None,
     rn_image: str | None,
     rn_solution: str | None,
+    rn_recall: float | None = None,
+    rn_iou: float | None = None,
+    rn_overlay_summary: str | None = None,
+    rn_findings: str | None = None,
+    rn_slice_index: int | None = None,
     state: str = "N",
 ) -> ReviewNodeModel:
     row = ReviewNodeModel(
@@ -71,6 +119,11 @@ def create(
         rn_disease=rn_disease,
         rn_image=rn_image,
         rn_solution=rn_solution,
+        rn_recall=rn_recall,
+        rn_iou=rn_iou,
+        rn_overlay_summary=rn_overlay_summary,
+        rn_findings=rn_findings,
+        rn_slice_index=rn_slice_index,
         state=state,
     )
     db.add(row)

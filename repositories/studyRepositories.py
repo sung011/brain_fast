@@ -4,6 +4,15 @@ from sqlalchemy.orm import Session
 from models.studyModel import StudyModel
 
 
+def count_active(db: Session) -> int:
+    stmt = (
+        select(func.count())
+        .select_from(StudyModel)
+        .where(StudyModel.del_yn == "N", StudyModel.state == "N")
+    )
+    return int(db.scalar(stmt) or 0)
+
+
 def list_all(db: Session, *, active_only: bool = True) -> list[StudyModel]:
     stmt = select(StudyModel).order_by(StudyModel.created_at.desc())
     if active_only:

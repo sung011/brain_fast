@@ -9,7 +9,11 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /popups             : 메인 화면 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
 - /glossary           : 의학용어 사전 조회
-- /learning/problem   : 랜덤 학습 문제 1건
+- /learning/today      : 오늘 부위별 학습 시간·문제 수·정답률
+- /learning/notes     : 로그인 사용자의 오답·부분정답 제출
+- /learning/history   : 로그인 사용자의 제출 전체와 활성 문제 수
+- /learning/review    : 제출 번호로 그 사용자의 채점 이미지 1건
+- /learning/problem   : 랜덤 학습 문제 1건. idx가 있으면 그 study 영상
 - /learning/submit    : 병명 제출·채점 + 다음 문제
 - /learning/roi-grade : 이미지+ROI 제출 채점 (MRI는 slice_index/image_path, 리뷰 저장 포함)
 - /items/{item_id}    : (연습용) 입력값 검증 테스트
@@ -26,6 +30,7 @@ from db import get_db
 from db import ping_db
 from models.studyModel import StudyModel
 from repositories import studyRepositories as study_repositories
+from schemas.learningSchemas import TodayLearningOut
 from schemas.popupSchemas import PopupPublicOut
 from schemas.qaSchemas import QaCreateBody, QaMessageBody
 from schemas.userSchemas import UserLogin
@@ -35,7 +40,7 @@ from services import qaServices as qa_service
 from services import reviewNodeServices as review_node_service
 from services import roiGradeServices as roi_grade_service
 from services import userServices as user_service
-from services.nasServices import NasNotConfiguredError, NasUploadError
+from services.objectStorageServices import StorageNotConfiguredError, StorageUploadError
 from utils.password import hash_password, verify_password
 from utils.qa_sse import qa_events
 from utils.review_sse import review_events
@@ -90,8 +95,10 @@ def _popup_public_url(pp_image: str | None) -> str | None:
 @router.get("/popups", response_model=list[PopupPublicOut])
 def public_popups(db: Session = Depends(get_db)):
     """
-    학습자 메인용 활성 홍보 팝업 목록.
-    del_yn=N, state=N, 노출 기간 안인 항목만 pp_sort 순으로 반환.
+    학습자 메인에 띄울 홍보 팝업.
+
+    상태가 노출(N)이고, 지금이 노출 시작과 노출 종료 사이인 항목만 pp_sort 순으로 반환.
+    시작을 비우면 즉시, 종료를 비우면 종료 없음. 숨김·삭제·기간 밖은 빠진다.
     """
     rows = popup_service.list_public(db)
     return [
@@ -102,6 +109,9 @@ def public_popups(db: Session = Depends(get_db)):
             pp_image_url=_popup_public_url(row.pp_image),
             pp_link=row.pp_link,
             pp_sort=row.pp_sort or 0,
+            state=row.state,
+            start_at=row.start_at,
+            end_at=row.end_at,
         )
         for row in rows
     ]
@@ -290,10 +300,90 @@ def glossary(
     }
 
 
+@router.get("/learning/today", response_model=TodayLearningOut)
+def learning_today(
+        user_idx: int = Query(..., description="로그인 사용자 user_member.idx"),
+        db: Session = Depends(get_db),
+):
+    """
+    오늘의 학습 현황.
+
+    오늘 제출이 있는 부위만 학습 시간(분), 학습 문제 수, 정답률(%)을 돌려준다.
+    제출은 review_node 기준이고 정답은 rn_solution=C. 없는 부위는 items에 넣지 않는다.
+    학습 시간은 첫 제출과 마지막 제출 사이의 분이고, 제출이 1건 이하면 0이다.
+    """
+    try:
+        result = learning_service.today_learning(db, user_idx)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True, **result}
+
+
+@router.get("/learning/notes")
+def learning_notes(
+        user_idx: int = Query(..., description="로그인 사용자 user_member.idx"),
+        db: Session = Depends(get_db),
+):
+    """오답노트. 문제마다 가장 최근 제출만 보고, 그 결과가 오답(W)·부분정답(H)일 때만 최신순으로 돌려준다."""
+    try:
+        items = review_node_service.list_wrong_notes(db, user_idx)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True, "user_idx": user_idx, "items": items}
+
+
+@router.get("/learning/history")
+def learning_history(
+        user_idx: int = Query(..., description="로그인 사용자 user_member.idx"),
+        db: Session = Depends(get_db),
+):
+    """학습 기록. 그 사용자의 제출을 최신순으로 모두 돌려주고, 활성 문제 수를 함께 준다."""
+    try:
+        result = review_node_service.list_learning_history(db, user_idx)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    return {"ok": True, "user_idx": user_idx, **result}
+
+
+@router.get("/learning/review")
+def learning_review(
+        idx: int = Query(..., description="review_node.idx. 그 제출의 채점 이미지"),
+        user_idx: int = Query(..., description="로그인 사용자 user_member.idx"),
+        db: Session = Depends(get_db),
+):
+    """제출 번호로 그 사용자가 저장한 채점 이미지 1건."""
+    try:
+        item = review_node_service.get_saved_review(db, idx, user_idx)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="해당 채점 기록을 찾을 수 없습니다.",
+        )
+    return {"ok": True, "user_idx": user_idx, **item}
+
+
 @router.get("/learning/problem")
 def learning_problem(
         st_part: str | None = None,
         st_modal: str | None = None,
+        idx: int | None = Query(
+            default=None,
+            description="study.idx. 있으면 그 문제 영상을 반환하고 랜덤·제출 제외는 하지 않는다",
+        ),
         exclude_idxs: list[int] | None = Query(
             default=None,
             description="이미 푼 idx. 예) exclude_idxs=1&exclude_idxs=2",
@@ -305,22 +395,24 @@ def learning_problem(
         db: Session = Depends(get_db),
 ):
     """
-    study 테이블에서 랜덤 문제 1건.
+    study 테이블에서 문제 1건.
+    - idx: 있으면 그 study 영상을 반환한다. 이미 푼 문제여도 제외하지 않는다.
     - st_part: 1~4 또는 brain, chest, abdomen, knee
     - st_modal: 1~3 또는 xray, ct, mri
-    - user_idx: 있으면 해당 사용자가 이미 제출한 문제 제외
-    예) /learning/problem?st_part=chest&st_modal=CT&user_idx=3
-    화면에서는 시작 시 1번만 호출하고, 제출 전에는 다시 호출하지 않는다.
-    다음 문제는 POST /learning/submit 응답의 next를 사용한다.
+    - user_idx: idx가 없을 때만, 해당 사용자가 이미 제출한 문제를 제외한다
+    예) /learning/problem?st_part=brain&st_modal=CT&idx=89
     """
     try:
-        row = learning_service.get_random_problem(
-            db,
-            st_part=st_part,
-            st_modal=st_modal,
-            exclude_idxs=exclude_idxs,
-            user_idx=user_idx,
-        )
+        if idx is not None:
+            row = learning_service.get_problem_by_idx(db, idx)
+        else:
+            row = learning_service.get_random_problem(
+                db,
+                st_part=st_part,
+                st_modal=st_modal,
+                exclude_idxs=exclude_idxs,
+                user_idx=user_idx,
+            )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -328,9 +420,12 @@ def learning_problem(
         ) from exc
 
     if row is None:
-        detail = "조건에 맞는 학습 문제가 없습니다."
-        if user_idx is not None:
-            detail = "풀지 않은 학습 문제가 더 없습니다. (이미 제출한 문제는 제외됩니다)"
+        if idx is not None:
+            detail = "해당 학습 문제를 찾을 수 없습니다."
+        else:
+            detail = "조건에 맞는 학습 문제가 없습니다."
+            if user_idx is not None:
+                detail = "풀지 않은 학습 문제가 더 없습니다. (이미 제출한 문제는 제외됩니다)"
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=detail,
@@ -460,8 +555,10 @@ async def learning_roi_grade(
       제출 슬라이스를 고른 뒤, 올린 image/좌표로 채점한다.
     - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
-      NAS /web/mu_shop/public/stylesheets/assets/review 에 저장하고
+      Object Storage /stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
+    - 포함률(rn_recall), ROI 정확도(rn_iou), 위치 요약(rn_overlay_summary),
+      출혈·germinoma 소견(rn_findings), MRI 슬라이스(rn_slice_index)도 같은 행에 넣는다.
     - user_idx + study_idx 를 넣으면 제출 이력이 남아
       이후 GET /learning/problem?user_idx=... 에서 같은 문제가 제외된다.
     - next: 방금 푼 문제를 제외한 다음 랜덤 문제(없으면 null).
@@ -514,21 +611,22 @@ async def learning_roi_grade(
             grade=result,
             study_idx=study_idx,
             user_idx=user_idx,
+            slice_index=slice_index,
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
-    except NasNotConfiguredError as exc:
+    except StorageNotConfiguredError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-    except NasUploadError as exc:
+    except StorageUploadError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"NAS 업로드 실패: {exc}",
+            detail=f"이미지 업로드 실패: {exc}",
         ) from exc
     except Exception as exc:
         raise HTTPException(

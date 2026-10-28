@@ -1,7 +1,7 @@
-"""MRI 슬라이드 등록 테스트.
+"""학습 등록(슬라이드 / 파일마다 문제) 테스트.
 
-한 문제(slide)는 파일 이름 순서로 study 1행 JSON에 저장하고,
-형식이 아니면 거절한다. 파일마다 문제(each)는 기존처럼 행을 나눈다.
+한 문제(slide)는 MRI만. 파일 이름 순서로 study 1행 JSON에 저장하고,
+형식이 아니면 거절한다. 파일마다 문제(each)는 X-ray·CT·MRI 모두 행을 나눈다.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class SlideNameTests(unittest.TestCase):
 class SlideUploadApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(_app())
-        self._nas = admin_router.nas_service_mod.nas_service
+        self._nas = admin_router.storage_mod.storage_service
         self.uploaded: list[str] = []
         self.saved: list[dict] = []
 
@@ -55,7 +55,7 @@ class SlideUploadApiTests(unittest.TestCase):
             self.uploaded.append(name)
             return {"remote_path": f"{remote_dir}/{name}"}
 
-        admin_router.nas_service_mod.nas_service = SimpleNamespace(
+        admin_router.storage_mod.storage_service = SimpleNamespace(
             enabled=True,
             upload_bytes=upload_bytes,
         )
@@ -81,7 +81,7 @@ class SlideUploadApiTests(unittest.TestCase):
         admin_router.study_service.create_study = create_study
 
     def tearDown(self) -> None:
-        admin_router.nas_service_mod.nas_service = self._nas
+        admin_router.storage_mod.storage_service = self._nas
         admin_router.study_service.create_study = self._create
 
     def test_slide_thirty_files_one_row_in_order(self) -> None:
@@ -171,7 +171,25 @@ class SlideUploadApiTests(unittest.TestCase):
         self.assertIn("MRI", response.text)
         self.assertEqual(self.saved, [])
 
-    def test_each_mode_creates_one_row_per_file(self) -> None:
+    def test_slide_mode_rejects_ct(self) -> None:
+        response = self.client.post(
+            "/admin/study",
+            data={
+                "st_part": "1",
+                "st_modal": "2",
+                "st_disease": "출혈",
+                "upload_mode": "slide",
+            },
+            files=[
+                ("files", ("01_a.png", b"a", "image/png")),
+                ("files", ("02_b.png", b"b", "image/png")),
+            ],
+        )
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertIn("MRI", response.text)
+        self.assertEqual(self.saved, [])
+
+    def test_each_mode_creates_one_row_per_file_for_mri(self) -> None:
         response = self.client.post(
             "/admin/study",
             data={
@@ -190,12 +208,57 @@ class SlideUploadApiTests(unittest.TestCase):
         self.assertEqual(len(self.saved), 2)
         self.assertFalse(self.saved[0]["st_image"].startswith("["))
 
-    def test_create_page_explains_slide_filename(self) -> None:
+    def test_each_mode_creates_one_row_per_file_for_ct(self) -> None:
+        response = self.client.post(
+            "/admin/study",
+            data={
+                "st_part": "1",
+                "st_modal": "2",
+                "st_disease": "출혈",
+                "upload_mode": "each",
+            },
+            files=[
+                ("files", ("ct_a.png", b"a", "image/png")),
+                ("files", ("ct_b.png", b"b", "image/png")),
+                ("files", ("ct_c.png", b"c", "image/png")),
+            ],
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["count"], 3)
+        self.assertEqual(len(self.saved), 3)
+        for row in self.saved:
+            self.assertEqual(row["st_modal"], "2")
+            self.assertFalse(row["st_image"].startswith("["))
+
+    def test_each_mode_creates_one_row_per_file_for_xray(self) -> None:
+        response = self.client.post(
+            "/admin/study",
+            data={
+                "st_part": "4",
+                "st_modal": "1",
+                "st_disease": "골절",
+                "upload_mode": "each",
+            },
+            files=[
+                ("files", ("x1.png", b"a", "image/png")),
+                ("files", ("x2.png", b"b", "image/png")),
+            ],
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["count"], 2)
+        self.assertEqual(len(self.saved), 2)
+        for row in self.saved:
+            self.assertEqual(row["st_modal"], "1")
+
+    def test_create_page_explains_each_and_mri_slide(self) -> None:
         response = self.client.get("/admin/study/create?partial=1")
         self.assertEqual(response.status_code, 200, response.text)
+        self.assertIn("파일마다 문제", response.text)
         self.assertIn("한 문제의 슬라이드", response.text)
         self.assertIn("01_이름.png", response.text)
         self.assertIn("01_이름.jpg", response.text)
+        self.assertIn("X-ray·CT는 이 방식만", response.text)
+        self.assertIn("MRI만 가능", response.text)
 
 
 if __name__ == "__main__":

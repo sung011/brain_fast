@@ -68,6 +68,8 @@
         const fileCountEl = form.querySelector('#studyFileCount');
         const btn = form.querySelector('#studyCreateSubmitBtn');
         const modeWrap = form.querySelector('#studyUploadModeWrap');
+        const slideOption = form.querySelector('#studySlideModeOption');
+        const eachHint = form.querySelector('#studyEachModeHint');
         const slideHint = form.querySelector('#studySlideNameHint');
         const slideError = form.querySelector('#studySlideNameError');
         /** @type {File[]} */
@@ -125,13 +127,16 @@
 
         function syncUploadMode() {
             const mri = isMri();
-            if (modeWrap) modeWrap.classList.toggle('d-none', !mri);
+            if (modeWrap) modeWrap.classList.remove('d-none');
+            if (slideOption) slideOption.classList.toggle('d-none', !mri);
             if (!mri) {
                 const eachRadio = form.querySelector('#uploadModeEach');
                 if (eachRadio) eachRadio.checked = true;
             }
-            if (slideHint) slideHint.classList.toggle('d-none', !isSlideMode());
-            if (!isSlideMode()) showSlideErrors([]);
+            const slide = isSlideMode();
+            if (eachHint) eachHint.classList.toggle('d-none', slide);
+            if (slideHint) slideHint.classList.toggle('d-none', !slide);
+            if (!slide) showSlideErrors([]);
             renderFileList();
         }
 
