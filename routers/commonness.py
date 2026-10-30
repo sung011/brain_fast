@@ -8,7 +8,8 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /login              : 학습자 로그인 (성공하면 세션 learner 를 만든다)
 - /popups             : 메인 화면 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
-- /glossary           : 의학용어 사전 조회
+- /glossary           : 의학용어 사전 조회 (medical_terms, 부위·영상 종류)
+- /glossary/search    : 질문으로 색인 검색. 구현은 routers/rag.py
 - /learning/problem   : 랜덤 학습 문제 1건
 - /learning/problem/{idx}/image : 문제 영상 한 장 (Object Storage 에서 대신 받아 줌)
 - /learning/problem/{idx} : 문제 번호로 1건 (오답노트 '다시 풀기', 정답 숨김)
