@@ -127,10 +127,71 @@
     return { src: null, alt: null, note: png ? "이 결과의 위치 그림은 표시하지 않습니다(이전 형식 응답)." : null };
   }
 
+  /** 앙상블(B+v4) 넘기며 분석(MSN-20261102-004, score_mode='ensemble').
+   *  - analysis_status=evaluated + 유한한 0~1 점수만 막대('xx.x점', % 아님). not_evaluated·null·문자열·NaN 은 점수 없음 + 서버가 준 이유(0점·B 점수로 바꾸지 않음).
+   *  - 참고선은 서버의 정밀 τE 와 위치만 옮긴다(여기서 다시 비교하지 않음). 그림은 kind='input_crop_location' 일 때만, CAM 없음. */
+  function fromKneeEnsemble(out) {
+    const acl = out.acl || {};
+    const cap = out.capture || {};
+    const vis = out.visualization || {};
+    const ens = out.ensemble && typeof out.ensemble === "object" ? out.ensemble : {};
+    const evaluated = out.analysis_status === "evaluated" && ens.status === "ok";
+    const s = evaluated ? score01(acl.display_score) : null;
+    const reason = evaluated
+      ? (s == null ? "점수를 표시할 수 없습니다." : null)
+      : text(acl.not_evaluated_text, "앙상블 점수를 계산하지 못했습니다. 점수 모델을 '기존 B'로 바꿔 다시 분석할 수 있습니다.");
+    const findings = [{
+      key: "acl", label: text(acl.label_ko, "앙상블(B+v4) · 학습용 참고 점수"), score: s, unit: "points",
+      status: s == null ? (evaluated ? "invalid_score" : "not_evaluated") : "evaluated", reason,
+      note: s == null ? null : [text(acl.display_text, null), "손상 확률 아님 · 정상/파열 판정 아님 · 의료 진단 아님"].filter(Boolean).join(" · "),
+    }];
+    const ref = s != null && acl.reference && typeof acl.reference === "object" ? acl.reference : null;
+    const meta = [{ label: "점수 모델", value: "앙상블(B+v4) · 학습용 참고 점수" }];
+    if (cap.used_count) {
+      const seqs = Array.isArray(cap.used_sequences) ? cap.used_sequences : [];
+      const span = seqs.length ? ` · 수집 순번 ${seqs[0]}~${seqs[seqs.length - 1]}` : "";
+      meta.push({ label: "분석에 쓴 장", value: `${cap.used_count}장 (서로 다른 ${cap.unique_count}장 중 가운데 15장${span})` });
+    } else if (cap.unique_count != null) {
+      meta.push({ label: "받은 장", value: `서로 다른 ${cap.unique_count}장 (앙상블은 15장 필요)` });
+    }
+    if (ens.n_valid != null && ens.required != null) meta.push({ label: "v4 유효 크롭", value: `${ens.n_valid}/15장 (필요 ${ens.required}장)` });
+    if (ref && score01(ref.threshold) != null) {
+      const pos = ref.position === "above" ? "위" : ref.position === "below" ? "아래" : null;
+      meta.push({ label: "고정 실험 참고선", value: `${text(ref.threshold_display, (ref.threshold * 100).toFixed(2) + "점")}${pos ? ` · 점수가 참고선보다 ${pos}` : ""}` });
+    }
+    if (out.latency_ms != null) meta.push({ label: "추론 시간", value: `${out.latency_ms}ms${out.device ? " · " + out.device : ""}` });
+    const items = (Array.isArray(out.explanations) ? out.explanations : []).filter((e) => e && text(e.text, null)).map((e) => ({ title: text(e.title, "해설"), text: e.text }));
+    const notices = [];
+    if (ref && text(ref.text, null)) notices.push(ref.text);
+    for (const w of Array.isArray(out.warnings) ? out.warnings : []) if (w && text(w.text, null)) notices.push(w.text);
+    for (const n of Array.isArray(out.notices) ? out.notices : []) if (n && text(n.text, null)) notices.push(n.text);
+    let overlay = { src: null, alt: null, note: null };
+    const loc = vis.localization && typeof vis.localization === "object" ? vis.localization : null;
+    if (evaluated && vis.kind === "input_crop_location" && vis.status === "shown" && vis.overlay_png_base64 && loc && loc.status === "shown") {
+      overlay = {
+        src: "data:image/png;base64," + vis.overlay_png_base64, alt: "ACL 입력 크롭 위치 참고",
+        note: [text(vis.title, "ACL 입력 크롭 위치 참고"), `선택 15장 중 ${loc.frame_ordinal}번째 장(수집 순번 ${loc.frame_sequence})`,
+          text(vis.relation, "ACL 입력 크롭 위치 참고 — 병변 위치나 앙상블 점수의 원인 설명이 아닙니다.")].filter(Boolean).join(" · "),
+      };
+    } else if (evaluated && vis.status === "withheld") {
+      overlay = { src: null, alt: null, note: text(vis.note, null) };
+    }
+    return {
+      part: "knee", status: evaluated ? "evaluated" : "not_evaluated",
+      title: evaluated ? "무릎 MRI 학습용 분석 결과 (넘기며 분석 · 앙상블 B+v4)" : "앙상블(B+v4) 점수를 계산하지 못했습니다",
+      meta, groups: [{ key: "knee", title: "ACL (전방십자인대) · 시상면 여러 장 · 앙상블(B+v4)", findings }],
+      overlay,
+      explain: items.length ? { mode: "fixed", items, disabledReason: null } : { mode: "none", items: [], disabledReason: "앙상블 점수가 없어 해설이 없습니다." },
+      notices,
+    };
+  }
+
   /** 무릎 화면 분석(POST /api/v1/knee/screen-analysis, schema_version 1): 실제 ACL 점수(보정 전이면 raw)·위치 안내/참고 열지도·템플릿 해설.
-   *  model_kind: 'single_2d' = 한 장 모델(선택 영역 분석), 'volume' = 여러 장 모델(넘기며 분석). 제목·모델·소견 그룹 문구만 다르다. */
+   *  model_kind: 'single_2d' = 한 장 모델(선택 영역 분석), 'volume' = 여러 장 모델(넘기며 분석). 제목·모델·소견 그룹 문구만 다르다.
+   *  score_mode='ensemble' 이면 앙상블 표시(fromKneeEnsemble). 없거나 'legacy' 면 기존 B 표시 그대로. */
   function fromKneeScreen(out) {
     out = out || {};
+    if (out.score_mode === "ensemble") return fromKneeEnsemble(out);
     const single = out.model_kind === "single_2d";
     const acl = out.acl || {};
     const cap = out.capture || {};
@@ -175,5 +236,5 @@
     throw new Error("unknown part");
   }
 
-  return { toDisplayModel, fromBrain, fromKnee, fromKneeScreen, score01 };
+  return { toDisplayModel, fromBrain, fromKnee, fromKneeScreen, fromKneeEnsemble, score01 };
 });

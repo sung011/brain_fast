@@ -12,6 +12,10 @@
 - 그림: 원 캡처 영상 그대로(회전·뒤집기·자르기 없음), 종횡비 유지·긴 변 최대 512px, 박스는 **테두리만**(채움·열지도 색 없음).
 - 실패해도 분류 결과를 무효화하지 않는다: 알려진 실패는 status 로 닫고 박스·그림을 내지 않는다(가짜 박스·다른 장·CAM 대체 없음).
   응답·로그에 경로·토큰·예외 원문을 넣지 않는다. 입력·그림은 요청 수명 안에서만 쓰고 저장하지 않는다.
+- (MSN-20261102-004) 앙상블의 v4 입력용 detect_raw 를 추가했다. **같은 YOLO 인스턴스·같은 잠금**을 쓰되, 표시용 detect(4자리 반올림)와
+  달리 원 float 좌표·확신도를 반올림 전에 검사해 돌려준다(원 실험 crop_lib Detector 와 같은 규칙: 최고 확신 1개, 동률은 앞 순번,
+  무효면 아래 순위로 재시도 없음). 두 API 모두 CPU 로 추론한다. 실행 프로세스에 KNEE_SCROLL_LOCAL_BUNDLE_DIR 가 있으면
+  HF 캐시 대신 그 로컬 묶음의 acl_yolo.pt(같은 고정 SHA)만 쓴다.
 """
 from __future__ import annotations
 
@@ -61,9 +65,14 @@ class _Locator:
         self._model = None
         self._lock = threading.Lock()
 
-    def _load(self):
-        if self._model is not None:
-            return self._model
+    def _local_path(self) -> str:
+        from . import scroll_ensemble
+
+        if scroll_ensemble.bundle_dir() is not None:   # 로컬 묶음(지문 확인)만. 없거나 다르면 닫힘(HF 로 대신하지 않음)
+            try:
+                return scroll_ensemble.bundle_file_path("yolo")
+            except scroll_ensemble.BundleError as exc:
+                raise LocationUnavailable(exc.reason) from None
         from huggingface_hub import try_to_load_from_cache
 
         from .config import hf_repo, hf_revision
@@ -76,6 +85,12 @@ class _Locator:
             raise LocationUnavailable("cache_missing") from None
         if not isinstance(path, str):
             raise LocationUnavailable("cache_missing")
+        return path
+
+    def _load(self):
+        if self._model is not None:
+            return self._model
+        path = self._local_path()
         try:
             with open(path, "rb") as f:
                 data = f.read(YOLO_BYTES + 1)
@@ -99,7 +114,7 @@ class _Locator:
         with self._lock:
             model = self._load()
             try:
-                res = model.predict(img_u8, imgsz=IMGSZ, conf=CONF, verbose=False)[0]
+                res = model.predict(img_u8, imgsz=IMGSZ, conf=CONF, verbose=False, device="cpu")[0]
             except Exception:
                 raise LocationUnavailable("detect_failed") from None
             if len(res.boxes) == 0:
@@ -111,6 +126,47 @@ class _Locator:
                 raise InvalidLocationBox()
             return {"x_center": round(x, 4), "y_center": round(y, 4), "width": round(w, 4), "height": round(h, 4),
                     "confidence": round(float(res.boxes.conf[i]), 4)}
+
+    @property
+    def ready(self) -> bool:
+        return self._model is not None
+
+    def ensure_raw_ready(self) -> None:
+        """앙상블 사전 점검: 같은 인스턴스를 불러오고 클래스 이름이 원 실험({0:'acl_region'})과 같은지 확인."""
+        from .scroll_ensemble import DET_CLASS_NAMES
+
+        with self._lock:
+            model = self._load()
+            try:
+                names = dict(model.names)
+            except Exception:
+                raise LocationUnavailable("load_failed") from None
+            if names != DET_CLASS_NAMES:
+                raise LocationUnavailable("class_mismatch")
+
+    def detect_raw(self, gray_u8) -> dict:
+        """앙상블 v4 입력용. gray_u8: (H,W) uint8 전체 장. 반환 {'status':'not_found'} 또는 validate_raw 결과(원 float 좌표).
+
+        반올림·자르기 전에 검사한다. 로드·추론 내부 오류는 LocationUnavailable(요청 전체 실패), 상자 이상은 그 장만 invalid_box.
+        """
+        from .scroll_ensemble import DET_CONF_MIN, DET_IMGSZ, validate_raw
+
+        g = np.ascontiguousarray(gray_u8)
+        if g.ndim != 2 or g.dtype != np.uint8 or min(g.shape) < 8:
+            raise LocationUnavailable("bad_input")
+        with self._lock:
+            model = self._load()
+            try:
+                res = model.predict(g, imgsz=DET_IMGSZ, conf=DET_CONF_MIN, verbose=False, device="cpu")[0]
+                n = len(res.boxes)
+                if n == 0:
+                    return {"status": "not_found"}
+                confs = [float(c) for c in res.boxes.conf.tolist()]
+                i = max(range(n), key=lambda k: (confs[k], -k))       # 최고 확신, 동률은 앞 순번
+                raw = [float(v) for v in res.boxes.xywhn[i].tolist()]
+            except Exception:
+                raise LocationUnavailable("detect_failed") from None
+        return validate_raw(raw, confs[i])
 
 
 locator = _Locator()

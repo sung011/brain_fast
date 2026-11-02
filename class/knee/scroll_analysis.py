@@ -380,3 +380,157 @@ def _logit(p: float) -> float:
     import math
     p = min(max(float(p), 1e-12), 1 - 1e-12)
     return math.log(p / (1 - p))
+
+
+# ── 앙상블(B+v4) 넘기며 분석 응답 — MSN-20261102-004 ENSEMBLE_RUNTIME_CONTRACT 6·7장 ─────────────
+ENS_LABEL = "앙상블(B+v4) · 학습용 참고 점수"
+ENS_LOC_TITLE = "ACL 입력 크롭 위치 참고"
+ENS_LOC_LEGEND = "v4 입력 크롭을 만든 검출 상자 — 병변 위치 아님"
+ENS_LOC_RELATION = "ACL 입력 크롭 위치 참고 — 병변 위치나 앙상블 점수의 원인 설명이 아닙니다."
+ENS_LOC_WITHHELD = {
+    "disabled_by_policy": "위치 그림을 꺼 두었습니다. 앙상블 점수와 해설은 표시합니다.",
+    "not_found": "가운데 장에서 ACL 위치를 찾지 못해 그림을 숨겼습니다(다른 장의 크롭으로 점수는 계산했을 수 있음). 정상이라는 뜻은 아닙니다.",
+    "invalid_box": "가운데 장의 검출 상자가 올바르지 않아 그림을 숨겼습니다.",
+    "crop_rejected": "가운데 장의 크롭이 영상 밖으로 많이 벗어나 입력에서 빠졌으므로 그림을 숨겼습니다.",
+    "unavailable": "위치 그림을 준비하지 못했습니다. 앙상블 점수는 표시합니다.",
+}
+ENS_NOTICES = [
+    {"code": "ensemble_not_probability", "text": "앙상블(B+v4) 점수는 손상 확률이 아니며 의료 진단이 아닙니다. 두 모델을 합치는 식과 비중은 사전에 고정했고, 참고선은 보정 자료 181건에서 정했습니다. 시험 자료 181건은 이미 여러 번 사용한 자료로, 고정 뒤 탐색적으로 감사했습니다."},
+    {"code": "ensemble_not_confirmed", "text": "재표집 결과 오탐·놓침 변화 구간이 0을 포함해, 기존 B보다 낫다는 개선이 통계적으로 확정되지 않았습니다."},
+    {"code": "ensemble_mrnet_fp", "text": "다른 병원 자료(MRNet) 감사에서 기존 B 대비 앙상블 오탐이 39건에서 118건으로 늘었습니다(앙상블 미분석 16건, 가용 1234/예정 1250). 새 병원 전향 성능이 아닙니다."},
+    {"code": "ensemble_input_unverified", "text": "화면 캡처의 장 순서·범위·크기 조건이 원자료와 달라, 지금 시연 입력에서의 정확도는 확인하지 않았습니다."},
+    {"code": "grade_is_label", "text": "등급(grade)은 데이터셋 라벨입니다. 영상 변화 정도나 실패 원인을 설명한 결과가 아닙니다."},
+    {"code": "deidentify", "text": "전송 전에 화면에 환자 정보가 보이지 않는지 직접 확인해 주세요. 서버는 분석 직후 이미지를 지우고 저장하지 않습니다."},
+]
+ENS_EVIDENCE = {"validation_level": "exploratory_reused_test", "independent_test": False, "clinical": False, "input_condition_verified": False,
+                "source": "designs/MSN-20261029-003 (식·비중 사전 고정, τE 는 KneeMRI calibration181 에서 결정, test181·MRNet1250 은 고정 뒤 탐색적 감사 — 독립 검증 아님)"}
+
+
+def _points(p: float) -> str:
+    return f"{p * 100:.1f}점"
+
+
+def _ens_tau_text() -> str:
+    from .scroll_ensemble import TAU_E
+    return f"{TAU_E * 100:.2f}점"
+
+
+def ensemble_unavailable_text(result: dict) -> str:
+    reason = result.get("reason")
+    if reason == "insufficient_ensemble_frames":
+        return (f"앙상블 점수를 계산하지 못했습니다(서로 다른 장 {result.get('unique_count')}장, 앙상블은 15장 필요). "
+                "15장 이상 모으거나 점수 모델을 '기존 B'로 바꿔 다시 분석할 수 있습니다.")
+    if reason == "insufficient_valid_crops":
+        return (f"앙상블 점수를 계산하지 못했습니다(예: 유효 크롭 {result.get('n_valid')}/15장, 필요 {result.get('required')}장). "
+                "점수 모델을 '기존 B'로 바꿔 다시 분석할 수 있습니다.")
+    return "앙상블 점수를 계산하지 못했습니다. 점수 모델을 '기존 B'로 바꿔 다시 분석할 수 있습니다."
+
+
+def ensemble_localization(result: dict, scope: str, include_overlay: bool) -> dict:
+    """앙상블 위치 그림: 같은 요청에서 v4 입력을 만든 가운데 장(선택 15장 중 8번째)의 원좌표 검출만 쓴다. YOLO 를 다시 부르지 않는다."""
+    from .scroll_ensemble import MIDDLE_INDEX
+    from .screen_localization import localization_enabled, render_png, to_box
+
+    if not include_overlay:
+        return {"status": "not_requested"}
+    if result.get("status") != "ok":
+        return {"status": "not_evaluated"}
+    if scope != "full_slice":
+        return {"status": "unsupported_scope"}
+    if not localization_enabled():
+        return {"status": "disabled_by_policy"}
+    mid = result.get("middle") or {}
+    rec = mid.get("rec") or {}
+    loc = {"status": None, "frame_selection": "ensemble_middle_selected_frame", "frame_ordinal": MIDDLE_INDEX + 1, "frame_sequence": mid.get("sequence"),
+           "coordinate_space": "captured_frame_normalized", "box": None, "model_id": "acl_yolo", "role": "v4_input_crop_detection"}
+    st = rec.get("status")
+    if st != "found":
+        return {**loc, "status": st if st in ENS_LOC_WITHHELD else "unavailable"}
+    xc, yc, w, h = rec["raw"]
+    box = to_box({"x_center": xc, "y_center": yc, "width": w, "height": h})
+    if box is None:
+        return {**loc, "status": "invalid_box"}
+    try:
+        png, pw, ph = render_png(mid["gray"], box)
+    except Exception:
+        return {**loc, "status": "unavailable"}
+    g = mid["gray"]
+    return {**loc, "status": "shown", "box": box, "frame_width": int(g.shape[1]), "frame_height": int(g.shape[0]),
+            "image_width": pw, "image_height": ph, "_png": png}
+
+
+def _ensemble_visualization(loc: dict) -> dict:
+    loc = dict(loc or {"status": "not_requested"})
+    png = loc.pop("_png", None)
+    st = loc.get("status")
+    if st == "shown" and png:
+        return {"status": "shown", "kind": "input_crop_location", "overlay_png_base64": png, "overlay_frame_sequence": loc["frame_sequence"],
+                "model_input_size": 224, "title": ENS_LOC_TITLE, "legend": ENS_LOC_LEGEND, "relation": ENS_LOC_RELATION,
+                "note": ENS_LOC_RELATION, "cam": "not_computed", "localization": loc}
+    if st in ("not_requested", "not_evaluated"):
+        return {"status": st, "kind": "none", "overlay_png_base64": None, "overlay_frame_sequence": None, "model_input_size": 224,
+                "note": None, "cam": "not_computed", "localization": loc}
+    return {"status": "withheld", "kind": "none", "overlay_png_base64": None, "overlay_frame_sequence": None, "model_input_size": 224,
+            "note": ENS_LOC_WITHHELD.get(st, ENS_LOC_WITHHELD["unavailable"]), "relation": ENS_LOC_RELATION, "cam": "not_computed", "localization": loc}
+
+
+def ensemble_explanation(result: dict) -> str:
+    seqs = result.get("used_sequences") or []
+    span = f"수집 순번 {seqs[0]}~{seqs[-1]}" if seqs else "선택한 장"
+    pos = "위" if result["position"] == "above" else "아래"
+    return (f"서버가 고른 같은 15장({span})을 기존 B 모델과 v4 모델(장별 ACL 위치 검출 뒤 크롭 {result['n_valid']}/15장 사용)에 넣고, "
+            f"두 점수를 원 실험에서 고정한 식(각자 기준선 중심 0.5:0.5)으로 합친 앙상블 참고 점수는 {_points(result['score'])}이며, "
+            f"고정 실험 참고선 {_ens_tau_text()}보다 {pos}입니다. 이 점수는 손상 확률이 아니며 정상·파열을 판정하지 않습니다(참고선 아래도 정상이라는 뜻이 아님). "
+            "두 모델을 합치는 식과 비중은 사전에 고정했고, 참고선은 보정 자료 181건에서 정했습니다. 시험 자료 181건은 이미 여러 번 사용한 자료로, 고정 뒤 탐색적으로 감사했습니다. "
+            "재표집의 오탐·놓침 변화 구간이 0을 포함해 개선은 확정되지 않았습니다. "
+            "다른 병원 자료(MRNet)에서는 기존 B보다 오탐이 늘었습니다. 화면 캡처 조건이 원자료와 달라 지금 입력에서의 정확도는 확인하지 않았습니다. "
+            "근거 열지도(Grad-CAM)는 앙상블 점수를 설명하지 않으므로 계산·표시하지 않습니다. " + DIAG_NOTE + " 의료 판단은 전문가와 상의해야 합니다.")
+
+
+def build_ensemble_response(*, request_id: str, manifest: dict, received: int, size, include_overlay: bool, result: dict, latency_ms: int) -> dict:
+    """scroll_score_mode=ensemble 응답. evaluated(점수 있음) 또는 not_evaluated(점수·참고선 위치 null). B 점수로 대신하지 않는다."""
+    from . import scroll_ensemble as E
+
+    ok = result.get("status") == "ok"
+    score = result.get("score") if ok else None
+    loc = result.get("localization") or ({"status": "not_evaluated"} if include_overlay and not ok else {"status": "not_requested"})
+    unique_count, used = result.get("unique_count"), result.get("used_count") or 0
+    warnings = []
+    if received != unique_count:
+        warnings.append({"code": "duplicates_removed", "text": f"같은 화면 {received - unique_count}장을 빼고 서로 다른 {unique_count}장을 받았습니다."})
+    if ok and unique_count > E.K:
+        seqs = result["used_sequences"]
+        warnings.append({"code": "ensemble_middle_15", "text": f"서로 다른 {unique_count}장 중 가운데 15장(수집 순번 {seqs[0]}~{seqs[-1]})만 앙상블에 썼습니다."})
+    reason_text = None if ok else ensemble_unavailable_text(result)
+    ref = None
+    if ok:
+        ref = {"label": "고정 실험 참고선", "threshold": E.TAU_E, "threshold_display": _ens_tau_text(), "position": result["position"],
+               "source": "fixed_experiment_threshold", "spec_id": E.SPEC_ID, "input_condition": "unverified_screen_capture",
+               "text": f"고정 실험 참고선 {_ens_tau_text()}보다 {'위' if result['position'] == 'above' else '아래'} — 화면 입력에서의 정확도는 확인하지 않았습니다."}
+    return {
+        "schema_version": SCHEMA_VERSION, "request_id": request_id, "body_part": "knee", "analysis_status": "evaluated" if ok else "not_evaluated",
+        "usage_mode": "learning_demo", "evaluation_class": "exploratory", "profile_id": E.RUNTIME_PROFILE_ID,
+        "score_mode": "ensemble", "runtime_profile_id": E.RUNTIME_PROFILE_ID,
+        "model_kind": "volume", "model_id": "ensemble(B+v4)", "model_sha256": None,
+        "capture": {"received_count": received, "unique_count": unique_count, "used_count": used, "used_sequences": list(result.get("used_sequences") or []),
+                    "selection": {"rule": "middle_15_of_unique", "start": result.get("selection_start")},
+                    "scope": manifest["image_scope"], "plane": manifest["plane"], "profile_id": manifest["capture_profile_id"],
+                    "frame_width": size[0], "frame_height": size[1], "source_assurance": "user_declared_same_exam", "order_assurance": "capture_time_only"},
+        "acl": {"label_ko": ENS_LABEL, "raw_score": score, "calibrated_score": None, "display_score": score,
+                "score_kind": "ensemble_decision_score", "calibration_id": None, "decision": "score_only" if ok else "not_evaluated", "band": None,
+                "display_text": f"{_points(score)} (앙상블 B+v4 · 학습용 참고 점수)" if ok else None,
+                "reference": ref, "reference_status": "exploratory_unverified_screen" if ok else result.get("reason"),
+                "not_evaluated_text": reason_text},
+        "ensemble": {"spec_id": E.SPEC_ID, "runtime_profile_id": E.RUNTIME_PROFILE_ID, "alpha": E.ALPHA, "tau_legacy": E.TAU_L, "tau_v4": E.TAU_V, "tau_e": E.TAU_E,
+                     "models": {r: {"sha256": v["sha256"]} for r, v in E.MODEL_FILES.items()},
+                     "status": "ok" if ok else "unavailable", "reason": "" if ok else result.get("reason"),
+                     "n_valid": result.get("n_valid"), "required": result.get("required"), "frames": list(result.get("frames") or []),
+                     "input_condition_verified": False, "independent_test": False, "clinical": False},
+        "visualization": _ensemble_visualization(loc),
+        "explanations": ([{"finding": "acl", "title": "앙상블(B+v4) 참고 점수 해설", "text": ensemble_explanation(result),
+                           "source": "model_result_template", "reviewed_as": "team_technical", "clinical_review": False}] if ok else []),
+        "evidence": dict(ENS_EVIDENCE, spec_id=E.SPEC_ID),
+        "notices": [dict(n) for n in ENS_NOTICES],
+        "warnings": warnings, "latency_ms": latency_ms, "device": "cpu",
+        "retention": {"input_deleted": True, "transient_only": True},
+    }

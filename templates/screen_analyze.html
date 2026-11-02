@@ -578,8 +578,13 @@
             </select>
             <label for="scopeSelect">박스 범위</label>
             <select id="scopeSelect">
-              <option value="roi_crop" selected>영상의 일부(잘라낸 영역)</option>
-              <option value="full_slice">영상 한 장 전체</option>
+              <option value="roi_crop">영상의 일부(잘라낸 영역)</option>
+              <option value="full_slice" selected>영상 한 장 전체</option>
+            </select>
+            <label for="scoreModeSelect">넘기며 분석 점수</label>
+            <select id="scoreModeSelect" title="무릎 판독 기본은 앙상블(B+v4)입니다(서로 다른 15장 이상 + 박스 범위 '영상 한 장 전체'). '기존 B'는 비상 복귀용입니다.">
+              <option value="ensemble" selected>앙상블(B+v4) · 기본</option>
+              <option value="legacy">기존 B (비상 복귀용)</option>
             </select>
           </span>
         </div>
@@ -657,11 +662,11 @@
         <span id="analysisEngineNote">분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.</span>
       </div>
       <div class="disclaimer" id="kneeDisclaimer" style="display:none">
-        ※ 무릎 분석은 <strong>학습용 시연</strong>입니다. <strong>'선택 영역 분석'</strong>은 박스 안 한 장을 ACL 시상면 <strong>한 장 모델</strong>에,
-        <strong>'넘기며 분석'</strong>은 시상면 MRI 를 넘기는 동안 모은 10~20장을 <strong>여러 장 모델</strong>에 넣습니다.
-        점수는 구분 기준 보정 전의 모델 점수(학습용 참고)이며 임상적 발병 확률·진단이 아닙니다. 한 장 모델은 데이터셋의 ACL 중간 장 조건으로만 평가돼
-        임의로 고른 장·화면 캡처에서의 성능은 확인되지 않았고, 시연 자료는 모델 학습에 쓰인 공개 데이터셋이라 독립 검증이 아닙니다.
-        최종 판단은 의사에게 있으며, 올린 영상은 분석 후 저장하지 않습니다.
+        ※ 무릎 분석은 <strong>학습용 시연</strong>입니다. 무릎은 <strong>'넘기며 분석'</strong> 하나로 판독합니다: 시상면 MRI 를 넘기는 동안 모은 장 중
+        가운데 15장을 기존 B와 v4 모델에 넣어 고정 식으로 합친 <strong>앙상블(B+v4) 참고 점수</strong>가 기본입니다
+        (손상 확률 아님 · 식·비중은 사전 고정, 참고선은 보정 자료 181건에서 결정, 시험 자료 181건은 고정 뒤 탐색적 감사 · 화면 입력에서의 정확도 미확인).
+        앙상블은 여러 장을 함께 보는 모델이라 한 장 판독('선택 영역 분석')은 무릎에서 제공하지 않습니다. 문제가 생기면 점수를 '기존 B'로 바꿔 다시 분석할 수 있습니다.
+        시연 자료는 모델 학습·선정에 쓰인 공개 데이터셋이라 독립 검증이 아닙니다. 최종 판단은 의사에게 있으며, 올린 영상은 분석 후 저장하지 않습니다.
       </div>
       </div>
     </section>
@@ -724,6 +729,7 @@
     const partSelect = document.getElementById("partSelect");
     const planeSelect = document.getElementById("planeSelect");
     const scopeSelect = document.getElementById("scopeSelect");
+    const scoreModeSelect = document.getElementById("scoreModeSelect");
     const kneeDisclaimer = document.getElementById("kneeDisclaimer");
     const btnScroll = document.getElementById("btnScroll");
     const scrollPanel = document.getElementById("scrollPanel");
@@ -1018,7 +1024,7 @@
         btnAnalyze.disabled = false;
         btnScroll.disabled = false;
         setStep(2);
-        setStatus("ROI 선택 완료 · ‘선택 영역 분석’을 누르세요.");
+        setStatus(isKnee() ? "ROI 선택 완료 · ‘넘기며 분석’을 누른 뒤 MRI 를 천천히 넘겨 주세요." : "ROI 선택 완료 · ‘선택 영역 분석’을 누르세요.");
       } else {
         roi = null;
         drawRoi();
@@ -1318,7 +1324,8 @@
             continue;
           }
           const pct = (f.score * 100).toFixed(0);
-          html += `<div style="font-size:13px;margin-bottom:2px">${escapeHtml(f.label)}<strong style="float:right">${pct}%</strong></div>
+          const shown = f.unit === "points" ? `${(f.score * 100).toFixed(1)}점` : `${pct}%`;   // 앙상블 참고 점수는 '점'(확률처럼 보이는 % 를 쓰지 않음)
+          html += `<div style="font-size:13px;margin-bottom:2px">${escapeHtml(f.label)}<strong style="float:right">${shown}</strong></div>
             <div class="bar"><span style="width:${pct}%"></span></div>
             ${f.note ? `<div class="meta" style="margin-bottom:10px">${escapeHtml(f.note)}</div>` : ""}`;
         }
@@ -1357,9 +1364,10 @@
       analysisGen += 1;
       clearScroll();
       btnScroll.hidden = !knee;
+      btnAnalyze.hidden = knee;   // 무릎은 넘기며 분석(앙상블) 하나로 판독. 한 장 판독은 제공하지 않음(MSN-20261102-004 사용자 결정)
       btnExplain.textContent = knee ? "해설" : "AI 해설 (MedGemma)";
       document.getElementById("analysisEngineNote").textContent = knee
-        ? "무릎 점수는 ACL 시상면 분류 모델(한 장/여러 장)로 계산합니다. ACL 위치 박스를 켠 경우 별도 위치 모델을 쓰며, 해설은 고정 설명(생성형 AI 아님)입니다."
+        ? "무릎은 넘기며 분석으로 판독하며 기본 점수는 앙상블(B+v4)입니다(비상 시 '기존 B'). 위치 그림은 별도 ACL 위치 모델 결과이고, 해설은 고정 설명(생성형 AI 아님)입니다."
         : "분석은 B4+ConvNeXt+ResNet18 앙상블 API를 사용하며, 해설은 HuggingFace MedGemma를 사용합니다.";
       explainText.innerHTML = "";
       lastAnalysis = null;
@@ -1374,12 +1382,81 @@
       refreshButtons();
       if (roi && stream) {
         setStep(2);
-        setStatus("조건을 바꿨습니다 · 이전 분석은 취소했습니다. 다시 '선택 영역 분석' 또는 '넘기며 분석'을 누르세요.");
+        setStatus(knee ? "조건을 바꿨습니다 · 이전 분석은 취소했습니다. 다시 '넘기며 분석'을 누르세요."
+          : "조건을 바꿨습니다 · 이전 분석은 취소했습니다. 다시 '선택 영역 분석'을 누르세요.");
+      }
+      if (knee && typeof ensembleReady !== "undefined" && ensembleReady === false) {   // B 전용 서버(비상 복귀)임을 무릎 화면에서 바로 알린다
+        setStatus("이 서버는 기존 B 전용으로 켜져 있어 넘기며 분석 점수를 '기존 B'로 표시합니다(앙상블 꺼짐)." + (roi && stream ? " 다시 '넘기며 분석'을 누르세요." : ""));
       }
     }
     partSelect.addEventListener("change", applyPart);
     planeSelect.addEventListener("change", applyPart);   // 촬영면·범위가 바뀌면 이전 결과는 다른 조건의 결과이므로 지운다
     scopeSelect.addEventListener("change", applyPart);
+
+    /** 넘기며 분석 점수 모델(MSN-20261102-004). 'ensemble' 이 아니면 모두 기존 B. */
+    function scoreMode() {
+      return scoreModeSelect.value === "ensemble" ? "ensemble" : "legacy";
+    }
+
+    /** 점수 모델을 바꾸면(특히 앙상블 → 기존 B 복귀) 즉시 이전 결과·참고선·해설·그림을 지우고 세대를 올려 늦게 온 응답을 버린다.
+     *  같은 공유 원본·박스로 모은 장은 남겨 둔다(바로 다시 분석 가능). 진행 중인 서버 계산을 멈추지는 않으며, 끝나기 전 새 요청은 서버가 '분석 중'으로 답할 수 있다. */
+    function applyScoreMode() {
+      scoreModeTouched = true;         // 사용자가 직접 고른 뒤에는 늦게 온 서버 설정이 선택을 바꾸지 않는다(ENSEMBLE-LOCAL-006)
+      const mode = scoreMode();
+      const pending = busyGen !== -1;
+      resetAnalysisResults();          // analysisGen += 1 포함
+      lastModel = null;
+      btnExplain.disabled = true;
+      btnExplain.title = "";
+      scrollAnalyzing = false;
+      const n = collector.frames.length;
+      renderScroll(scrollPanel.hidden ? null : { count: n, phase: KneeScrollCapture.phase(n) });
+      refreshButtons();
+      if (!isKnee()) return;
+      setStatus(mode === "legacy"
+        ? `점수 모델을 '기존 B'로 바꿨습니다 · 이전 결과를 지웠습니다. B는 모은 장 전체(10~20장)를 씁니다.${n ? " '여기까지 분석'을 누르면 같은 캡처로 B 분석을 새로 실행합니다." : ""}${pending ? " 진행 중이던 계산이 끝나기 전에는 서버가 '분석 중'으로 답할 수 있습니다." : ""}`
+        : "점수 모델을 '앙상블(B+v4)'로 바꿨습니다 · 이전 결과를 지웠습니다. 앙상블은 서로 다른 15장 이상과 박스 범위 '영상 한 장 전체'가 필요합니다.");
+    }
+    scoreModeSelect.addEventListener("change", applyScoreMode);
+
+    /** 서버가 앙상블을 쓸 수 있는지 한 번 묻는다. 기본은 앙상블.
+     *  - 유효한 응답만 쓴다(ENSEMBLE-LOCAL-005): HTTP 성공 + 정확히 세 필드(bool·bool·'ensemble'|'legacy') + 서로 맞는 값.
+     *    HTTP 오류·형식이 다른 응답·네트워크 실패는 '모름'(ensembleReady=null)으로 두고 현재 선택을 그대로 둔다. B 전용이라고 말하지 않는다.
+     *  - 늦게 온 응답이 상태를 깨지 않게(ENSEMBLE-LOCAL-006): 사용자가 점수를 직접 골랐거나 넘기며 분석을 한 번이라도 시작했으면 선택을 바꾸지 않는다.
+     *    선택을 바꿀 때도 결과·세대(analysisGen)·분석 상태를 건드리지 않는다(아직 무릎 결과가 없고, 뇌 결과는 무릎 설정과 무관).
+     *  - 유효한 B 전용 응답을 초기에 받으면 앙상블 항목을 끄고 '기존 B'를 고른 뒤 이유를 보인다(몰래 바꾸지 않음). */
+    let ensembleReady = null;
+    let scoreModeTouched = false;
+    let scrollStartedOnce = false;
+    function validScoreModeConfig(cfg) {
+      if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return false;
+      const keys = Object.keys(cfg).sort().join(",");
+      if (keys !== "default_scroll_score_mode,ensemble_enabled,ensemble_ready") return false;
+      if (typeof cfg.ensemble_enabled !== "boolean" || typeof cfg.ensemble_ready !== "boolean") return false;
+      if (cfg.default_scroll_score_mode !== "ensemble" && cfg.default_scroll_score_mode !== "legacy") return false;
+      if (cfg.ensemble_ready && !cfg.ensemble_enabled) return false;
+      return cfg.default_scroll_score_mode === (cfg.ensemble_ready ? "ensemble" : "legacy");
+    }
+    async function loadScoreModeConfig() {
+      let cfg = null;
+      try {
+        const res = await fetch("/api/v1/knee/screen-analysis/config");
+        if (!res.ok) return;                       // HTTP 오류: 모름(현재 선택 유지)
+        cfg = await res.json();
+      } catch (_) {
+        return;                                    // 네트워크·JSON 오류: 모름(현재 선택 유지)
+      }
+      if (!validScoreModeConfig(cfg)) return;      // 형식·값이 맞지 않음: 모름(현재 선택 유지)
+      ensembleReady = cfg.ensemble_ready;
+      if (ensembleReady) return;
+      if (scoreModeTouched || scrollStartedOnce || busyGen !== -1 || scrollAnalyzing) return;   // 늦은 응답: 사용자 선택·진행 중 요청을 덮어쓰지 않음
+      const opt = scoreModeSelect.querySelector('option[value="ensemble"]');
+      opt.disabled = true;
+      opt.textContent = "앙상블(B+v4) · 이 서버에서 꺼짐";
+      scoreModeSelect.value = "legacy";           // 결과·세대는 건드리지 않는다
+      if (isKnee()) setStatus("이 서버는 기존 B 전용으로 켜져 있어 넘기며 분석 점수를 '기존 B'로 표시합니다(앙상블 꺼짐).");
+    }
+    loadScoreModeConfig();
 
     /** 화면 캡처 캔버스를 최대 변 512px(확대 없음)로 줄인 PNG Blob. */
     function kneeFrameBlob(canvas) {
@@ -1392,11 +1469,12 @@
     }
 
     /** 무릎 화면 분석 API(POST /api/v1/knee/screen-analysis). frames: Blob 배열, manifest: 객체. 오류는 서버 안내 문구로 던진다. */
-    async function postKneeScreen(frames, manifest) {
+    async function postKneeScreen(frames, manifest, mode) {
       const form = new FormData();
       frames.forEach((b, i) => form.append("frames", b, `f${String(i).padStart(3, "0")}.png`));
       form.append("manifest", JSON.stringify(manifest));
       form.append("include_overlay", "true");
+      if (mode) form.append("scroll_score_mode", mode);   // 넘기며 분석만. 한 장 분석은 보내지 않는다(기존 한 장 모델)
       const res = await fetch("/api/v1/knee/screen-analysis", { method: "POST", body: form });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.message || `무릎 분석 API 오류 (${res.status})`);
@@ -1476,11 +1554,41 @@
         : `수집 부족 — 서로 다른 장이 ${info.count}장입니다. 최소 ${p.min}장이 필요합니다. '다시 모으기'를 눌러 천천히 넘겨 주세요.`);
     }
 
+    /** 이번 넘기며 분석 요청이 실패했을 때: 점수·참고선·그림·해설 없이 '이번 요청은 점수 없음'만 보인다(ENSEMBLE-LOCAL-004). 모은 장은 그대로 둔다. */
+    function showScrollNoScore(message) {
+      lastModel = null;
+      lastAnalysis = null;
+      resultEmpty.style.display = "none";
+      resultBox.style.display = "block";
+      explainBox.style.display = "none";
+      explainLoading.classList.remove("is-active");
+      explainText.innerHTML = "";
+      overlayPreview.style.display = "none";
+      overlayPreview.removeAttribute("src");
+      resultTitle.textContent = "이번 분석은 실패했습니다 — 점수 없음";
+      resultMeta.innerHTML = `<div>${escapeHtml(message)}</div><div>이전 분석 결과는 지웠습니다. 화면에 보이는 점수는 없습니다.</div>`;
+      probList.innerHTML = "";
+      btnExplain.disabled = true;
+      btnExplain.title = "이번 요청에는 결과가 없습니다.";
+    }
+
     async function analyzeScroll() {
       const p = KneeScrollCapture.PROFILE;
       if (collector.running) collector.stop("user");
       const frames = collector.frames.slice();
       if (frames.length < p.min || scrollAnalyzing) return;
+      const mode = scoreMode();
+      if (mode === "ensemble" && scopeSelect.value !== "full_slice") {
+        setStatus("앙상블(B+v4)은 박스 범위 '영상 한 장 전체'에서만 씁니다. 범위를 바꾸거나 점수 모델을 '기존 B'로 바꿔 주세요.");
+        return;
+      }
+      // 새 요청을 시작하면 이전 결과(점수·참고선·그림·해설)를 먼저 지운다. 이번 요청이 실패해도 옛 결과가 현재 결과처럼 남지 않게(ENSEMBLE-LOCAL-004).
+      // 모은 장(collector)은 지우지 않으므로 같은 캡처로 다시 시도할 수 있다.
+      resetAnalysisResults();
+      lastModel = null;
+      btnExplain.disabled = true;
+      btnExplain.title = "";
+      scrollStartedOnce = true;   // 이후 늦게 온 서버 설정은 선택을 바꾸지 않는다(ENSEMBLE-LOCAL-006)
       scrollAnalyzing = true;
       renderScroll({ count: frames.length, phase: KneeScrollCapture.phase(frames.length) });
       const gen = ++analysisGen;
@@ -1488,25 +1596,36 @@
       busyGen = gen;
       refreshButtons();
       setStep(3);
-      setStatus(`무릎 분석 중… (${frames.length}장)`, true);
+      setStatus(`무릎 분석 중… (${frames.length}장 · ${mode === "ensemble" ? "앙상블 B+v4" : "기존 B"})`, true);
       try {
-        const out = await postKneeScreen(frames.map((f) => f.blob), collector.manifest(scopeSelect.value, planeSelect.value));
-        if (gen !== analysisGen) return;
+        const out = await postKneeScreen(frames.map((f) => f.blob), collector.manifest(scopeSelect.value, planeSelect.value), mode);
+        if (gen !== analysisGen || mode !== scoreMode()) return;   // 모드·조건이 바뀐 뒤 늦게 온 응답은 버린다
         if (src !== sourceKey()) { onSourceChanged(); return; }
+        if ((out.score_mode || "legacy") !== mode) throw new Error("응답의 점수 모델이 요청과 다릅니다. 다시 분석해 주세요.");
         lastAnalysis = null;
         lastRoiBlob = null;
         cropPreview.style.display = "block";
         cropPreview.src = frames[0].url;
         renderResult(ScreenResultAdapter.toDisplayModel("knee_screen", out));
-        setStatus(`분석 완료 (${out.latency_ms}ms · ${out.capture.used_count}장) · 학습용 참고 점수(보정 전)입니다. '해설'에서 설명을 볼 수 있습니다.`);
+        if (mode === "ensemble") {
+          setStatus(out.analysis_status === "evaluated"
+            ? `분석 완료 (${out.latency_ms}ms · ${out.capture.used_count}장) · 앙상블(B+v4) 학습용 참고 점수입니다(확률·진단 아님). '해설'에서 설명을 볼 수 있습니다.`
+            : "앙상블 점수를 계산하지 못했습니다 — 결과 안내를 확인하거나 점수 모델을 '기존 B'로 바꿔 다시 분석할 수 있습니다.");
+        } else {
+          setStatus(`분석 완료 (${out.latency_ms}ms · ${out.capture.used_count}장) · 학습용 참고 점수(보정 전)입니다. '해설'에서 설명을 볼 수 있습니다.`);
+        }
       } catch (err) {
-        if (gen !== analysisGen) return;
+        if (gen !== analysisGen || mode !== scoreMode()) return;
         if (src !== sourceKey()) { onSourceChanged(); return; }
-        setStatus("무릎 분석 실패: " + err.message + " (박스는 그대로입니다. '여기까지 분석'으로 다시 시도할 수 있습니다)");
+        showScrollNoScore("무릎 분석 실패: " + err.message);
+        setStatus("무릎 분석 실패: " + err.message + " (박스는 그대로입니다. '여기까지 분석'으로 다시 시도할 수 있습니다"
+          + (mode === "ensemble" ? " · 점수 모델을 '기존 B'로 바꿔 다시 분석할 수도 있습니다)" : ")"));
         console.error(err);
       } finally {
         if (busyGen === gen) busyGen = -1;
-        if (gen === analysisGen) {
+        // 이 요청이 현재 세대이거나, 더 새 넘기며 분석 요청이 진행 중이 아니면 다시 분석할 수 있게 푼다(ENSEMBLE-LOCAL-006).
+        // 세대가 다른 곳에서 바뀌었어도 진행 중 표시가 영원히 남지 않게 한다. 새 요청이 진행 중이면(busyGen 이 그 세대) 잠금 유지.
+        if (gen === analysisGen || busyGen === -1) {
           scrollAnalyzing = false;
           renderScroll({ count: collector.frames.length, phase: KneeScrollCapture.phase(collector.frames.length) });
         }
@@ -1558,6 +1677,10 @@
      * 흐름: cropRoiToCanvas() → demoAnalyze() → 화면 업데이트
      */
     btnAnalyze.addEventListener("click", async () => {
+      if (isKnee()) {   // 무릎 한 장 판독은 제공하지 않는다(버튼도 숨김). 넘기며 분석으로 안내
+        setStatus("무릎은 '넘기며 분석'으로 판독합니다(앙상블 B+v4).");
+        return;
+      }
       const canvas = cropRoiToCanvas();
       if (!canvas) {
         setStatus("박스가 너무 작습니다. 다시 그려 주세요.");
