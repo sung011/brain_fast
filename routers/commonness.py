@@ -8,7 +8,8 @@ prefix 없음. 주소 예: /login, /qa, /learning/problem
 - /login              : 학습자 로그인 (성공하면 세션 learner 를 만든다)
 - /popups             : 메인 화면 홍보 팝업 목록
 - /qa ...             : 문의 생성·목록·상세·추가 메시지
-- /glossary           : 의학용어 사전 조회
+- /glossary           : 의학용어 사전 조회 (medical_terms, 부위·영상 종류)
+- /glossary/search    : 질문으로 색인 검색. 구현은 routers/rag.py
 - /learning/problem   : 랜덤 학습 문제 1건
 - /learning/problem/{idx}/image : 문제 영상 한 장 (Object Storage 에서 대신 받아 줌)
 - /learning/problem/{idx} : 문제 번호로 1건 (오답노트 '다시 풀기', 정답 숨김)
@@ -30,6 +31,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import settings
@@ -672,7 +674,21 @@ async def learning_roi_grade(
     - user_idx + study_idx 를 넣으면 제출 이력이 남아
       이후 GET /learning/problem?user_idx=... 에서 같은 문제가 제외된다.
     - next: 방금 푼 문제를 제외한 다음 랜덤 문제(없으면 null).
+    - 무릎 문제(서버 DB study.st_part = 4)는 이 주소로 채점·저장하지 않고 400 (전용 POST /learning/roi-grade/knee).
     """
+    # 무릎 문제 1차 차단(MSN-20260930-001): 요청 값이 아니라 서버 DB 의 지금 st_part 로 판단한다.
+    # 캐시된 객체가 아닌 새 SELECT, 검사 때문에 보류 중 변경이 DB 에 쓰이지 않게 자동 flush 를 끈다. 삭제 표시된 무릎도 막는다.
+    if study_idx is not None:
+        with db.no_autoflush:
+            part = db.execute(
+                select(StudyModel.st_part).where(StudyModel.idx == int(study_idx))
+            ).scalar_one_or_none()
+        if str(part or "").strip() == "4":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="무릎 문제는 이 주소로 채점하지 않습니다. POST /learning/roi-grade/knee 를 사용하세요.",
+            )
+
     try:
         learning_service.resolve_roi_grade_slice(
             db,

@@ -13,3 +13,5 @@ logs
 .pytest_cache
 .mypy_cache
 .DS_Store
+# 의학용어 FAISS 색인. 파일이 100MB를 넘어 GitHub에 올리지 않는다.
+assets/data/faiss_02/
