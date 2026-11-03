@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>부위 자동 판별 설명</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    dl { margin: 0.4rem 0 0; }
+    dt { font-weight: 700; margin-top: 0.55rem; }
+    dd { margin: 0.15rem 0 0 0; }
+    table { border-collapse: collapse; width: 100%; background: #fff; }
+    th, td { border: 1px solid #d5dee8; padding: 0.5rem 0.6rem; text-align: left; vertical-align: top; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>화면 공유 사진의 부위를 자동으로 맞히는 기능</h1>
+    <p class="lead">화면 공유 분석은 위쪽 드롭다운에서 고른 부위(뇌 CT, 흉부 X-ray)의 모델로 사진을 해석합니다. 그런데 부위가 다른 사진을 넣어도 모델은 자기 분야의 점수를 내놓기 때문에 엉뚱한 결과가 나옵니다. 그래서 분석 전에 사진이 어떤 부위인지 맞혀 보고, 고른 부위와 다르면 경고합니다. 결과는 학습용 보조이며 진단이 아닙니다.</p>
+    <div class="note">
+      <p>지금은 <strong>틀만</strong> 있습니다. 판별 모델 파일(<code>BODYPART_WEIGHTS_PATH</code>)이 없으면 항상 "알 수 없음"을 돌려주고 경고도 내지 않아서, 화면과 분석 결과는 예전과 똑같습니다.</p>
+      <p>뇌 CT·뇌 MRI·흉부 X-ray·무릎 MRI 사진이 모이면 판별 모델을 학습해 <code>class/bodypart/classifier.py</code>의 <code>_predict_with_model</code>만 채우면 켜집니다.</p>
+    </div>
+
+    <h2>판별 라벨</h2>
+    <table>
+      <tr><th>라벨</th><th>뜻</th></tr>
+      <tr><td><code>brain_ct</code></td><td>뇌 CT</td></tr>
+      <tr><td><code>brain_mri</code></td><td>뇌 MRI</td></tr>
+      <tr><td><code>thorax_xray</code></td><td>흉부 X-ray</td></tr>
+      <tr><td><code>knee_mri</code></td><td>무릎 MRI</td></tr>
+      <tr><td><code>unknown</code></td><td>어느 라벨에도 안 맞음. 경고하지 않음</td></tr>
+    </table>
+
+    <h2>주소</h2>
+    <table>
+      <tr><th>주소</th><th>받는 값</th><th>돌려주는 것</th></tr>
+      <tr><td><code>GET /api/v1/body-part/health</code></td><td>-</td><td>판별 모델이 준비됐는지(<code>model_ready</code>), 경고 기준(<code>min_confidence</code>)</td></tr>
+      <tr><td><code>POST /api/v1/body-part/check</code></td><td><code>image</code>(사진), <code>selected</code>(드롭다운 값 <code>brain</code>·<code>thorax</code>)</td><td>판별 라벨과 확신도, 고른 부위가 기대하는 라벨(<code>expected</code>), 경고 여부(<code>mismatch</code>)와 문구(<code>message</code>)</td></tr>
+    </table>
+
+    <h2>파일별 역할</h2>
+    <article>
+      <h3>class/bodypart/constants.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>판별 라벨과 한국어 이름, 드롭다운 값과 라벨의 짝을 둡니다.</dd>
+        <dt>하지 않는 일</dt><dd>모델을 돌리지 않습니다. 부위가 늘면 여기에 한 줄을 더합니다.</dd>
+      </dl>
+    </article>
+    <article>
+      <h3>class/bodypart/config.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd><code>BODYPART_WEIGHTS_PATH</code>, <code>BODYPART_MIN_CONFIDENCE</code>(기본 0.8)를 읽습니다.</dd>
+        <dt>하지 않는 일</dt><dd>루트 <code>config.py</code>의 DB·NAS 설정과 섞지 않습니다.</dd>
+      </dl>
+    </article>
+    <article>
+      <h3>class/bodypart/classifier.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>사진을 받아 (라벨, 확신도)를 돌려주는 판별 틀입니다.</dd>
+        <dt>무엇을 하는지</dt><dd>모델이 없으면 늘 <code>("unknown", 0.0)</code>을 돌려줍니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>모델이 없다고 서버가 멈추지 않습니다. 오류도 내지 않고 "알 수 없음"으로 통과시킵니다.</dd>
+      </dl>
+    </article>
+    <article>
+      <h3>services/bodyPartServices.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>판별 결과와 고른 부위를 비교해 경고가 필요한지 정합니다.</dd>
+        <dt>무엇을 하는지</dt><dd>모델이 준비됐고, 라벨이 "알 수 없음"이 아니고, 확신도가 기준 이상이고, 고른 부위와 다를 때만 <code>mismatch=true</code>입니다.</dd>
+        <dt>하지 않는 일</dt><dd>뇌·흉부 분석을 하지 않습니다. 멀쩡한 사진에 헛경고를 내지 않도록 확신이 낮으면 통과시킵니다.</dd>
+      </dl>
+    </article>
+    <article>
+      <h3>routers/bodyPart.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>위 두 주소를 받아 서비스에 넘깁니다.</dd>
+        <dt>돌려주는 것</dt><dd>5MB를 넘으면 413, 사진이 아니면 400입니다.</dd>
+      </dl>
+    </article>
+    <article>
+      <h3>templates/screen_analyze.html (화면 공유 분석 페이지)</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>"선택 영역 분석"을 누르면 분석 전에 <code>/api/v1/body-part/check</code>를 먼저 부릅니다.</dd>
+        <dt>무엇을 하는지</dt><dd>경고가 오면 "그래도 분석할까요?"를 물어봅니다. 아니라고 하면 분석하지 않고 부위를 확인하라고 안내합니다.</dd>
+        <dt>하지 않는 일</dt><dd>판별이 실패하거나 모델이 없으면 묻지 않고 그대로 분석합니다. 뇌와 같이 쓰는 페이지입니다.</dd>
+      </dl>
+    </article>
+
+    <h2>헷갈리기 쉬운 점</h2>
+    <ul>
+      <li>판별은 "추정"입니다. 틀릴 수 있어서 경고만 하고 분석을 강제로 막지 않습니다.</li>
+      <li>뇌 CT와 뇌 MRI는 같은 뇌라서 영상 종류를 구분하는 것이 부위 구분보다 어렵습니다.</li>
+      <li>드롭다운에 없는 부위(무릎 등)를 고르면 비교할 기준이 없어서 경고하지 않습니다.</li>
+    </ul>
+  </main>
+</body>
+</html>

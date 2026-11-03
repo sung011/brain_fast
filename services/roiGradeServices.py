@@ -330,6 +330,7 @@ def roi_feedback(
     found: list[bool] | None = None,
     too_wide: bool = False,
     chest: bool = False,
+    result: str | None = None,
 ) -> list[str]:
     """
     틀린 이유를 학습자가 알아듣게 한두 줄로 알려 준다. 채점 숫자(겹침·중심)를 말로 바꾼 것이다.
@@ -361,6 +362,9 @@ def roi_feedback(
         elif overlap > 0 and _box_area(best) < _box_area(t) * 0.5:
             tips.append("위치는 맞았어요. 정답 표시보다 작게 그렸는데, 크기는 의사마다 차이가 있어요. "
                         "다만 너무 작아서 정답 기준에는 못 미쳤어요.")
+        elif overlap > 0 and direction and result == "오답":
+            # 최종 판정이 오답이면 "거의 맞았어요"라고 하지 않는다 (판정과 문장이 충돌하지 않게)
+            tips.append(f"일부 겹쳤지만 정답 기준에는 못 미쳤어요. 정답은 조금 더 {direction}에 있어요.")
         elif overlap > 0 and direction:
             tips.append(f"거의 맞았어요. 정답은 조금 더 {direction}에 있어요.")
         elif overlap > 0:
@@ -512,6 +516,24 @@ def _thorax_targets(per_class: dict, constants: ModuleType) -> list[dict]:
         })
     targets.sort(key=lambda t: t["confidence"], reverse=True)
     return targets
+
+
+def _metrics_text(recall, precision, source: str, comparable: bool) -> str:
+    """
+    맞은 정도를 숫자 한 줄로 쓴다. 판정(정답·부분정답·오답)은 건드리지 않고 숫자만 말한다.
+    recall = 기준 부위 중 내 영역이 덮은 비율, precision = 내 영역 중 기준 부위 안에 있는 비율.
+    그리지 않았거나 기준 부위가 없거나 값이 이상하면 빈 문자열.
+    """
+    if not comparable:
+        return ""
+    try:
+        r, p = float(recall), float(precision)
+    except (TypeError, ValueError):
+        return ""
+    if not (0.0 <= r <= 1.0 and 0.0 <= p <= 1.0):
+        return ""
+    base = "정답 부위" if source == "dataset" else "AI가 찾은 부위"
+    return f"내 영역이 {base}의 {round(r * 100)}%를 덮었고, 내 영역 중 {round(p * 100)}%가 {base} 안에 있어요."
 
 
 AI_REFERENCE_MAX = 3   # 참고로 보여 줄 AI 부위는 신뢰도 높은 순으로 이만큼만
@@ -807,6 +829,7 @@ def _grade_thorax(
     scored["feedback"] = roi_feedback(
         [m for m, _ in users], [t["box"] for t in targets], w, h,
         found=[t["found"] for t in scored["targets"]], too_wide=scored["too_wide"], chest=True,
+        result=scored["result"],
     )
 
     overlay_b64 = None
@@ -850,6 +873,10 @@ def _grade_thorax(
         "image": {"width": w, "height": h},
         # 채점 기준: dataset = 데이터셋 정답 박스, ai = 탐지 모델 결과
         "target_source": source,
+        # 맞은 정도 숫자 한 줄(화면이 그대로 보여 준다). 그리지 않았거나 기준 부위가 없으면 빈 문자열
+        "metrics_text": _metrics_text(
+            scored["recall"], scored["precision"], source, bool(user.any() and answer_mask.any())
+        ),
         # 의심 부위별 결과 (흉부만). 0~1 비율 좌표, found=찾음, near=근처
         "targets": scored["targets"],
         "target_count": scored["target_count"],
