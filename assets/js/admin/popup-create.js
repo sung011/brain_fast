@@ -98,7 +98,7 @@
             } finally {
                 if (btn) {
                     btn.disabled = false;
-                    btn.innerHTML = '<i class="me-1" data-feather="upload"></i> NAS 업로드 후 등록';
+                    btn.innerHTML = '<i class="me-1" data-feather="upload"></i> 업로드 후 등록';
                     if (window.feather) feather.replace();
                 }
             }

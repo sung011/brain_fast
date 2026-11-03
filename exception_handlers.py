@@ -123,14 +123,18 @@ def _app_location(exc: BaseException) -> str:
 
 
 def _json_safe(value: Any) -> Any:
-    """JSON 직렬화 불가 값(bytes 등)을 문자열로 바꾼다."""
+    """JSON 직렬화 불가 값(bytes, ValueError 등)을 문자열로 바꾼다."""
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
+    if isinstance(value, BaseException):
+        return str(value)
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe(v) for v in value]
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def _validation_lines(errors: list[dict[str, Any]]) -> str:

@@ -23,6 +23,25 @@ def list_all(db: Session, *, active_only: bool = True) -> list[StudyModel]:
     return list(db.scalars(stmt).all())
 
 
+def list_active(
+    db: Session,
+    *,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+    limit: int = 200,
+) -> list[StudyModel]:
+    """활성 study 를 등록 순서(idx 오름차순)로. 학습자 케이스 목록용."""
+    stmt = select(StudyModel).where(
+        StudyModel.del_yn == "N",
+        StudyModel.state == "N",
+    )
+    if st_part:
+        stmt = stmt.where(StudyModel.st_part == st_part)
+    if st_modal:
+        stmt = stmt.where(StudyModel.st_modal == st_modal)
+    return list(db.scalars(stmt.order_by(StudyModel.idx.asc()).limit(limit)).all())
+
+
 def get_by_idx(db: Session, idx: int) -> StudyModel | None:
     return db.get(StudyModel, idx)
 

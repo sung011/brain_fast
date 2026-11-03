@@ -156,8 +156,11 @@ class PageTests(unittest.TestCase):
             self.assertEqual(self.client.get(url).status_code, 200, url)
 
     def test_task_api_is_closed_by_default(self):
-        res = self.client.get("/learning/knee/task", params={"study_idx": 3})
-        self.assertIn(res.status_code, (401, 503))   # 기본은 꺼짐(.env 없이도 안전한 쪽)
+        config = import_module("class.knee.config")
+        with mock.patch.dict(os.environ, {"KNEE_ROI_GRADE_ENABLED": ""}):
+            with mock.patch.object(config, "_read_dotenv", lambda key: ""):
+                res = self.client.get("/learning/knee/task", params={"study_idx": 3})
+        self.assertIn(res.status_code, (401, 503))   # 설정이 없으면 꺼진 쪽(503). .env 값과는 따로 본다.
 
     def test_core_rules_in_node(self):
         node = shutil.which("node")

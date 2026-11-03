@@ -8,10 +8,11 @@ main.py 에서 prefix="/api/v1" 을 붙인다. 실제 주소: POST /api/v1/knee/
 하는 일:
 - multipart 로 image(PNG/JPEG 한 장), body_part="knee", plane, image_scope, include_overlay(선택)를 받는다.
 - 필드 누락·중복·모르는 값은 400, 크기 초과 413, PNG/JPEG 가 아니면 415, 읽을 수 없으면 422.
-- 계산은 class/knee 에 맡긴다(라우터는 얇게). 승인된 조합만 점수를 내고, 나머지는 "평가하지 않음"으로 답한다.
-- 응답을 보내기 전에 업로드 파일을 닫고 지운다. 이미지·파일 이름·예외 원문은 로그·DB·NAS 어디에도 남기지 않는다.
+- 계산은 class/knee 에 맡긴다(라우터는 얇게). 그 촬영면에 모델이 있으면 점수를 낸다.
+- 응답을 보내기 전에 업로드 파일을 닫고 지운다. 이미지 파일·파일 이름·예외 원문은 로그와 저장소에 남기지 않는다.
+- 판독 문구(소견·점수·판정)는 review_node 에 남긴다. KNEE_SCREEN_SAVE_ENABLED=0 이면 저장만 건너뛴다.
 
-하지 않는 일: 로그인/권한 검사(이 앱에는 학습자 세션이 아직 없다), NAS 업로드, DB 저장, 영상 보관.
+하지 않는 일: 로그인 여부 검사, 이미지 파일 보관.
 KNEE_SCREEN_ROI_ENABLED=0 이면 이 주소를 닫는다(기본은 열림. 실제 사용자 공개 전에는 인증·로그 정책을 먼저 해결한다).
 """
 
@@ -50,6 +51,33 @@ def _error_response(request_id: str, err: _ApiError) -> JSONResponse:
 
 def _setting(name: str, default: str) -> str:
     return import_module("class.knee.config").get_setting(name, default)
+
+
+def _optional_user_idx(request: Request) -> int | None:
+    """기록에 넣을 회원 번호. 세션이 없어도 분석을 막지 않는다."""
+    raw = request.scope.get("session")
+    raw = raw if isinstance(raw, dict) else {}
+    learner = raw.get("learner") if isinstance(raw.get("learner"), dict) else None
+    admin = raw.get("user") if isinstance(raw.get("user"), dict) else None
+    for source in (learner, admin):
+        if source is None:
+            continue
+        value = source.get("idx")
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            continue
+        return value
+    return None
+
+
+def _save_reading(request: Request, result: dict) -> int | None:
+    if _setting("KNEE_SCREEN_SAVE_ENABLED", "1") != "1":
+        return None
+    service = import_module("services.kneeScreenServices")
+    try:
+        return service.save_screen_reading(user_idx=_optional_user_idx(request), result=result)
+    except Exception as exc:
+        _log.error("knee screen reading save failed error_type=%s", type(exc).__name__)
+        return None
 
 
 def _read_fields(form) -> tuple[object, str, str, bool]:
@@ -165,6 +193,8 @@ async def knee_screen_roi(request: Request):
             raise _ApiError(422, "invalid_image", "이미지를 분석할 수 없습니다.") from None
         finally:
             decoded = None
+
+        result["review_idx"] = _save_reading(request, result)
 
         # 응답을 보내기 전에 업로드를 닫고 지운다. 실패하면 성공으로 답하지 않는다.
         if not await _close_all(form, upload):

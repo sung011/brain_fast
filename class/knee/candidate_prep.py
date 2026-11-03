@@ -134,6 +134,8 @@ _ALLOWED_PICKLE = {
     ("numpy", "ndarray"), ("numpy", "dtype"),
     ("numpy.core.multiarray", "_reconstruct"), ("numpy._core.multiarray", "_reconstruct"),
     ("numpy.core.multiarray", "scalar"), ("numpy._core.multiarray", "scalar"),
+    # numpy 2 가 배열 바이트를 복원할 때 부르는 생성자다. 임의 코드를 실행하지 않는다.
+    ("numpy.core.numeric", "_frombuffer"), ("numpy._core.numeric", "_frombuffer"),
     ("_codecs", "encode"),   # 옛 파이썬(프로토콜 2)에서 만든 배열 바이트를 복원할 때 쓴다(문자열→바이트 변환일 뿐 코드를 실행하지 않는다)
 }
 

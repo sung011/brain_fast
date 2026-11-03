@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 
 class FindingItem(BaseModel):
-    """단일 출혈 유형별 분류 점수."""
+    """단일 소견(출혈 유형, 흉부 소견 등)별 분류 점수."""
     label: str
     label_ko: str
     score: float = Field(ge=0.0, le=1.0)
@@ -34,11 +34,11 @@ class ClassificationResult(BaseModel):
     confidence: float
     findings: list[FindingItem]
     probs: list[float] = Field(description="CLASSES 순서의 원시 확률")
-    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma")
+    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma | thorax")
 
 
 class NasUploadInfo(BaseModel):
-    """NAS 업로드 결과 요약."""
+    """Object Storage 업로드 결과 요약."""
     ok: bool
     folder: str | None = None
     files: list[str] = Field(default_factory=list)
@@ -71,7 +71,7 @@ class ExplainResponse(BaseModel):
 
 
 class NasHealthResponse(BaseModel):
-    """GET /api/v1/nas/health — Synology 연결 상태."""
+    """GET /admin/nas/health — Object Storage 연결 상태."""
     ok: bool
     configured: bool
     url: str | None = None
@@ -80,7 +80,7 @@ class NasHealthResponse(BaseModel):
 
 
 class NasUploadResponse(BaseModel):
-    """POST /admin/nas/upload 응답 — NAS 업로드 + study 저장."""
+    """POST /admin/nas/upload 응답 — Object Storage 업로드 + study 저장."""
     ok: bool
     remote_path: str | None = None
     filename: str | None = None

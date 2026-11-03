@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import json
 import uuid
 from typing import Any
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from config import settings
 from models.studyModel import StudyModel
 from repositories import reviewNodeRepositories as repositories
+from repositories import studyRepositories as study_repositories
 from services.objectStorageServices import StorageNotConfiguredError, storage_service
 
 SOLUTION_MAP = {
@@ -25,6 +27,10 @@ SOLUTION_LABELS = {
 }
 
 REVIEW_DIR = "/stylesheets/assets/review"
+# 학습자 오답노트 기본 필터: 오답·부분정답
+WRONG_NOTE_SOLUTIONS = ["W", "H"]
+
+logger = logging.getLogger(__name__)
 
 
 def solution_code(result: str | None) -> str | None:
@@ -171,22 +177,10 @@ async def save_submission(
     """
     제출 이미지를 Object Storage review 경로에 올리고 review_node 행을 만든다.
     DB rn_image 예) /stylesheets/assets/review/{file}
-    무릎 문제(서버 DB study.st_part = 4)는 저장하지 않고 ValueError(공용 라우트에서 400).
-    """
-    # 무릎 문제 2차 차단(MSN-20260930-001): 저장 설정 확인·화상 처리·업로드보다 먼저, 같은 세션의 캐시가 아닌 지금 DB 값을 새로 읽는다.
-    if study_idx is not None:
-        with db.no_autoflush:
-            part = db.execute(
-                select(StudyModel.st_part).where(StudyModel.idx == int(study_idx))
-            ).scalar_one_or_none()
-        if str(part or "").strip() == "4":
-            raise ValueError("무릎 문제는 이 주소로 채점하지 않습니다. POST /learning/roi-grade/knee 를 사용하세요.")
 
-    if not storage_service.enabled:
-        raise StorageNotConfiguredError(
-            "Object Storage가 설정되지 않았습니다. "
-            ".env 에 NCP_ACCESS_KEY, NCP_SECRET_KEY, NCP_BUCKET 을 넣으세요."
-        )
+    Object Storage 가 설정되지 않았거나 업로드에 실패해도 review_node 행은 만든다(rn_image 는 비움).
+    그림 하나 때문에 채점 결과와 오답 기록을 잃지 않기 위해서다. 결과의 image_saved / image_error 로 알린다.
+    """
 
     review_png = grade.get("_review_png")
     if isinstance(review_png, (bytes, bytearray)) and review_png:
@@ -207,17 +201,37 @@ async def save_submission(
     if not content:
         raise ValueError("제출 이미지가 비어 있습니다.")
 
-    dest = (settings.nas_review_path or REVIEW_DIR).strip() or REVIEW_DIR
-    upload_name = f"{uuid.uuid4().hex[:10]}_{study_idx or 'x'}.{ext}"
-    uploaded = await storage_service.upload_bytes(content, upload_name, remote_dir=dest)
-    remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
-    rn_image = storage_service.to_public_path(remote_path)
+    rn_image = None
+    remote_path = None
+    image_error = None
+    if not storage_service.enabled:
+        image_error = "Object Storage가 설정되지 않아 제출 이미지를 저장하지 못했습니다."
+    else:
+        dest = (settings.nas_review_path or REVIEW_DIR).strip() or REVIEW_DIR
+        upload_name = f"{uuid.uuid4().hex[:10]}_{study_idx or 'x'}.{ext}"
+        try:
+            uploaded = await storage_service.upload_bytes(content, upload_name, remote_dir=dest)
+            remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
+            rn_image = storage_service.to_public_path(remote_path)
+        except Exception as exc:
+            logger.warning(
+                "리뷰 이미지 업로드 실패 (study=%s): %s",
+                study_idx,
+                exc.__class__.__name__,
+            )
+            image_error = "이미지 업로드에 실패해 제출 이미지를 저장하지 못했습니다."
+
+    disease = highest_percent_disease(grade)
+    if disease is None and study_idx is not None:
+        study = study_repositories.get_by_idx(db, int(study_idx))
+        if study is not None:
+            disease = _clip_disease(study.st_disease)
 
     row = repositories.create(
         db,
         rn_u_idx=user_idx,
         rn_s_idx=study_idx,
-        rn_disease=highest_percent_disease(grade),
+        rn_disease=disease,
         rn_image=rn_image,
         rn_solution=solution_code(grade.get("result")),
         rn_recall=_ratio(grade.get("recall")),
@@ -236,9 +250,79 @@ async def save_submission(
         "rn_image": row.rn_image,
         "rn_solution": row.rn_solution,
         "remote_path": remote_path,
+        "image_saved": rn_image is not None,
+        "image_error": image_error,
     }
 
 
+def parse_solutions(value: str | None) -> list[str] | None:
+    """'W,H' -> ['W', 'H'], 'all' -> None(전체). 없으면 오답노트 기본값(W,H). 모르는 코드는 ValueError."""
+    if value is None or not value.strip():
+        return list(WRONG_NOTE_SOLUTIONS)
+    if value.strip().lower() == "all":
+        return None
+    codes = [part.strip().upper() for part in value.split(",") if part.strip()]
+    unknown = [c for c in codes if c not in SOLUTION_LABELS]
+    if unknown or not codes:
+        raise ValueError("solution 은 C, H, W 를 쉼표로 잇거나 all 이어야 합니다.")
+    return codes
+
+
+def _note_disease(review_disease: str | None, study_disease: str | None) -> str | None:
+    """오답노트에 보여줄 병명. review_node.rn_disease 를 쓰고, 비어 있을 때만 문제 병명을 쓴다."""
+    text = (review_disease or "").strip()
+    if text:
+        return text
+    fallback = (study_disease or "").strip()
+    return fallback or None
+
+
+def _learner_item(review, study) -> dict[str, Any]:
+    from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
+    from services.learningServices import problem_image_url
+
+    part = study.st_part if study else None
+    modal = study.st_modal if study else None
+    return {
+        "review_idx": review.idx,
+        "study_idx": review.rn_s_idx,
+        "st_part": part,
+        "st_part_label": ST_PART_LABELS.get(part or "", part),
+        "st_modal": modal,
+        "st_modal_label": ST_MODAL_LABELS.get(modal or "", modal),
+        "disease": _note_disease(review.rn_disease, study.st_disease if study else None),
+        "solution": review.rn_solution,
+        "solution_label": solution_label(review.rn_solution),
+        "image_url": problem_image_url(review.rn_image) if review.rn_image else None,
+        "created_at": review.created_at.isoformat() if review.created_at else None,
+    }
+
+
+def list_for_learner(
+    db: Session,
+    user_idx: int,
+    *,
+    solutions: list[str] | None,
+    limit: int | None = 50,
+) -> list[dict[str, Any]]:
+    """학습자 본인의 오답노트(기본: 오답·부분정답) 목록."""
+    rows = repositories.list_for_user(db, user_idx, solutions=solutions, limit=limit)
+    return [_learner_item(review, study) for review, study in rows]
+
+
+def get_for_learner(db: Session, review_idx: int, user_idx: int) -> dict[str, Any] | None:
+    """오답 상세. 다시 풀 수 있는 문제면 problem(정답 제외)도 붙인다. 본인 기록이 아니면 None."""
+    found = repositories.get_for_user(db, review_idx, user_idx)
+    if found is None:
+        return None
+    review, study = found
+    item = _learner_item(review, study)
+    active = study is not None and study.del_yn == "N" and study.state == "N"
+    item["problem"] = (
+        {"idx": study.idx, "st_part": study.st_part, "st_modal": study.st_modal, "st_image": study.st_image}
+        if active else None
+    )
+    return item
 PART_REGION = {
     "1": "brain",
     "2": "chest",
@@ -279,7 +363,7 @@ def list_wrong_notes(db: Session, user_idx: int) -> list[dict[str, Any]]:
             {
                 "idx": row.get("idx"),
                 "study_idx": study_idx,
-                "disease": row.get("st_disease") or row.get("rn_disease") or "",
+                "disease": _note_disease(row.get("rn_disease"), row.get("st_disease")) or "",
                 "solution": code,
                 "solution_label": row.get("rn_solution_label") or solution_label(code),
                 "part_label": row.get("st_part_label") or "",
@@ -309,7 +393,7 @@ def get_saved_review(db: Session, review_idx: int, user_idx: int) -> dict[str, A
     return {
         "idx": review.idx,
         "study_idx": review.rn_s_idx,
-        "disease": (study.st_disease if study else None) or review.rn_disease or "",
+        "disease": _note_disease(review.rn_disease, study.st_disease if study else None) or "",
         "solution": code,
         "solution_label": solution_label(code),
         "part_label": ST_PART_LABELS.get(part, ""),
@@ -345,7 +429,7 @@ def list_learning_history(db: Session, user_idx: int) -> dict[str, Any]:
             {
                 "idx": row.get("idx"),
                 "study_idx": study_idx,
-                "disease": row.get("st_disease") or row.get("rn_disease") or "",
+                "disease": _note_disease(row.get("rn_disease"), row.get("st_disease")) or "",
                 "solution": code,
                 "solution_label": row.get("rn_solution_label") or solution_label(code),
                 "part_label": row.get("st_part_label") or "",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta
+from unittest import mock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -142,7 +143,11 @@ class TodayLearningTests(unittest.TestCase):
             yield self.db
 
         app.dependency_overrides[get_db] = _db
-        response = TestClient(app).get("/learning/today", params={"user_idx": 3})
+        with mock.patch("services.learningServices.datetime") as clock:
+            clock.now.return_value = self.now
+            clock.combine = datetime.combine
+            clock.min = datetime.min
+            response = TestClient(app).get("/learning/today", params={"user_idx": 3})
         self.assertEqual(response.status_code, 200, response.text)
         body = response.json()
         self.assertTrue(body["ok"])

@@ -10,7 +10,7 @@ FastAPI 앱의 시작 파일 (진입점).
 4. 주소 연결:
    - /          → 화면 공유 분석 페이지
    - /admin     → 관리자 페이지
-   - /api/...   → JSON API (commonness, user, brain)
+   - /api/...   → JSON API (commonness, user, brain, brain_mri)
    - /assets/... → CSS, JS, 이미지
 """
 
@@ -34,7 +34,7 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, commonness, brain, knee, kneeLearning, kneeScreenAnalysis, user
+from routers import admin, commonness, brain, brain_mri, knee, kneeLearning, kneeScreenAnalysis, user, account, thorax, rag
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     await task  # cleanup_loop 가 끝날 때까지 기다림
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, swagger_ui_parameters={"withCredentials": True})
 
 
 @app.get("/")
@@ -170,6 +170,9 @@ app.include_router(admin.router)
 
 # commonness: 학습자 JSON API (로그인·Q&A·학습·팝업·용어사전)
 app.include_router(commonness.router)
+# rag: 질문으로 의학용어 색인 검색. GET /glossary/search (항목 칸은 /glossary 와 같다)
+app.include_router(rag.router)
+app.include_router(account.router)
 
 # user: 사용자 API 자리 (현재 GET /text 테스트만)
 app.include_router(user.router)
@@ -177,8 +180,12 @@ app.include_router(user.router)
 # brain: 화면 공유 ROI 분석·판독문. 앞에 /api/v1 을 붙임
 app.include_router(brain.router, prefix="/api/v1", tags=["brain"])
 
+# thorax: 화면 공유 흉부 X-ray 분석. 앞에 /api/v1/thorax 를 붙임
+app.include_router(thorax.router, prefix="/api/v1/thorax", tags=["thorax"])
+# brain_mri: 뇌 MRI 5질환 세그멘테이션(YOLO26s-Seg). CT 와 별개. 앞에 /api/v1 을 붙임
+app.include_router(brain_mri.router, prefix="/api/v1", tags=["brain_mri"])
 # knee: 무릎 MRI 화면 캡처 한 장 분석. 앞에 /api/v1 을 붙임 (POST /api/v1/knee/screen-roi)
-# 모델(torch)은 승인된 조합이 있는 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
+# 모델(torch)은 화면 분석 요청이 들어올 때만 불러온다. 앱 시작 때는 불러오지 않는다.
 app.include_router(knee.router, prefix="/api/v1", tags=["knee"])
 # 무릎 화면 분석(넘기며 분석 10~20장 / 한 장, MSN-20261021-001). 기존 /knee/screen-roi 는 그대로 둔다.
 app.include_router(kneeScreenAnalysis.router, prefix="/api/v1", tags=["knee"])

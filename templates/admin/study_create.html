@@ -1,4 +1,4 @@
-{# 학습 등록: study 테이블 값 입력 + NAS 다중 업로드(드래그 앤 드롭) #}
+{# 학습 등록: study 테이블 값 입력 + Object Storage 다중 업로드(드래그 앤 드롭) #}
 <style>
     .study-dropzone {
         border: 2px dashed #c5cdd8;
@@ -86,7 +86,7 @@
                                placeholder="예: 뇌출혈" maxlength="30" required/>
                     </div>
                     <div class="col-md-6 mb-3">
-                        <label class="small mb-1" for="inputRemoteDir">NAS 저장 경로 (remote_dir)</label>
+                        <label class="small mb-1" for="inputRemoteDir">저장 경로 (remote_dir)</label>
                         <input class="form-control" id="inputRemoteDir" name="remote_dir" type="text"
                                value="{{ nas_base_path }}" placeholder="/stylesheets/assets/brain/CT"
                                readonly/>
@@ -145,7 +145,7 @@
                        data-tab-title="학습 관리">취소</a>
                     <button type="submit" class="btn btn-primary" id="studyCreateSubmitBtn">
                         <i class="me-1" data-feather="upload"></i>
-                        NAS 업로드 후 등록
+                        업로드 후 등록
                     </button>
                 </div>
             </form>
