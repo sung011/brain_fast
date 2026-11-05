@@ -180,7 +180,18 @@ async def save_submission(
 
     Object Storage 가 설정되지 않았거나 업로드에 실패해도 review_node 행은 만든다(rn_image 는 비움).
     그림 하나 때문에 채점 결과와 오답 기록을 잃지 않기 위해서다. 결과의 image_saved / image_error 로 알린다.
+
+    무릎 문제(서버 DB study.st_part = 4)는 저장하지 않고 ValueError(공용 라우트에서 400).
     """
+    # 무릎 문제 2차 차단(MSN-20260930-001): 저장 설정 확인·화상 처리·업로드·insert 보다 먼저, 같은 세션의 캐시가 아닌 지금 DB 값을 새로 읽는다.
+    # (공용 라우트의 1차 차단과 별개로, 분석 도중 다른 세션이 부위를 바꾸는 경합도 막는다. del_yn 으로 거르지 않는다.)
+    if study_idx is not None:
+        with db.no_autoflush:
+            part = db.execute(
+                select(StudyModel.st_part).where(StudyModel.idx == int(study_idx))
+            ).scalar_one_or_none()
+        if str(part or "").strip() == "4":
+            raise ValueError("무릎 문제는 이 주소로 채점하지 않습니다. POST /learning/roi-grade/knee 를 사용하세요.")
 
     review_png = grade.get("_review_png")
     if isinstance(review_png, (bytes, bytearray)) and review_png:
