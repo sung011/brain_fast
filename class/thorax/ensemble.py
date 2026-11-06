@@ -35,11 +35,15 @@ class ThoraxModelNotReady(RuntimeError):
 
 @dataclass
 class Detection:
-    """박스 하나. box 는 원본 이미지 픽셀 좌표 (x1, y1, x2, y2)."""
+    """
+    박스 하나. box 는 원본 이미지 픽셀 좌표 (x1, y1, x2, y2).
+    모양(segmentation) 모델이면 polygon 에 병변 윤곽 점 [(x, y), ...] 이 들어 있다(원본 픽셀 좌표). 박스 모델은 None.
+    """
 
     finding: str
     confidence: float
     box: tuple[float, float, float, float]
+    polygon: list | None = None
 
 
 class FindingModel:
@@ -57,6 +61,8 @@ class FindingModel:
         self.max_det = int(settings.get("max_detections", 100))
         # 학습 노트북의 후처리 규칙과 같은 이름. 없으면 0 (거르지 않음)
         self.min_area_ratio = float(settings.get("minimum_area_ratio") or 0.0)
+        # inference_config.json 의 task 가 "segment" 이면 모양 모델(병변 윤곽까지 낸다)
+        self.segment = str(settings.get("task") or "").lower() == "segment"
 
     def detect(self, img_uint8: np.ndarray) -> list[Detection]:
         result = self.predictor.predict(
@@ -72,8 +78,10 @@ class FindingModel:
         if boxes is None or len(boxes) == 0:
             return out
         image_area = float(img_uint8.shape[0] * img_uint8.shape[1]) or 1.0
-        for xyxy, conf, cls in zip(
-            boxes.xyxy.cpu().tolist(), boxes.conf.cpu().tolist(), boxes.cls.cpu().tolist()
+        masks = getattr(result, "masks", None) if self.segment else None
+        polygons = list(masks.xy) if masks is not None else [None] * len(boxes)
+        for xyxy, conf, cls, poly in zip(
+            boxes.xyxy.cpu().tolist(), boxes.conf.cpu().tolist(), boxes.cls.cpu().tolist(), polygons
         ):
             code = self.findings.get(int(cls))
             if code is None:
@@ -81,8 +89,65 @@ class FindingModel:
             x1, y1, x2, y2 = xyxy
             if (x2 - x1) * (y2 - y1) / image_area < self.min_area_ratio:
                 continue
-            out.append(Detection(code, float(conf), tuple(float(v) for v in xyxy)))
+            points = [(float(x), float(y)) for x, y in poly] if poly is not None and len(poly) >= 3 else None
+            out.append(Detection(code, float(conf), tuple(float(v) for v in xyxy), points))
         return out
+
+
+class CardiacRatioModel:
+    """
+    심장·폐 윤곽 모델(심흉비 보조). 소견을 직접 내지 않고 심비대 판정을 돕는다.
+
+    inference_config.json 의 role 이 "cardiomegaly_ratio" 인 패키지다.
+    심흉비(CTR) = 심장 폭 ÷ (오른폐 바깥 끝 ~ 왼폐 바깥 끝).
+    심비대 점수 = (심비대 박스 모델 점수의 기준 백분위 + 심흉비의 기준 백분위) / 2.
+    기준 분포와 기준값은 VinDr 검증 사진으로 정해 cardiomegaly_rule 에 들어 있다(시험 사진으로 정하지 않음).
+    """
+
+    def __init__(self, name: str, settings: dict, predictor) -> None:
+        self.name = name
+        self.predictor = predictor
+        self.image_size = int(settings.get("image_size") or settings.get("input_image_size") or 512)
+        self.confidence = float(settings.get("confidence_threshold", 0.25))
+        names = {int(k): str(v) for k, v in (settings.get("class_names") or {}).items()}
+        self.part = {v: k for k, v in names.items()}  # heart / left_lung / right_lung → 출력 번호
+        rule = settings.get("cardiomegaly_rule") or {}
+        self.threshold = float(rule.get("threshold", 0.5))
+        self.ctr_fill = float(rule.get("ctr_fill", 0.5))
+        self.detector_min_confidence = float(rule.get("detector_min_confidence", 0.001))
+        self.min_thorax_ratio = float(rule.get("min_thorax_width_ratio", 0.4))
+        self.ref_det = np.sort(np.asarray(rule.get("reference_detector_scores") or [0.0], dtype=float))
+        self.ref_ctr = np.sort(np.asarray(rule.get("reference_ctr") or [0.5], dtype=float))
+
+    def measure(self, img_uint8: np.ndarray) -> tuple[float | None, list | None]:
+        """(심흉비, 심장 윤곽 점 목록). 못 재면 (None, 윤곽 또는 None)."""
+        result = self.predictor.predict(img_uint8, imgsz=self.image_size, conf=self.confidence, verbose=False)[0]
+        boxes, masks = result.boxes, getattr(result, "masks", None)
+        if boxes is None or masks is None or len(boxes) == 0:
+            return None, None
+        best: dict[int, tuple[float, list]] = {}
+        for conf, cls, poly in zip(boxes.conf.cpu().tolist(), boxes.cls.cpu().tolist(), masks.xy):
+            c = int(cls)
+            if len(poly) >= 3 and (c not in best or conf > best[c][0]):
+                best[c] = (float(conf), [(float(x), float(y)) for x, y in poly])
+        heart = best.get(self.part.get("heart", 0), (0.0, None))[1]
+        left = best.get(self.part.get("left_lung", 1), (0.0, None))[1]
+        right = best.get(self.part.get("right_lung", 2), (0.0, None))[1]
+        if not (heart and left and right):
+            return None, heart
+        hx = [x for x, _ in heart]
+        lx = [x for x, _ in left + right]
+        thorax = max(lx) - min(lx)
+        if thorax <= self.min_thorax_ratio * img_uint8.shape[1]:
+            return None, heart
+        return (max(hx) - min(hx)) / thorax, heart
+
+    def score(self, detector_score: float, ctr: float | None) -> float:
+        """두 점수를 기준 분포의 백분위로 바꿔 평균낸다(0~1)."""
+        ctr = self.ctr_fill if ctr is None else ctr
+        p_det = np.searchsorted(self.ref_det, detector_score, side="right") / len(self.ref_det)
+        p_ctr = np.searchsorted(self.ref_ctr, ctr, side="right") / len(self.ref_ctr)
+        return float((p_det + p_ctr) / 2)
 
 
 def _load_yolo(weights: Path):
@@ -100,6 +165,7 @@ class ThoraxDetector:
 
     def __init__(self) -> None:
         self.models: list[FindingModel] = []
+        self.ratio_model: CardiacRatioModel | None = None
         self.ready = False
         self.error: str | None = None
 
@@ -145,22 +211,32 @@ class ThoraxDetector:
             raise ThoraxModelNotReady(NOT_CONFIGURED)
         try:
             models = []
+            ratio_model = None
             for name in config.PACKAGES:
                 folder = self._package_dir(name)
                 settings = json.loads((folder / "inference_config.json").read_text(encoding="utf-8"))
                 weights = folder / (settings.get("weights") or settings.get("checkpoint_filename") or "best.pt")
-                models.append(FindingModel(name, settings, _load_yolo(weights)))
-            self.use_models(models)
+                if settings.get("role") == "cardiomegaly_ratio":
+                    ratio_model = CardiacRatioModel(name, settings, _load_yolo(weights))
+                else:
+                    models.append(FindingModel(name, settings, _load_yolo(weights)))
+            self.use_models(models, ratio_model=ratio_model)
         except Exception as exc:
             self.ready = False
             self.error = str(exc)
             raise
 
-    def use_models(self, models: list[FindingModel]) -> None:
+    def use_models(self, models: list[FindingModel], ratio_model: CardiacRatioModel | None = None) -> None:
         """불러온 모델을 끼운다. 테스트에서는 가짜 predictor 로 만든 FindingModel 을 넣는다."""
         if not models:
             raise ValueError("흉부 모델 패키지가 하나도 없습니다.")
         self.models = list(models)
+        self.ratio_model = ratio_model
+        if ratio_model is not None:
+            # 심흉비와 합치려면 심비대 박스 모델의 낮은 점수도 받아야 한다(판정은 합친 점수로 한다)
+            for model in self.models:
+                if "cardiomegaly" in model.findings.values():
+                    model.confidence = min(model.confidence, ratio_model.detector_min_confidence)
         self.ready = True
         self.error = None
 
@@ -170,7 +246,26 @@ class ThoraxDetector:
         detections: list[Detection] = []
         for model in self.models:
             detections.extend(model.detect(img_uint8))
+        if self.ratio_model is not None:
+            detections = self._judge_cardiomegaly(img_uint8, detections)
         return detections
+
+    def _judge_cardiomegaly(self, img_uint8: np.ndarray, detections: list[Detection]) -> list[Detection]:
+        """심비대 박스는 빼고, 심흉비와 합친 점수가 기준값 이상일 때만 심장 윤곽으로 하나 넣는다."""
+        cardio = [d for d in detections if d.finding == "cardiomegaly"]
+        others = [d for d in detections if d.finding != "cardiomegaly"]
+        top = max(cardio, key=lambda d: d.confidence, default=None)
+        ctr, heart = self.ratio_model.measure(img_uint8)
+        score = self.ratio_model.score(top.confidence if top else 0.0, ctr)
+        if score < self.ratio_model.threshold:
+            return others
+        if heart:
+            xs = [x for x, _ in heart]
+            ys = [y for _, y in heart]
+            others.append(Detection("cardiomegaly", score, (min(xs), min(ys), max(xs), max(ys)), heart))
+        elif top is not None:
+            others.append(Detection("cardiomegaly", score, top.box))
+        return others
 
     def scores(self, detections: list[Detection]) -> np.ndarray:
         """classes 순서의 소견별 점수(그 소견 박스의 최고 신뢰도, 없으면 0)."""
