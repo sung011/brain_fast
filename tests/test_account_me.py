@@ -296,18 +296,20 @@ def test_account_api_unexpected_error_is_fixed_500_without_input_in_response_or_
         raise RuntimeError("params SENT-NAME 1999-09-09 secret-pw-sentinel")
     monkeypatch.setattr(service.repositories, "find_ids", boom)
     monkeypatch.setattr(service.repositories, "find_member", boom)
+    monkeypatch.setattr(service.repositories, "lock_member_for_reset", boom)   # 복구 B안 reset 은 잠금 조회를 쓴다
     with caplog.at_level(logging.DEBUG):
         r1 = env.post("/find-id", json={"user_name": "SENT-NAME", "user_birth": "1999-09-09"})
-        r2 = env.post("/find-pw/verify", json={"user_id": "a@example.test", "user_name": "SENT-NAME", "user_birth": "1999-09-09"})
+        answers = [{"question_id": q, "answer": "SENT-ANSWER"} for q in ("Q01", "Q02", "Q03")]
+        r2 = env.post("/find-pw/verify", json={"user_id": "a@example.test", "user_name": "SENT-NAME", "user_birth": "1999-09-09", "answers": answers})
         r3 = env.post("/find-pw", json={"user_id": "a@example.test", "user_name": "SENT-NAME", "user_birth": "1999-09-09",
-                                        "user_pw": "secret-pw-sentinel", "user_pw_confirm": "secret-pw-sentinel"})
+                                        "user_pw": "secret-pw-sentinel", "user_pw_confirm": "secret-pw-sentinel", "answers": answers})
     for res in (r1, r2, r3):
         assert res.status_code == 500
         assert res.headers["cache-control"] == "no-store"
         assert res.json() == {"ok": False, "detail": "서버 처리 중 문제가 생겼습니다."}
-        for secret in ("SENT-NAME", "1999-09-09", "secret-pw-sentinel"):
+        for secret in ("SENT-NAME", "1999-09-09", "secret-pw-sentinel", "SENT-ANSWER"):
             assert secret not in res.text
-    for secret in ("SENT-NAME", "1999-09-09", "secret-pw-sentinel"):
+    for secret in ("SENT-NAME", "1999-09-09", "secret-pw-sentinel", "SENT-ANSWER"):
         assert secret not in caplog.text
 
 

@@ -1,10 +1,18 @@
-"""가입 정보 확인과 계정찾기. 메일 발송·새 테이블 생성은 하지 않는다."""
+"""가입 정보 확인과 계정찾기. 메일 발송·테이블 생성은 하지 않는다.
+
+비밀번호 찾기(복구 B안): 시도 제한(identity 5 / IP 30, 성공도 소모) → 회원·답 조회 → 세 슬롯 bcrypt 검증(단락 없음, 더미로 3회 맞춤).
+reset 은 verify 이력을 믿지 않고 신원·답을 다시 검증한다: 회원 행 잠금(FOR UPDATE) → 답 3행 최신 조회 → 재검증 → 새 해시 저장 → commit.
+유효한 reset 두 건은 잠금 순서대로 둘 다 성공할 수 있다(일회용 토큰 없음). 답이 바뀐 뒤의 옛 답은 거절된다.
+"""
 from hmac import compare_digest
 
 from sqlalchemy.orm import Session
 
+from repositories import accountRecoveryRepositories as recovery_repositories
 from repositories import accountRepositories as repositories
+from schemas.accountRecoverySchemas import answer_map
 from schemas.accountSchemas import FindId, FindPw, VerifyAccount
+from services import accountRecoveryServices as recovery
 from services.userServices import format_updated_at
 from utils.password import hash_password
 from utils.rate_limit import RateLimiter
@@ -18,6 +26,10 @@ identity_limiter = RateLimiter(max_attempts=5, window_seconds=WINDOW_SECONDS)
 
 class TooManyAttempts(Exception):
     """시도 횟수 제한을 넘었다."""
+
+
+class PasswordMismatch(ValueError):
+    """새 비밀번호와 확인 비밀번호가 다르다 → 400."""
 
 
 def _check_limit(client_ip: str, identity_key: str) -> None:
@@ -41,20 +53,29 @@ def find_id(db: Session, body: FindId, client_ip: str) -> list[str]:
 
 
 def verify_account(db: Session, body: VerifyAccount, client_ip: str) -> bool:
-    _check_limit(client_ip, f"id:{body.user_id.lower()}")
-    return repositories.find_member(db, body.user_id, body.user_name, body.user_birth) is not None
+    _check_limit(client_ip, f"id:{body.user_id.lower()}")   # bcrypt 보다 먼저
+    user = repositories.find_member(db, body.user_id, body.user_name, body.user_birth)
+    rows = recovery_repositories.answers_for(db, user.idx) if user is not None else {}
+    matched = recovery.check_answers(rows, answer_map(body.answers))   # 회원이 없어도 3회 검증
+    return user is not None and matched
 
 
 def reset_password(db: Session, body: FindPw, client_ip: str) -> bool:
     _check_limit(client_ip, f"id:{body.user_id.lower()}")
     if not compare_digest(body.user_pw.encode("utf-8"), body.user_pw_confirm.encode("utf-8")):
-        raise ValueError("새 비밀번호와 확인 비밀번호가 일치하지 않습니다.")
-    # 화면의 확인 결과를 신뢰하지 않고, 변경 요청에서도 가입 정보를 다시 검사한다.
-    user = repositories.find_member(db, body.user_id, body.user_name, body.user_birth)
-    if user is None:
-        return False
+        raise PasswordMismatch("새 비밀번호와 확인 비밀번호가 일치하지 않습니다.")
+    # 새 비밀번호 해시는 잠금 전에 만든다(잠금 시간을 줄이고, 성공·실패 경로의 bcrypt 수를 같게 한다).
+    new_hash = hash_password(body.user_pw)
+    answers = answer_map(body.answers)
+    # 화면의 확인 결과를 신뢰하지 않고, 변경 요청에서도 신원과 답을 잠금 안에서 다시 검사한다.
     try:
-        repositories.set_password(db, user, hash_password(body.user_pw), format_updated_at())
+        user = repositories.lock_member_for_reset(db, body.user_id, body.user_name, body.user_birth)
+        rows = recovery_repositories.answers_for(db, user.idx) if user is not None else {}
+        matched = recovery.check_answers(rows, answers)
+        if user is None or not matched:
+            db.rollback()
+            return False
+        repositories.set_password(db, user, new_hash, format_updated_at())
         db.commit()
     except Exception:
         db.rollback()

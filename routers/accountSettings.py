@@ -3,6 +3,8 @@
 - GET   /me/settings : 승인된 본인의 프로필 5필드 + 충돌 확인용 버전(불투명).
 - PATCH /me/profile  : 이름·학교·전공 + 현재 비밀번호 + expected_version. 충돌이면 409(덮어쓰지 않음).
 - POST  /me/password : 현재 비밀번호 확인 → 새 비밀번호 저장 → **이 요청의 learner 세션만** 종료(관리자·게스트·다른 기기는 건드리지 않는다).
+- GET   /me/recovery-questions : 비밀번호 찾기 질문 답 등록 여부만(답·해시 0).
+- PUT   /me/recovery-questions : 현재 비밀번호 + 답 3개로 최초 등록·변경(복구 B안). 답이 들어가는 주소라 AnswerSafeRoute 를 쓴다.
 
 쓰기(PATCH/POST)는 로그아웃과 같은 **같은 출처(Origin) 검사**를 먼저 한다. 회원·번호·아이디 쿼리는 400. 모든 응답 no-store.
 오류 응답·로그에는 입력한 비밀번호·이름·학교·전공을 담지 않는다(AccountRoute: 검증 오류는 위치·종류만, 예상 못한 오류는 고정 문구 500).
@@ -14,10 +16,14 @@ from sqlalchemy.orm import Session
 
 from db import get_db
 from routers.account import AccountRoute, _same_origin_request, client_ip
+from routers.accountSafeErrors import AnswerSafeRoute
+from schemas.accountRecoverySchemas import RecoveryQuestionsPut
 from schemas.accountSettingsSchemas import PasswordChange, PasswordChangedResponse, ProfilePatch
+from services import accountRecoveryServices as recovery_service
 from services import accountSettingsServices as service
 
 router = APIRouter(tags=["account-settings"], route_class=AccountRoute)
+recovery_router = APIRouter(tags=["account-settings"], route_class=AnswerSafeRoute)
 
 _IDENTITY_QUERY_KEYS = {"user_idx", "idx", "user_id", "uid", "id"}
 UNAUTHORIZED = "로그인이 필요합니다."
@@ -105,3 +111,26 @@ def post_password(body: PasswordChange, request: Request, db: Session = Depends(
     if isinstance(session, dict):
         session.pop("learner", None)   # commit 이 끝난 뒤, 이 요청의 학습자 세션 키만 제거(관리자 세션·게스트 쿠키·다른 기기는 그대로)
     return PasswordChangedResponse().model_dump(mode="json")
+
+
+@recovery_router.get("/me/recovery-questions")
+def get_recovery_questions(request: Request, db: Session = Depends(get_db)):
+    _check_query(request)
+    try:
+        result = recovery_service.get_status(db, _session(request))
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+    return result.model_dump(mode="json")
+
+
+@recovery_router.put("/me/recovery-questions")
+def put_recovery_questions(body: RecoveryQuestionsPut, request: Request, db: Session = Depends(get_db)):
+    _check_write(request)
+    try:
+        result = recovery_service.save_answers(db, _session(request), body, client_ip(request))
+    except _HANDLED as exc:
+        raise _translate(exc) from exc
+    return result.model_dump(mode="json")
+
+
+router.include_router(recovery_router)

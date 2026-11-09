@@ -1,6 +1,8 @@
 """학습자 계정찾기·로그아웃 API. 화면은 학습자 Vue 프로젝트의 /find(아이디·비밀번호 찾기)가 맡는다. 기존 commonness 라우터와 분리한다.
 
-- POST /find-id, /find-pw/verify, /find-pw : 이름·생년월일(+아이디) 대조 방식. 메일 인증이 아니다(설계 R-01 한계).
+- POST /find-id : 이름·생년월일 대조 방식(아이디 일부만 보여 준다). 메일 인증이 아니다(설계 R-01 한계).
+- POST /find-pw/verify, /find-pw : 복구 B안 — 신원(아이디·이름·생년월일) + 비밀번호 찾기 질문 답 3개를 모두 서버가 확인한다.
+  답이 들어가는 주소라 AnswerSafeRoute(routers/accountSafeErrors.py)로 오류 응답·로그를 좁히고, 유지보수 플래그면 DB 전에 503 이다.
 - POST /logout : 이 브라우저의 학습자 로그인(session["learner"])만 끝낸다. 관리자 세션·게스트 쿠키는 건드리지 않는다.
 """
 import logging
@@ -13,6 +15,7 @@ from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 
 from db import get_db
+from routers.accountSafeErrors import AnswerSafeRoute
 from schemas.accountSchemas import FindId, FindPw, VerifyAccount
 from services import accountServices as service
 
@@ -45,7 +48,11 @@ class AccountRoute(APIRoute):
 
 
 router = APIRouter(tags=["account"], route_class=AccountRoute)
+# 답이 들어가는 비밀번호 찾기 주소는 별도 route 클래스(안전 오류·유지보수 차단). 아래에서 router 에 include 한다.
+recovery_router = APIRouter(tags=["account"], route_class=AnswerSafeRoute)
 NOT_FOUND = "입력하신 정보와 일치하는 회원을 찾을 수 없습니다."
+# 복구 B안 고정 문구(질문별 오답·미등록·탈퇴·없는 아이디 모두 같다).
+RECOVERY_NOT_FOUND = "입력한 정보를 확인하지 못했어요. 다시 확인하거나 관리자에게 문의해 주세요."
 TOO_MANY = "시도 횟수가 너무 많습니다. 10분 후 다시 시도해 주세요."
 
 
@@ -64,28 +71,31 @@ def find_id(body: FindId, request: Request, db: Session = Depends(get_db)):
     return {"ok": True, "user_id": ids[0] if len(ids) == 1 else None, "user_ids": ids}
 
 
-@router.post("/find-pw/verify")
+@recovery_router.post("/find-pw/verify")
 def verify_account(body: VerifyAccount, request: Request, db: Session = Depends(get_db)):
     try:
         found = service.verify_account(db, body, client_ip(request))
     except service.TooManyAttempts as exc:
         raise HTTPException(429, TOO_MANY) from exc
     if not found:
-        raise HTTPException(404, NOT_FOUND)
+        raise HTTPException(404, RECOVERY_NOT_FOUND)
     return {"ok": True}
 
 
-@router.post("/find-pw")
+@recovery_router.post("/find-pw")
 def reset_password(body: FindPw, request: Request, db: Session = Depends(get_db)):
     try:
         changed = service.reset_password(db, body, client_ip(request))
     except service.TooManyAttempts as exc:
         raise HTTPException(429, TOO_MANY) from exc
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    except service.PasswordMismatch as exc:
+        raise HTTPException(400, "새 비밀번호와 확인 비밀번호가 일치하지 않습니다.") from exc
     if not changed:
-        raise HTTPException(404, NOT_FOUND)
+        raise HTTPException(404, RECOVERY_NOT_FOUND)
     return {"ok": True, "message": "비밀번호가 변경되었습니다."}
+
+
+router.include_router(recovery_router)
 
 
 
