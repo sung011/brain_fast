@@ -19,7 +19,7 @@ from config import settings
 from repositories import accountRecoveryRepositories as repositories
 from repositories import accountSettingsRepositories as settings_repositories
 from repositories import userRepositories as user_repositories
-from schemas.accountRecoverySchemas import CHOICE_QUESTION_SET, NORM_VERSION, QUESTION_IDS, QUESTION_SET, RecoveryQuestionsPut, RecoveryStatus, answer_map
+from schemas.accountRecoverySchemas import CHOICE_QUESTION_IDS, CHOICE_QUESTION_SET, NORM_VERSION, QUESTION_IDS, QUESTION_SET, RecoveryQuestionsPut, RecoveryStatus, answer_map
 from schemas.userSchemas import LearnerSignup
 from services import accountSettingsServices as settings_service
 from services import signupEmailServices as signup_email
@@ -58,7 +58,7 @@ def _slot_usable(row) -> bool:
 def _registered_questions(rows: dict) -> tuple[str, ...]:
     if len(rows) == 1:
         question_id, row = next(iter(rows.items()))
-        if question_id in QUESTION_IDS and _slot_usable(row) and row.ura_question_set == CHOICE_QUESTION_SET:
+        if question_id in CHOICE_QUESTION_IDS and _slot_usable(row) and row.ura_question_set == CHOICE_QUESTION_SET:
             return (question_id,)
     if set(rows) == set(QUESTION_IDS) and all(
         _slot_usable(rows[q]) and rows[q].ura_question_set == QUESTION_SET for q in QUESTION_IDS
@@ -72,14 +72,19 @@ def is_registered(rows: dict) -> bool:
 
 
 def check_answers(rows: dict, answers: dict[str, str]) -> bool:
-    """세 슬롯을 모두 검증(bcrypt 정확히 3회)한 뒤 결과를 합친다. 쓸 수 없는 슬롯은 더미로 검증하고 실패로 센다."""
+    """등록 방식과 관계없이 bcrypt 를 정확히 3회 실행한 뒤 결과를 합친다.
+
+    필요한 질문(v1 세 개, v2 한 개)을 먼저 검증하고 모자란 횟수는 더미 해시로 채운다. 쓸 수 없는 슬롯·미등록도 더미로 3회.
+    """
     required = _registered_questions(rows)
     ok = bool(required) and set(answers) == set(required)
-    for question_id in QUESTION_IDS:
-        row = rows.get(question_id)
-        usable = question_id in required and _slot_usable(row)
-        matched = verify_password(answers.get(question_id, ""), row.ura_answer_hash if usable else DUMMY_HASH)
-        if question_id in required:
+    slots = list(required) + [None] * (len(QUESTION_IDS) - len(required))
+    for question_id in slots:
+        row = rows.get(question_id) if question_id else None
+        usable = question_id is not None and _slot_usable(row)
+        candidate = answers.get(question_id, "") if question_id else ""
+        matched = verify_password(candidate, row.ura_answer_hash if usable else DUMMY_HASH)
+        if question_id is not None:
             ok = ok and usable and matched
     return ok
 

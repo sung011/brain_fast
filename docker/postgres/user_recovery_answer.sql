@@ -27,7 +27,7 @@ CREATE TABLE public.user_recovery_answer (
     updated_at character varying(30),
     CONSTRAINT user_recovery_answer_pkey PRIMARY KEY (idx),
     CONSTRAINT user_recovery_answer_user_fk FOREIGN KEY (ura_u_idx) REFERENCES public.user_member(idx) ON DELETE RESTRICT,
-    CONSTRAINT user_recovery_answer_qid_check CHECK (ura_question_id IN ('Q01','Q02','Q03')),
+    CONSTRAINT user_recovery_answer_qid_check CHECK (ura_question_id IN ('Q01','Q02','Q03','Q04')),
     CONSTRAINT user_recovery_answer_user_question_uq UNIQUE (ura_u_idx, ura_question_id)
 );
 COMMENT ON TABLE public.user_recovery_answer IS '비밀번호 찾기 질문 답변(정규화 후 bcrypt 해시만, 평문 없음)';
