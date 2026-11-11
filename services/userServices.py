@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from models.userModel import UserModel
 from repositories import userRepositories as repositories
+from schemas.signupEmailSchemas import normalize_email
 from schemas.userSchemas import UserCreate, UserLogin, UserUpdate
 from utils.password import hash_password, verify_password
 
@@ -16,8 +17,19 @@ def format_updated_at(now: datetime | None = None) -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
+def resolve_account_id(db: Session, user_id: str) -> str:
+    """기존 아이디가 정확히 일치하면 우선하고, 이메일은 정규화한 아이디도 허용한다."""
+    try:
+        canonical = normalize_email(user_id)
+    except ValueError:
+        return user_id
+    if canonical != user_id and repositories.get_by_user_id(db, user_id, active_only=False) is None:
+        return canonical
+    return user_id
+
+
 def login(db: Session, body: UserLogin) -> UserModel | None:
-    user = repositories.get_by_user_id(db, body.user_id)
+    user = repositories.get_by_user_id(db, resolve_account_id(db, body.user_id))
     if user is None:
         return None
     if not verify_password(body.user_pw, user.user_pw):

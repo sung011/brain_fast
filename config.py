@@ -5,6 +5,7 @@
 DB 주소는 DATABASE_URL 로 넘긴다.
 """
 
+from pydantic import SecretStr
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -20,6 +21,15 @@ class Settings(BaseSettings):
     )
     # 세션 쿠키 서명용. 운영에서는 .env 의 SECRET_KEY 로 바꾼다.
     secret_key: str = "dev-secret-change-me"
+
+    signup_email_verification_enabled: bool = False
+    signup_email_code_secret: SecretStr = SecretStr("")
+    signup_smtp_host: str = ""
+    signup_smtp_port: int = 587
+    signup_smtp_ssl: bool = False
+    signup_smtp_from: str = ""
+    signup_smtp_user: str = ""
+    signup_smtp_password: SecretStr = SecretStr("")
 
     # 네이버 클라우드 Object Storage. 키가 비어 있으면 업로드 기능 비활성.
     ncp_access_key: str = ""

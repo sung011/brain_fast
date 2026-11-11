@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from models.userModel import UserModel
@@ -21,6 +21,11 @@ def get_by_user_id(
     if active_only:
         stmt = stmt.where(UserModel.del_yn == "N")
     return db.scalars(stmt).first()
+
+
+def email_id_exists(db: Session, email: str) -> bool:
+    """신규 정규화 이메일과 기존 회원의 아이디가 대소문자만 다른 경우도 중복이다."""
+    return db.scalar(select(UserModel.idx).where(func.lower(UserModel.user_id) == email).limit(1)) is not None
 
 
 def get_by_user(db: Session, user_id: str, user_pw: str) -> UserModel | None:

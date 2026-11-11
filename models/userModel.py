@@ -12,7 +12,7 @@ class UserModel(Base):
 
     idx: Mapped[int] = mapped_column(Integer, Identity(), primary_key=True)
     del_yn: Mapped[str] = mapped_column(CHAR(1), nullable=False, server_default="N")
-    user_id: Mapped[str] = mapped_column(String(30), nullable=False, unique=True)
+    user_id: Mapped[str] = mapped_column(String(254), nullable=False, unique=True)
     user_pw: Mapped[str] = mapped_column(String(255), nullable=False)
     user_name: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     user_birth: Mapped[str] = mapped_column(String(10), nullable=False)
