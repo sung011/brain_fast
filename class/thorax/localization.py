@@ -4,14 +4,18 @@
 탐지 모델이 준 박스를 위치로 쓴다 (뇌 CT처럼 Grad-CAM으로 추정하지 않는다).
 - 같은 소견에서 겹치는 박스는 하나로 합치고, 소견마다 점수 높은 MAX_REGIONS_PER_FINDING 곳만 남긴다
   (모델이 같은 자리에 박스를 여러 개 내서 화면이 어지러웠다)
-- 소견별 마스크: 그 소견 박스들을 칠한 영역 → ROI 채점에 쓴다
-- overlay: 박스 안을 소견 색으로 옅게 칠하고 테두리를 그린 PNG
+- 폐음영처럼 경계가 흐린 소견(HEAT_FINDINGS)은 감싸 합치지 않고 '겹쳐 칠하기'를 쓴다.
+  감싸 합치면 의사 박스보다 약 2배 커졌다(흉부 공통 시험 NIH 폐음영 230장, 2026-11-05 측정)
+- 소견별 마스크: 화면에 칠한 영역 → ROI 채점에 쓴다
+- overlay: 영역을 소견 색으로 옅게 칠하고 테두리(겹쳐 칠하기는 윤곽선)를 그린 PNG
 """
 from __future__ import annotations
 
 import base64
 import io
+import math
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -47,6 +51,21 @@ def _clip_box(box, w: int, h: int) -> tuple[int, int, int, int] | None:
 
 MAX_REGIONS_PER_FINDING = 2   # 양쪽 폐에 하나씩 있을 수 있어 1이 아니라 2
 
+# 박스 크기 보정 (가로 배율, 세로 배율, 늘어난 높이 중 위쪽으로 보내는 몫). 가로는 가운데를 두고 넓힌다.
+# 심비대 모델은 VinDr 로 학습해 심장 아래쪽 폭만 담은 납작한 박스를 낸다. NIH·PadChest 의사 박스는 심장 전체를 감싸서
+# 높이가 약 2배다(중앙값 NIH 2.02, PadChest 1.86). 위아래로 똑같이 늘리면 횡격막 아래로 삐져나가서 위로만 늘린다.
+# 값은 NIH 로 고르고 PadChest-GR 로 확인했다(2026-11-05, 노트북 15 칸 48):
+# 의사 박스와 절반 이상 겹친 사진 NIH 23% -> 80%, PadChest 32% -> 69%.
+BOX_SCALE = {"cardiomegaly": (1.3, 1.8, 1.0)}
+
+
+def _scale_box(box, kx: float = 1.0, ky: float = 1.0, up: float = 0.5):
+    if kx == 1.0 and ky == 1.0:
+        return box
+    x1, y1, x2, y2 = box
+    cx, hw, add = (x1 + x2) / 2, (x2 - x1) * kx / 2, (y2 - y1) * (ky - 1)
+    return cx - hw, y1 - add * up, cx + hw, y2 + add * (1 - up)
+
 
 def _overlaps(a, b) -> bool:
     return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
@@ -72,6 +91,85 @@ def merge_regions(boxes: list[tuple[tuple[int, int, int, int], float]]) -> list[
     return regions[:MAX_REGIONS_PER_FINDING]
 
 
+# 겹쳐 칠하기 설정. 값은 흉부 공통 시험 NIH 폐음영으로 정했고 PadChest-GR 로 확인만 했다
+HEAT_FINDINGS = {"airspace_opacity"}
+HEAT_GRID = 256        # 계산용 격자: 긴 변을 256칸으로 줄여서 칠한다
+HEAT_BLUR = 0.02       # 번지게 하는 정도 (격자 긴 변 대비)
+HEAT_KEEP = 0.5        # 가장 진한 곳의 50% 이상만 영역으로 남긴다
+
+
+def heat_regions(
+    boxes: list[tuple[tuple[int, int, int, int], float]], w: int, h: int
+) -> tuple[np.ndarray, list[tuple[tuple[int, int, int, int], float]]]:
+    """
+    박스를 신뢰도만큼 겹쳐 칠하고, 진한 곳만 남겨 영역을 만든다.
+
+    여러 박스가 겹친 곳일수록 진해지므로, 감싸 합칠 때처럼 바깥 박스 때문에 영역이 커지지 않는다.
+    영역마다 감싸는 박스와 그 안 박스의 최고 신뢰도를 돌려준다 (점수 높은 MAX_REGIONS_PER_FINDING 곳).
+
+    Returns:
+        mask (h, w) bool, [((x1, y1, x2, y2), conf), ...]
+    """
+    s = min(1.0, HEAT_GRID / max(w, h))    # 작은 이미지는 키우지 않는다(좌표가 반올림으로 밀리지 않게)
+    gw, gh = max(1, math.ceil(w * s)), max(1, math.ceil(h * s))
+    heat = np.zeros((gh, gw), dtype=np.float32)
+    cells = []
+    for (x1, y1, x2, y2), conf in boxes:
+        c = (round(x1 * s), round(y1 * s), max(round(x2 * s), round(x1 * s) + 1), max(round(y2 * s), round(y1 * s) + 1))
+        heat[c[1]:c[3], c[0]:c[2]] += conf
+        cells.append((c, conf))
+    if heat.max() <= 0:
+        return np.zeros((h, w), dtype=bool), []
+    heat = cv2.GaussianBlur(heat, (0, 0), HEAT_GRID * HEAT_BLUR)
+    small = (heat >= HEAT_KEEP * heat.max()).astype(np.uint8)
+    n, labels = cv2.connectedComponents(small, connectivity=8)
+    found = []
+    for i in range(1, n):
+        part = labels == i
+        conf = max((cf for (x1, y1, x2, y2), cf in cells if part[y1:y2, x1:x2].any()), default=0.0)
+        found.append((conf, i))
+    found.sort(reverse=True)
+    keep = [i for _, i in found[:MAX_REGIONS_PER_FINDING]]
+    big = cv2.resize(labels.astype(np.int32).astype(np.float32), (w, h), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+    mask = np.isin(big, keep)
+    regions = []
+    for conf, i in found[:MAX_REGIONS_PER_FINDING]:
+        ys, xs = np.nonzero(big == i)
+        if len(xs):
+            regions.append(((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1), float(conf)))
+    return mask, regions
+
+
+def shape_regions(
+    shapes: list[tuple[list, float]], w: int, h: int
+) -> tuple[np.ndarray, list[tuple[tuple[int, int, int, int], float]]]:
+    """
+    모양(segmentation) 모델이 준 병변 윤곽을 그대로 칠한다.
+
+    이어진 덩어리마다 감싸는 박스와 그 안 윤곽의 최고 신뢰도를 돌려준다 (점수 높은 MAX_REGIONS_PER_FINDING 곳).
+    기흉처럼 얇은 띠 모양 소견은 네모로 칠하면 대부분 정상 폐를 덮는다(SIIM 시험: 박스 3.2배 넓음, 모양 0.96배).
+    """
+    canvas = np.zeros((h, w), dtype=np.uint8)
+    pieces = []
+    for poly, conf in shapes:
+        one = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(one, [np.round(np.asarray(poly, dtype=np.float32)).astype(np.int32)], 1)
+        canvas |= one
+        pieces.append((one.astype(bool), conf))
+    n, labels = cv2.connectedComponents(canvas, connectivity=8)
+    found = []
+    for i in range(1, n):
+        part = labels == i
+        found.append((max((c for m, c in pieces if (m & part).any()), default=0.0), i))
+    found.sort(reverse=True)
+    mask = np.isin(labels, [i for _, i in found[:MAX_REGIONS_PER_FINDING]])
+    regions = []
+    for conf, i in found[:MAX_REGIONS_PER_FINDING]:
+        ys, xs = np.nonzero(labels == i)
+        regions.append(((int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1), float(conf)))
+    return mask, regions
+
+
 def locate_abnormality(
     detections: list[Detection],
     img_uint8: np.ndarray,
@@ -84,15 +182,31 @@ def locate_abnormality(
     """
     h, w = img_uint8.shape[:2]
     raw: dict[str, list] = {}
+    shapes: dict[str, list] = {}
     for det in detections:
-        box = _clip_box(det.box, w, h)
+        if det.polygon:     # 모양 모델: 윤곽을 그대로 쓴다
+            shapes.setdefault(det.finding, []).append((det.polygon, det.confidence))
+            continue
+        box = _clip_box(_scale_box(det.box, *BOX_SCALE.get(det.finding, ())), w, h)
         if box is not None:
             raw.setdefault(det.finding, []).append((box, det.confidence))
 
     per_class: dict = {}
     mask_union = np.zeros((h, w), dtype=bool)
     # 채점 마스크도 화면에 보이는 정리된 영역으로 만든다 (안 보이는 박스로 정답이 되지 않게)
+    for finding, polys in shapes.items():
+        mask, regions = shape_regions(polys, w, h)
+        per_class[finding] = {"prob": max((c for _, c in regions), default=0.0), "mask": mask, "boxes": regions, "shape": True}
+        mask_union |= mask
     for finding, boxes in raw.items():
+        if finding in per_class:
+            continue        # 같은 소견에 모양이 있으면 모양을 쓴다
+        if finding in HEAT_FINDINGS:
+            mask, regions = heat_regions(boxes, w, h)
+            info = {"prob": max((c for _, c in regions), default=0.0), "mask": mask, "boxes": regions, "heat": True}
+            mask_union |= info["mask"]
+            per_class[finding] = info
+            continue
         info = {"prob": 0.0, "mask": np.zeros((h, w), dtype=bool), "boxes": merge_regions(boxes)}
         for (x1, y1, x2, y2), conf in info["boxes"]:
             info["mask"][y1:y2, x1:x2] = True
@@ -113,15 +227,23 @@ def build_overlay_image(img_uint8: np.ndarray, per_class: dict) -> np.ndarray:
         m = info["mask"]
         for c in range(3):
             overlay[m, c] = overlay[m, c] * 0.65 + color[c] * 0.35
+    width = max(2, round(min(img_uint8.shape[:2]) / 300))
+    for name, info in per_class.items():
+        if (info.get("heat") or info.get("shape")) and not info.get("outline_only"):
+            # 겹쳐 칠하기·모양 모델은 네모 대신 칠한 영역의 윤곽선을 그린다
+            color = CLASS_COLORS.get(name, (1.0, 0.0, 0.0))
+            m = info["mask"].astype(np.uint8)
+            edge = (m - cv2.erode(m, np.ones((3, 3), np.uint8), iterations=width)).astype(bool)
+            overlay[edge] = color
     img = Image.fromarray((np.clip(overlay, 0, 1) * 255).astype(np.uint8))
     draw = ImageDraw.Draw(img)
-    width = max(2, round(min(img.size) / 300))
     font = _label_font(max(12, round(min(img.size) / 40)))
     for name, info in per_class.items():
         rgb = tuple(int(v * 255) for v in CLASS_COLORS.get(name, (1.0, 0.0, 0.0)))
         label = BOX_LABELS.get(name)
         for (x1, y1, x2, y2), conf in info["boxes"]:
-            draw.rectangle([x1, y1, x2 - 1, y2 - 1], outline=rgb, width=width)
+            if not (info.get("heat") or info.get("shape")):
+                draw.rectangle([x1, y1, x2 - 1, y2 - 1], outline=rgb, width=width)
             if label:    # 어느 박스가 무슨 소견이고 점수가 얼마인지 박스 위에 적는다
                 text = f"{label} {conf:.2f}"
                 left, top, right, bottom = draw.textbbox((0, 0), text, font=font)

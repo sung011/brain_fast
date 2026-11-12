@@ -182,19 +182,139 @@ def test_summary_lists_each_box_by_confidence():
 
 
 def test_overlapping_boxes_merge_and_only_top_regions_remain():
-    """같은 자리에 겹친 박스는 하나로, 소견마다 점수 높은 2곳만 남는다."""
+    """같은 자리에 겹친 박스는 하나로, 소견마다 점수 높은 2곳만 남는다 (폐음영 외 소견)."""
     img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
-    dets = [thorax.Detection("airspace_opacity", 0.27, (10, 40, 60, 120)),
-            thorax.Detection("airspace_opacity", 0.19, (20, 50, 70, 130)),   # 위와 겹침
-            thorax.Detection("airspace_opacity", 0.11, (65, 125, 80, 140)),  # 바로 위 박스와 겹침 → 한 덩어리
-            thorax.Detection("airspace_opacity", 0.05, (130, 90, 180, 140)),
-            thorax.Detection("airspace_opacity", 0.03, (150, 10, 170, 30))]  # 3번째 영역 → 버림
+    dets = [thorax.Detection("pleural_effusion", 0.27, (10, 40, 60, 120)),
+            thorax.Detection("pleural_effusion", 0.19, (20, 50, 70, 130)),   # 위와 겹침
+            thorax.Detection("pleural_effusion", 0.11, (65, 125, 80, 140)),  # 바로 위 박스와 겹침 → 한 덩어리
+            thorax.Detection("pleural_effusion", 0.05, (130, 90, 180, 140)),
+            thorax.Detection("pleural_effusion", 0.03, (150, 10, 170, 30))]  # 3번째 영역 → 버림
     mask, per_class = thorax.Localization.locate_abnormality(dets, img)
-    assert per_class["airspace_opacity"]["boxes"] == [((10, 40, 80, 140), 0.27), ((130, 90, 180, 140), 0.05)]
+    assert per_class["pleural_effusion"]["boxes"] == [((10, 40, 80, 140), 0.27), ((130, 90, 180, 140), 0.05)]
     assert not mask[20, 160]                       # 버린 박스는 채점에도 안 쓴다
     assert mask[135, 12]                           # 합친 박스가 감싸는 자리
-    summary = thorax.Localization.summarize_targets(per_class, classes=["airspace_opacity"])
+    summary = thorax.Localization.summarize_targets(per_class, classes=["pleural_effusion"])
     assert summary.count(",") == 1
+
+
+def test_shape_model_paints_the_outline_not_a_box():
+    """모양 모델(기흉)은 윤곽 그대로 칠한다. 감싼 박스보다 작고, 화면에는 네모 대신 윤곽선을 그린다."""
+    img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    band = [(20, 20), (60, 20), (40, 120), (25, 120)]       # 폐 가장자리 띠 모양
+    dets = [thorax.Detection("pneumothorax", 0.4, (20, 20, 60, 120), band)]
+    mask, per_class = thorax.Localization.locate_abnormality(dets, img)
+    info = per_class["pneumothorax"]
+    assert info["shape"] and info["boxes"][0][1] == 0.4
+    x1, y1, x2, y2 = info["boxes"][0][0]
+    assert (x1, y1) == (20, 20) and x2 <= 61 and y2 <= 121
+    assert mask.sum() < (60 - 20) * (120 - 20)                 # 감싼 박스보다 작다
+    assert mask[30, 35] and not mask[115, 55]                  # 띠 안 / 박스 안이지만 띠 밖
+    out = thorax.Localization.build_overlay_image(img, per_class)
+    assert out.shape == (SIZE, SIZE, 3) and out.any()
+
+
+def test_segment_package_returns_polygons():
+    """inference_config 의 task 가 segment 이면 탐지 결과에 윤곽 점이 같이 온다."""
+    class _Masks:
+        xy = [np.array([[10, 10], [50, 10], [30, 90]], dtype=np.float32)]
+
+    class _SegPredictor:
+        def predict(self, img, **kwargs):
+            return [type("Result", (), {"boxes": _Boxes([((10, 10, 50, 90), 0.5, 0)]), "masks": _Masks()})()]
+
+    model = thorax.FindingModel("ptx_seg", {"class_names": {"0": "pneumothorax"}, "image_size": 1024,
+                                            "confidence_threshold": 0.15, "task": "segment"}, _SegPredictor())
+    dets = model.detect(np.zeros((SIZE, SIZE, 3), dtype=np.uint8))
+    assert len(dets) == 1 and dets[0].finding == "pneumothorax"
+    assert dets[0].polygon == [(10.0, 10.0), (50.0, 10.0), (30.0, 90.0)]
+    box_only = thorax.FindingModel("ptx_box", {"class_names": {"0": "pneumothorax"}}, _SegPredictor())
+    assert box_only.detect(np.zeros((SIZE, SIZE, 3), dtype=np.uint8))[0].polygon is None   # task 가 없으면 박스만
+
+
+def test_cardiomegaly_box_is_grown_to_whole_heart():
+    """심비대 박스는 가로 1.3배, 세로 1.8배로 넓히되 위로만 늘린다 (아랫변은 그대로, 사진 밖으로는 안 나간다)."""
+    img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    dets = [thorax.Detection("cardiomegaly", 0.6, (60, 100, 140, 140))]
+    mask, per_class = thorax.Localization.locate_abnormality(dets, img)
+    assert per_class["cardiomegaly"]["boxes"] == [((48, 68, 152, 140), 0.6)]
+    edge = [thorax.Detection("cardiomegaly", 0.6, (60, 10, 140, 50))]
+    _, per_edge = thorax.Localization.locate_abnormality(edge, img)
+    assert per_edge["cardiomegaly"]["boxes"][0][0][1] == 0
+
+
+class _HeartLungPredictor:
+    """심장·왼폐·오른폐 윤곽을 돌려주는 가짜 윤곽 모델. heart_w 로 심장 폭을 바꾼다 (폐 바깥 끝 사이는 160px)."""
+
+    def __init__(self, heart_w):
+        h0 = 100 - heart_w / 2
+        self.polys = [np.array([[h0, 110], [h0 + heart_w, 110], [h0 + heart_w, 160], [h0, 160]], dtype=np.float32),  # 0 heart
+                      np.array([[110, 30], [180, 30], [180, 170], [110, 170]], dtype=np.float32),                     # 1 left_lung
+                      np.array([[20, 30], [90, 30], [90, 170], [20, 170]], dtype=np.float32)]                         # 2 right_lung
+
+    def predict(self, img, **kwargs):
+        rows = [((float(p[:, 0].min()), float(p[:, 1].min()), float(p[:, 0].max()), float(p[:, 1].max())), 0.9, i)
+                for i, p in enumerate(self.polys)]
+        return [type("Result", (), {"boxes": _Boxes(rows), "masks": type("M", (), {"xy": self.polys})()})()]
+
+
+def _ratio_model(heart_w):
+    settings = {"role": "cardiomegaly_ratio", "task": "segment", "input_image_size": 512,
+                "class_names": {"0": "heart", "1": "left_lung", "2": "right_lung"},
+                "cardiomegaly_rule": {"threshold": 0.6, "ctr_fill": 0.5, "detector_min_confidence": 0.001,
+                                      "reference_detector_scores": [0.01, 0.05, 0.1, 0.3, 0.6, 0.9],
+                                      "reference_ctr": [0.40, 0.44, 0.48, 0.52, 0.56, 0.60]}}
+    return thorax.ensemble.CardiacRatioModel("heartlung", settings, _HeartLungPredictor(heart_w))
+
+
+def test_ratio_model_measures_heart_over_chest_width():
+    """심흉비 = 심장 폭 ÷ 양폐 바깥 끝 사이 폭. 점수는 두 값의 기준 백분위 평균."""
+    model = _ratio_model(96)
+    ctr, heart = model.measure(np.zeros((SIZE, SIZE, 3), dtype=np.uint8))
+    assert ctr == pytest.approx(96 / 160) and len(heart) == 4
+    assert model.score(0.9, 0.60) == 1.0 and model.score(0.0, 0.30) == 0.0
+    assert model.score(0.0, None) == pytest.approx((0 + 3 / 6) / 2)       # 못 재면 ctr_fill(0.5)
+
+
+def test_cardiomegaly_is_judged_with_heart_ratio():
+    """윤곽 모델이 있으면 심비대는 박스 점수 + 심흉비로 판정하고, 화면에는 심장 윤곽을 칠한다. 다른 소견은 그대로."""
+    cardio = thorax.FindingModel("cardio", {"class_names": {"0": "cardiomegaly"}, "confidence_threshold": 0.35},
+                                 FakePredictor([((60, 100, 140, 140), 0.3, 0)]))
+    opacity = fake_models(opacity_rows=[((20, 20, 80, 80), 0.42, 0)])[0]
+    big = thorax.ThoraxDetector()
+    big.use_models([opacity, cardio], ratio_model=_ratio_model(96))         # 심흉비 0.6
+    assert cardio.confidence == 0.001                                        # 낮은 박스 점수도 받는다
+    img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    dets = big.detect(img)
+    heart = [d for d in dets if d.finding == "cardiomegaly"]
+    assert len(heart) == 1 and heart[0].polygon is not None                 # 박스 0.3 이지만 심장이 커서 심비대
+    assert heart[0].box == (52.0, 110.0, 148.0, 160.0)
+    assert any(d.finding == "airspace_opacity" for d in dets)
+    _, per_class = thorax.Localization.locate_abnormality(dets, img)
+    assert per_class["cardiomegaly"]["shape"]                                # 넓히지 않고 심장 윤곽 그대로
+    small = thorax.ThoraxDetector()
+    small.use_models([fake_models()[0], thorax.FindingModel(
+        "cardio", {"class_names": {"0": "cardiomegaly"}, "confidence_threshold": 0.35},
+        FakePredictor([((60, 100, 140, 140), 0.3, 0)]))], ratio_model=_ratio_model(64))   # 심흉비 0.4
+    assert not [d for d in small.detect(img) if d.finding == "cardiomegaly"]
+
+
+def test_opacity_is_painted_where_boxes_overlap_not_wrapped():
+    """폐음영은 감싸 합치지 않고 겹쳐 칠한다. 박스가 겹친 가운데만 남아 감싼 박스보다 작다."""
+    img = np.zeros((SIZE, SIZE, 3), dtype=np.uint8)
+    dets = [thorax.Detection("airspace_opacity", 0.27, (10, 40, 60, 120)),
+            thorax.Detection("airspace_opacity", 0.19, (20, 50, 70, 130)),
+            thorax.Detection("airspace_opacity", 0.05, (130, 90, 180, 140))]  # 약하고 떨어진 박스: 가장 진한 곳의 절반 미만
+    mask, per_class = thorax.Localization.locate_abnormality(dets, img)
+    info = per_class["airspace_opacity"]
+    assert info["heat"] and len(info["boxes"]) == 1
+    (x1, y1, x2, y2), conf = info["boxes"][0]
+    assert conf == 0.27
+    assert 10 <= x1 and 40 <= y1 and x2 <= 70 and y2 <= 130   # 감싼 박스 (10, 40, 70, 130) 안
+    assert mask.sum() < (70 - 10) * (130 - 40)                 # 감싼 박스보다 작다
+    assert mask[85, 40]                                        # 두 박스가 겹친 가운데
+    assert not mask[128, 12] and not mask[115, 175]            # 감싼 모서리, 약한 박스 자리
+    out = thorax.Localization.build_overlay_image(img, per_class)
+    assert out.shape == (SIZE, SIZE, 3) and out.any()          # 네모 대신 윤곽선을 그린다
 
 
 def test_small_boxes_are_dropped_by_minimum_area_ratio():
@@ -323,7 +443,10 @@ def test_without_answer_boxes_ai_is_the_target(detector):
     assert result["ai_targets"] == []     # AI 가 기준이면 따로 참고로 덧그릴 게 없다
     text = result["metrics_text"]    # 기준이 AI 면 "정답 부위"라고 쓰지 않는다
     assert "AI가 찾은 부위" in text and "정답 부위" not in text
-    assert "내 영역 중 100%" in text   # 내 박스는 AI 박스 안에 있다(AI 박스가 둘이라 덮은 비율은 100%보다 작다)
+    # 내 박스는 AI 폐음영 자리에 있다(AI 박스가 둘이라 덮은 비율은 100%보다 작다).
+    # 폐음영은 겹쳐 칠해 모서리가 둥글어서, 박스 모양 그대로 그려도 100%가 아니라 95% 이상이다
+    import re
+    assert int(re.search(r"내 영역 중 (\d+)%", text).group(1)) >= 95
 
 
 def test_metrics_text_only_states_numbers():

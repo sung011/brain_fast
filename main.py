@@ -34,7 +34,8 @@ from exception_handlers import (
     validation_exception_handler,
 )
 from logging_setup import purge_old_log_folders, setup_logging
-from routers import admin, commonness, brain, brain_mri, knee, kneeLearning, kneeScreenAnalysis, user, account, thorax, bodyPart, rag
+from routers import admin, commonness, brain, brain_mri, knee, kneeLearning, kneeScreenAnalysis, user, account, thorax, rag
+from routers import bodyPart
 
 # 오래된 로그를 얼마나 자주 검사할지 (초 단위). 3600초 = 1시간.
 CLEANUP_INTERVAL_SECONDS = 60 * 60
