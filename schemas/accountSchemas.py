@@ -1,7 +1,13 @@
-"""학습자 계정찾기 입력값. 기존 회원 스키마와 분리한다."""
+"""학습자 계정찾기 입력값. 기존 회원 스키마와 분리한다.
+
+비밀번호 찾기(verify·reset)는 복구 B안: 신원(아이디·이름·생년월일) + 질문 답 3개(answers)가 모두 필요하다.
+답 없이 신원 3항목만 보내면 422 다(약한 fallback 없음). 아이디 찾기(FindId)는 그대로다.
+"""
 from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from schemas.accountRecoverySchemas import RecoveryAnswers
 
 
 class FindId(BaseModel):
@@ -28,7 +34,10 @@ class FindId(BaseModel):
 
 
 class VerifyAccount(FindId):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     user_id: str = Field(min_length=1, max_length=30)
+    answers: RecoveryAnswers
 
     @field_validator("user_id", mode="before")
     @classmethod

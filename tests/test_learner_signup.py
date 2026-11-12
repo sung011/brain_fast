@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
     HAVE_DB_TOOLS = False
 
 PASSWORD = "synthetic-pass-1234"
+ANSWERS = [{"question_id": "Q01", "answer": "합성 초등학교"}, {"question_id": "Q02", "answer": "합성별명"}, {"question_id": "Q03", "answer": "합성동"}]
 
 
 class LearnerSignupSchemaTests(unittest.TestCase):
@@ -37,6 +38,7 @@ class LearnerSignupSchemaTests(unittest.TestCase):
             user_birth="20000131",
             user_un="합성대학교",
             user_sp="방사선학과",
+            recovery_answers=ANSWERS,
         )
         self.assertEqual(body.user_birth, "2000-01-31")
         short = LearnerSignup(
@@ -46,6 +48,7 @@ class LearnerSignupSchemaTests(unittest.TestCase):
             user_birth="880324",
             user_un="합성대학교",
             user_sp="방사선학과",
+            recovery_answers=ANSWERS,
         )
         self.assertEqual(short.user_birth, "1988-03-24")
         self.assertEqual(body.user_un, "합성대학교")
@@ -61,6 +64,7 @@ class LearnerSignupSchemaTests(unittest.TestCase):
                 user_birth=today,
                 user_un="학교",
                 user_sp="전공",
+                recovery_answers=ANSWERS,
             )
         with self.assertRaises(ValidationError):
             LearnerSignup(
@@ -70,6 +74,7 @@ class LearnerSignupSchemaTests(unittest.TestCase):
                 user_birth="2999-01-01",
                 user_un="학교",
                 user_sp="전공",
+                recovery_answers=ANSWERS,
             )
 
     def test_bad_birth_is_422_without_a_server_error(self) -> None:
@@ -108,6 +113,8 @@ class LearnerSignupApiTests(unittest.TestCase):
         from knee_screen_harness import Harness
 
         cls.h = Harness()
+        from models.userRecoveryAnswerModel import UserRecoveryAnswerModel
+        UserRecoveryAnswerModel.__table__.create(cls.h.engine)   # 하네스는 회원·문제·제출 테이블만 만든다
         app = FastAPI()
         app.include_router(user.router)
         app.include_router(commonness.router)
@@ -133,6 +140,7 @@ class LearnerSignupApiTests(unittest.TestCase):
                 "user_birth": "2000-05-05",
                 "user_un": "합성대학교",
                 "user_sp": "의학과",
+                "recovery_answers": ANSWERS,
             },
         )
         self.assertEqual(created.status_code, 200, created.text)
@@ -151,6 +159,7 @@ class LearnerSignupApiTests(unittest.TestCase):
                 "user_birth": "2000-05-05",
                 "user_un": "합성대학교",
                 "user_sp": "의학과",
+                "recovery_answers": ANSWERS,
             },
         )
         self.assertEqual(again.status_code, 409)

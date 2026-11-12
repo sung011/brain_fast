@@ -1,6 +1,9 @@
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic_core import PydanticCustomError
+
+from schemas.accountRecoverySchemas import RecoveryAnswers
 
 
 class UserLogin(BaseModel):
@@ -19,9 +22,12 @@ def _yy_to_year(yy: int) -> int:
 
 class LearnerSignup(BaseModel):
     """
-    학습자 회원가입 POST /signup 요청.
-    관리자 세션이 필요 없다. 학교·전공·생년월일을 함께 받는다.
+    학습자 회원가입 POST /signup 요청 (복구 B안: 비밀번호 찾기 질문 답 3개 필수).
+    관리자 세션이 필요 없다. 학교·전공·생년월일과 질문 답(recovery_answers)을 함께 받는다.
+    알 수 없는 필드는 422(extra=forbid). 오류 종류는 서버가 정한 이름(PydanticCustomError)만 쓴다.
     """
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     user_id: str
     user_pw: str
@@ -29,6 +35,7 @@ class LearnerSignup(BaseModel):
     user_birth: str
     user_un: str
     user_sp: str
+    recovery_answers: RecoveryAnswers
 
     @field_validator("user_id", "user_name", "user_un", "user_sp", mode="before")
     @classmethod
@@ -39,32 +46,36 @@ class LearnerSignup(BaseModel):
     @classmethod
     def check_id(cls, value: str) -> str:
         if not value:
-            raise ValueError("아이디를 입력해 주세요.")
+            raise PydanticCustomError("signup_empty", "아이디를 입력해 주세요.")
         if len(value) > 30:
-            raise ValueError("아이디는 30자 이내로 입력해 주세요.")
+            raise PydanticCustomError("signup_too_long", "아이디는 30자 이내로 입력해 주세요.")
         return value
 
     @field_validator("user_name")
     @classmethod
     def check_name(cls, value: str) -> str:
-        if not value or len(value) > 10:
-            raise ValueError("이름은 1~10자로 입력해 주세요.")
+        if not value:
+            raise PydanticCustomError("signup_empty", "이름은 1~10자로 입력해 주세요.")
+        if len(value) > 10:
+            raise PydanticCustomError("signup_too_long", "이름은 1~10자로 입력해 주세요.")
         return value
 
     @field_validator("user_un", "user_sp")
     @classmethod
     def check_school_major(cls, value: str) -> str:
-        if not value or len(value) > 20:
-            raise ValueError("학교와 전공은 1~20자로 입력해 주세요.")
+        if not value:
+            raise PydanticCustomError("signup_empty", "학교와 전공은 1~20자로 입력해 주세요.")
+        if len(value) > 20:
+            raise PydanticCustomError("signup_too_long", "학교와 전공은 1~20자로 입력해 주세요.")
         return value
 
     @field_validator("user_pw")
     @classmethod
     def password_bytes(cls, value: str) -> str:
         if len(value) < 4:
-            raise ValueError("비밀번호는 4자 이상이어야 합니다.")
+            raise PydanticCustomError("signup_too_short", "비밀번호는 4자 이상이어야 합니다.")
         if len(value.encode("utf-8")) > 72:
-            raise ValueError("비밀번호는 UTF-8 기준 72바이트 이내로 입력해 주세요.")
+            raise PydanticCustomError("signup_too_long", "비밀번호는 UTF-8 기준 72바이트 이내로 입력해 주세요.")
         return value
 
     @field_validator("user_birth", mode="before")
@@ -86,14 +97,14 @@ class LearnerSignup(BaseModel):
     def validate_birth(cls, value: str) -> str:
         try:
             birth = date.fromisoformat(value)
-        except ValueError as exc:
-            raise ValueError("올바른 생년월일을 입력해 주세요. 예: 2000-01-01") from exc
+        except ValueError:
+            raise PydanticCustomError("birth_invalid", "올바른 생년월일을 입력해 주세요. 예: 2000-01-01") from None
         today = date.today()
         if birth > today:
-            raise ValueError("생년월일은 오늘 이전 날짜로 입력해 주세요.")
+            raise PydanticCustomError("birth_future", "생년월일은 오늘 이전 날짜로 입력해 주세요.")
         age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
         if age < 14:
-            raise ValueError("만 14세 이상 가입할 수 있습니다.")
+            raise PydanticCustomError("birth_under_age", "만 14세 이상 가입할 수 있습니다.")
         return value
 
 

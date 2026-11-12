@@ -1,4 +1,7 @@
-"""실제 임시 DB로 계정찾기·탈퇴 회원 제외·해시 저장·로그인을 검증한다."""
+"""실제 임시 DB로 계정찾기·탈퇴 회원 제외·해시 저장·로그인을 검증한다(복구 B안: 신원 + 질문 답 3개).
+
+행 잠금·경합·비반사·유지보수 차단 같은 B안 세부 시험은 tests/test_account_recovery_questions.py(임시 PostgreSQL)에 있다.
+"""
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,27 +11,48 @@ from sqlalchemy.pool import StaticPool
 
 from db import get_db
 from models.userModel import UserModel
+from models.userRecoveryAnswerModel import UserRecoveryAnswerModel
 from routers.account import router
 from services import accountServices
+from services.accountRecoveryServices import hash_answers
 from schemas.userSchemas import UserLogin
 from services.userServices import login
 from utils.password import hash_password, verify_password
 
 
 IDENTITY = {"user_id": "learner", "user_name": "테스트", "user_birth": "2000-01-02"}
+ANSWERS = [
+    {"question_id": "Q01", "answer": "합성 초등학교"},
+    {"question_id": "Q02", "answer": "합성별명"},
+    {"question_id": "Q03", "answer": "합성동"},
+]
+VERIFY = dict(IDENTITY, answers=ANSWERS)
+
+
+@pytest.fixture(scope="module")
+def answer_hashes():
+    return hash_answers({"Q01": "합성 초등학교", "Q02": "합성별명", "Q03": "합성동"})
 
 
 @pytest.fixture
-def recovery():
+def recovery(answer_hashes):
     accountServices.ip_limiter.reset()
     accountServices.identity_limiter.reset()
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     UserModel.__table__.create(engine)
+    UserRecoveryAnswerModel.__table__.create(engine)
     with Session(engine) as db:
         for idx, user_id, deleted in [(1, "learner", "N"), (2, "deleted", "Y")]:
             db.add(UserModel(idx=idx, user_id=user_id, user_name="테스트", user_birth="2000-01-02",
                              user_pw=hash_password("before-change"), user_un="학교", user_sp="전공",
                              del_yn=deleted, state="N", mb_level=1))
+        db.flush()
+        n = 1
+        for user_idx in (1, 2):
+            for qid, h in answer_hashes.items():
+                db.add(UserRecoveryAnswerModel(idx=n, ura_u_idx=user_idx, ura_question_id=qid, ura_answer_hash=h,
+                                               ura_question_set="security_questions_v1", ura_norm_version="answer_norm_v1"))
+                n += 1
         db.commit()
     app = FastAPI()
     app.include_router(router)
@@ -72,16 +96,25 @@ def test_same_name_and_birth_can_return_multiple_ids(recovery):
                                          ("user_birth", "2000-01-03"), ("user_id", "deleted")])
 def test_identity_must_match_all_fields(recovery, field, value):
     client, _ = recovery
-    body = dict(IDENTITY, **{field: value})
+    body = dict(VERIFY, **{field: value})
     assert client.post("/find-pw/verify", json=body).status_code == 404
     response = client.post("/find-pw", json=dict(body, user_pw="after-change", user_pw_confirm="after-change"))
     assert response.status_code == 404
 
 
+def test_identity_only_old_contract_is_rejected_without_change(recovery):
+    # 옛 3항목(아이디·이름·생년월일)만으로는 확인·변경할 수 없다(약한 fallback 없음).
+    client, engine = recovery
+    assert client.post("/find-pw/verify", json=IDENTITY).status_code == 422
+    assert client.post("/find-pw", json=dict(IDENTITY, user_pw="after-change", user_pw_confirm="after-change")).status_code == 422
+    with Session(engine) as db:
+        assert verify_password("before-change", db.get(UserModel, 1).user_pw)
+
+
 def test_reset_hashes_password_and_existing_login_accepts_it(recovery):
     client, engine = recovery
-    assert client.post("/find-pw/verify", json=IDENTITY).json() == {"ok": True}
-    response = client.post("/find-pw", json=dict(IDENTITY, user_pw="after-change", user_pw_confirm="after-change"))
+    assert client.post("/find-pw/verify", json=VERIFY).json() == {"ok": True}
+    response = client.post("/find-pw", json=dict(VERIFY, user_pw="after-change", user_pw_confirm="after-change"))
     assert response.status_code == 200
     assert "after-change" not in response.text
     with Session(engine) as db:
@@ -95,16 +128,16 @@ def test_reset_hashes_password_and_existing_login_accepts_it(recovery):
 
 def test_reset_rechecks_identity_if_account_deleted_after_verification(recovery):
     client, engine = recovery
-    assert client.post("/find-pw/verify", json=IDENTITY).status_code == 200
+    assert client.post("/find-pw/verify", json=VERIFY).status_code == 200
     with Session(engine) as db:
         db.get(UserModel, 1).del_yn = "Y"
         db.commit()
-    assert client.post("/find-pw", json=dict(IDENTITY, user_pw="changed", user_pw_confirm="changed")).status_code == 404
+    assert client.post("/find-pw", json=dict(VERIFY, user_pw="changed", user_pw_confirm="changed")).status_code == 404
 
 
 def test_password_mismatch_does_not_change_database(recovery):
     client, engine = recovery
-    response = client.post("/find-pw", json=dict(IDENTITY, user_pw="changed", user_pw_confirm="different"))
+    response = client.post("/find-pw", json=dict(VERIFY, user_pw="changed", user_pw_confirm="different"))
     assert response.status_code == 400
     with Session(engine) as db:
         assert verify_password("before-change", db.get(UserModel, 1).user_pw)
@@ -119,7 +152,7 @@ def test_invalid_birth_rejected(recovery, birth):
 def test_validation_never_echoes_password(recovery, caplog):
     client, _ = recovery
     secret = "민감비밀번호" * 20
-    response = client.post("/find-pw", json=dict(IDENTITY, user_pw=secret, user_pw_confirm=secret))
+    response = client.post("/find-pw", json=dict(VERIFY, user_pw=secret, user_pw_confirm=secret))
     assert response.status_code == 422
     assert secret not in response.text
     assert secret not in caplog.text
@@ -128,7 +161,7 @@ def test_validation_never_echoes_password(recovery, caplog):
 def test_password_whitespace_is_preserved(recovery):
     client, engine = recovery
     password = "  spaced password  "
-    assert client.post("/find-pw", json=dict(IDENTITY, user_pw=password, user_pw_confirm=password)).status_code == 200
+    assert client.post("/find-pw", json=dict(VERIFY, user_pw=password, user_pw_confirm=password)).status_code == 200
     with Session(engine) as db:
         assert verify_password(password, db.get(UserModel, 1).user_pw)
         assert not verify_password(password.strip(), db.get(UserModel, 1).user_pw)
@@ -155,14 +188,14 @@ def test_find_id_never_returns_full_email(recovery):
 
 def test_identity_attempts_are_limited(recovery):
     client, _ = recovery
-    wrong = dict(IDENTITY, user_name="다른이름")
+    wrong = dict(VERIFY, user_name="다른이름")
     for _ in range(accountServices.identity_limiter.max_attempts):
         assert client.post("/find-pw/verify", json=wrong).status_code == 404
     # 제한에 걸리면 정답을 넣어도 막고, 비밀번호 변경도 막는다.
-    response = client.post("/find-pw/verify", json=IDENTITY)
+    response = client.post("/find-pw/verify", json=VERIFY)
     assert response.status_code == 429
     assert response.json()["ok"] is False
-    response = client.post("/find-pw", json=dict(IDENTITY, user_pw="changed", user_pw_confirm="changed"))
+    response = client.post("/find-pw", json=dict(VERIFY, user_pw="changed", user_pw_confirm="changed"))
     assert response.status_code == 429
     # 다른 계정은 영향을 받지 않는다.
     assert client.post("/find-id", json={"user_name": "테스트", "user_birth": "2000-01-02"}).status_code == 200
@@ -171,7 +204,7 @@ def test_identity_attempts_are_limited(recovery):
 def test_ip_attempts_are_limited(recovery):
     client, _ = recovery
     for i in range(accountServices.ip_limiter.max_attempts):
-        client.post("/find-pw/verify", json=dict(IDENTITY, user_id=f"user{i}"))
+        client.post("/find-pw/verify", json=dict(VERIFY, user_id=f"user{i}"))
     assert client.post("/find-id", json={"user_name": "테스트", "user_birth": "2000-01-02"}).status_code == 429
 
 

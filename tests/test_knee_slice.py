@@ -781,7 +781,7 @@ class RouterSlideTests(SyntheticBase):
 
     def setUp(self):
         super().setUp()
-        env = mock.patch.dict(os.environ, {"KNEE_ROI_GRADE_ENABLED": "1", "KNEE_SLICE_READING_ENABLED": "0"})
+        env = mock.patch.dict(os.environ, {"KNEE_ROI_GRADE_ENABLED": "1"})
         env.start()
         self.addCleanup(env.stop)
         app = FastAPI()
@@ -1019,16 +1019,13 @@ class RouterSlideTests(SyntheticBase):
     def test_access_rules_apply_to_slide_studies_too(self):
         self.approve(self.ref)
         token = self.real_token()
-        self.assertNotEqual(self.post({"slice_index": "12", "problem_token": token}).status_code, 401)
+        self.assertEqual(self.post({"slice_index": "12", "problem_token": token}).status_code, 401)        # 로그인 없음
         self.login(verified=False)
-        self.assertNotEqual(self.post({"slice_index": "12", "problem_token": token}).status_code, 403)
-        saved_before = len(self.created)
-        published_before = len(self.published)
+        self.assertEqual(self.post({"slice_index": "12", "problem_token": token}).status_code, 403)        # 이메일 미인증
         with mock.patch.dict(os.environ, {"KNEE_ROI_GRADE_ENABLED": ""}):
             with mock.patch.object(knee_config, "_read_dotenv", lambda key: ""):
                 self.assertEqual(self.post({"slice_index": "12", "problem_token": token}).status_code, 503)
-        self.assertEqual(len(self.created), saved_before)
-        self.assertEqual(len(self.published), published_before)
+        self.assertNothingSaved()
 
     def test_single_image_studies_ignore_the_slide_fields(self):
         self.login()
