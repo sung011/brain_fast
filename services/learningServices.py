@@ -198,10 +198,10 @@ def resolve_roi_grade_slice(
     image_path: str | None = None,
 ) -> dict | None:
     """
-    MRI 슬라이드 문제에서 제출 슬라이스를 고른다.
+    슬라이드 문제(CT·MRI, st_image JSON 배열)에서 제출 슬라이스를 고른다.
 
     - 단일 영상(st_image 경로 1개): None. slice_index·image_path는 무시.
-    - MRI(st_image JSON 배열): slice_index 또는 image_path로 배열 항목을 고른다.
+    - 슬라이드(st_image JSON 배열): slice_index 또는 image_path로 배열 항목을 고른다.
     - 둘 다 없으면 / 범위 밖이면 ValueError.
     """
     if study_idx is None:
@@ -220,7 +220,7 @@ def resolve_roi_grade_slice(
     has_path = path_value is not None
     if not has_index and not has_path:
         raise ValueError(
-            "MRI 슬라이드 문제는 slice_index 또는 image_path가 필요합니다."
+            "슬라이드 문제는 slice_index 또는 image_path가 필요합니다."
         )
 
     resolved_index: int | None = None
@@ -295,7 +295,7 @@ def get_problem(db: Session, study_idx: int) -> StudyModel | None:
 
 
 def problem_image_paths(row: StudyModel) -> list[str]:
-    """study.st_image → 영상 웹 경로 목록. MRI 는 여러 장, 그 밖에는 한 장."""
+    """study.st_image → 영상 웹 경로 목록. 슬라이드(JSON 배열)는 여러 장, 그 밖에는 한 장."""
     paths = parse_study_image_paths(row.st_image)
     if paths:
         return paths

@@ -7,14 +7,7 @@ services:
     env_file:
       - .env
     environment:
-      POSTGRES_DB: mediscan_note
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: "1234"
-      DATABASE_URL: postgresql+psycopg://postgres:1234@db:5432/mediscan_note
       HF_TOKEN: ${HF_TOKEN:-}
-    depends_on:
-      db:
-        condition: service_healthy
     volumes:
       - .:/app
     extra_hosts:
@@ -24,6 +17,7 @@ services:
     command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
   db:
+    profiles: ["local-db"]
     build:
       context: ./docker/postgres
     image: postgres:16

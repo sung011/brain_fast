@@ -61,7 +61,7 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Docker environment 가 .env 의 127.0.0.1 을 덮어쓰게 한다.
+        # 컨테이너에 넘긴 환경 변수가 .env 파일보다 우선한다.
         return (init_settings, env_settings, dotenv_settings, file_secret_settings)
 
 

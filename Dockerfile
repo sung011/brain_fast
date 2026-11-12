@@ -14,10 +14,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# ultralytics가 GUI용 opencv-python을 같이 깐다. slim 이미지에는 libxcb가 없어 서버가 바로 죽는다.
+RUN pip uninstall -y opencv-python \
+    && pip install --no-cache-dir --force-reinstall --no-deps "opencv-python-headless>=4.10.0"
 
-# Docker Desktop Images → Run 해도 compose DB(5433) 또는 맥 Postgres(5432)에 붙게 한다.
-ENV DATABASE_URL=postgresql+psycopg://postgres:1234@host.docker.internal:5433/mediscan_note
+COPY . .
 
 COPY docker/app-entrypoint.sh /usr/local/bin/brain_fast_entrypoint.sh
 RUN chmod +x /usr/local/bin/brain_fast_entrypoint.sh

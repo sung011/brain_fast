@@ -76,8 +76,10 @@
         let selectedFiles = [];
         const previewUrls = new Map();
 
-        function isMri() {
-            return String(form.st_modal && form.st_modal.value || '') === '3';
+        /** CT(2)·MRI(3)만 한 문제 슬라이드 등록 가능. X-ray(1)는 파일마다 문제만. */
+        function canSlideMode() {
+            const modal = String(form.st_modal && form.st_modal.value || '');
+            return modal === '2' || modal === '3';
         }
 
         function uploadMode() {
@@ -86,7 +88,7 @@
         }
 
         function isSlideMode() {
-            return isMri() && uploadMode() === 'slide';
+            return canSlideMode() && uploadMode() === 'slide';
         }
 
         function slideOrder(file) {
@@ -126,10 +128,10 @@
         }
 
         function syncUploadMode() {
-            const mri = isMri();
+            const allowSlide = canSlideMode();
             if (modeWrap) modeWrap.classList.remove('d-none');
-            if (slideOption) slideOption.classList.toggle('d-none', !mri);
-            if (!mri) {
+            if (slideOption) slideOption.classList.toggle('d-none', !allowSlide);
+            if (!allowSlide) {
                 const eachRadio = form.querySelector('#uploadModeEach');
                 if (eachRadio) eachRadio.checked = true;
             }

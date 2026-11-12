@@ -707,18 +707,18 @@ async def _create_slide_study(
         st_disease: str,
         remote_dir: str,
 ) -> StudyBatchCreateResult:
-    """MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다.
+    """CT·MRI 슬라이드: 파일 이름 숫자 순으로 NAS에 올리고 study 1행에 JSON 배열로 저장한다.
 
-    X-ray·CT는 upload_mode=each(파일마다 문제)만 사용한다.
+    X-ray는 upload_mode=each(파일마다 문제)만 사용한다.
     """
     try:
         modal_code = resolve_st_modal(st_modal)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if modal_code != "3":
+    if modal_code not in {"2", "3"}:
         raise HTTPException(
             status_code=400,
-            detail="한 문제의 슬라이드는 영상 종류가 MRI일 때만 등록할 수 있습니다.",
+            detail="한 문제의 슬라이드는 영상 종류가 CT 또는 MRI일 때만 등록할 수 있습니다.",
         )
 
     names = [
@@ -810,13 +810,13 @@ async def study_create(
         ),
         upload_mode: str = Form(
             default="each",
-            description="each: 파일마다 문제(X-ray/CT/MRI), slide: MRI 한 문제 슬라이드(JSON 배열)",
+            description="each: 파일마다 문제(X-ray/CT/MRI), slide: CT·MRI 한 문제 슬라이드(JSON 배열)",
         ),
 ) -> StudyBatchCreateResult:
     """학습 등록: 이미지를 NAS에 올린 뒤 study에 저장한다.
 
     - each(기본): 파일마다 study 1건. X-ray·CT·MRI 동일.
-    - slide: MRI만. 파일들을 한 문제의 슬라이드로 JSON 배열 저장.
+    - slide: CT·MRI. 파일들을 한 문제의 슬라이드로 JSON 배열 저장.
     """
     uploads: list[UploadFile] = []
     if files:
