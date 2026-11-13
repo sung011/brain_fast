@@ -85,19 +85,63 @@ def start_pg():
     server = pgserver.get_server(tmp / "pg", cleanup_mode="stop")
     engine = create_engine(server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1), pool_size=10, max_overflow=5)
     Base.metadata.create_all(engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])
+    setup_roles(engine)
     apply_ddl(engine)
     return tmp, server, engine
 
 
-def apply_ddl(engine):
-    sql = DDL_PATH.read_text(encoding="utf-8")
+APP_ROLE = "app_owner"   # 합성: 백엔드가 접속하는 역할(회원 표·새 답 표의 소유자, NOSUPERUSER·NOBYPASSRLS)
+API_ROLES = ("anon", "authenticated")   # 합성: Supabase Data API 역할을 흉내 낸다(NOLOGIN·NOSUPERUSER·NOBYPASSRLS)
+
+
+def setup_roles(engine):
+    """임시 PG 에 Supabase 와 비슷한 역할 구성을 합성한다(R-D RLS 시험용, 실제 Supabase 와 같다고 주장하지 않는다).
+    - app_owner 가 user_member 를 소유하고 public 에 CREATE 권한을 가진다(관측된 공유 DB 의 연결 구조와 같은 모양).
+    - app_owner 가 새로 만드는 표·시퀀스에는 anon·authenticated 에 ALL 권한이 기본으로 붙는다(Supabase 기본 권한 흉내) → DDL 의 REVOKE 가 의미 있다.
+    """
+    with engine.begin() as conn:
+        for role in (APP_ROLE,) + API_ROLES:
+            conn.execute(text(f"CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS"))
+        conn.execute(text(f"GRANT USAGE, CREATE ON SCHEMA public TO {APP_ROLE}"))
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO anon, authenticated"))
+        conn.execute(text(f"ALTER TABLE public.user_member OWNER TO {APP_ROLE}"))
+        conn.execute(text(f"ALTER DEFAULT PRIVILEGES FOR ROLE {APP_ROLE} IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated"))
+        conn.execute(text(f"ALTER DEFAULT PRIVILEGES FOR ROLE {APP_ROLE} IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated"))
+
+
+def apply_ddl(engine, sql: str | None = None, role: str | None = APP_ROLE):
+    """수동 DDL 파일을 백엔드 역할(app_owner)로 실행한다. 새 표의 소유자 = 백엔드 역할이 된다."""
+    sql = sql if sql is not None else DDL_PATH.read_text(encoding="utf-8")
     raw = engine.raw_connection()
+    dbapi = raw.driver_connection   # 풀 프록시가 아니라 실제 psycopg 연결에 autocommit 을 건다(프록시 속성은 드라이버에 전달되지 않는다)
     try:
-        raw.autocommit = True   # 파일 안의 BEGIN/COMMIT 이 트랜잭션을 정한다
-        with raw.cursor() as cur:
-            cur.execute(sql)
+        dbapi.autocommit = True   # 파일 안의 BEGIN/COMMIT 이 트랜잭션을 정한다
+        with dbapi.cursor() as cur:
+            if role:
+                cur.execute(f"SET ROLE {role}")
+            try:
+                cur.execute(sql)
+            finally:
+                if dbapi.info.transaction_status != 0:   # 실패해 열린 채 남은 트랜잭션은 되돌린다(0 = IDLE)
+                    cur.execute("ROLLBACK")
+                if role:
+                    cur.execute("RESET ROLE")
     finally:
+        dbapi.autocommit = False
         raw.close()
+
+
+def app_engine(engine, role: str = APP_ROLE):
+    """같은 임시 PG 에 백엔드 역할(app_owner)로 접속하는 엔진(연결 직후 SET ROLE)."""
+    eng = create_engine(engine.url, pool_size=5, max_overflow=5)
+
+    @event.listens_for(eng, "connect")
+    def _set_role(dbapi_conn, _record):
+        with dbapi_conn.cursor() as cur:
+            cur.execute(f"SET ROLE {role}")
+        dbapi_conn.commit()
+
+    return eng
 
 
 def stop_pg(tmp, server, engine):

@@ -176,5 +176,10 @@
       </ul>
     </article>
   </main>
+  <h2>팀 Vue 이메일 가입</h2>
+  <p>팀 Vue 회원가입 화면에서 이메일 아이디로 인증번호를 받습니다. 발송은 <code>POST /signup/email-code</code>, 번호 확인은 <code>POST /signup/email-code/verify</code>, 가입은 <code>POST /signup</code>입니다. 이 문서의 HTML 시연 화면과는 별도로 연결합니다.</p>
+  <p><code>services/signupEmailServices.py</code>가 SMTP로 8자리 코드를 보냅니다. 코드가 맞을 때 회원과 선택한 복구 질문을 같은 트랜잭션에 저장합니다. 번호는 10분 동안 한 번 쓸 수 있습니다. 발송은 1분 뒤 다시 요청할 수 있습니다.</p>
+  <p>로컬에서 <code>tests/test_signup_email_verification.py</code>로 합성 편지함과 임시 DB에 연결해 발송, 실패, 만료, 재사용, 동시 가입과 저장 롤백을 확인합니다. 실제 발송에는 발신자·SMTP 설정과 <code>docker/postgres/signup_email_code.sql</code> 적용이 필요합니다.</p>
+
 </body>
 </html>

@@ -3,7 +3,9 @@ from datetime import date, datetime
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 from pydantic_core import PydanticCustomError
 
+from config import settings
 from schemas.accountRecoverySchemas import RecoveryAnswers
+from schemas.signupEmailSchemas import EMAIL_MAX_LENGTH
 
 
 class UserLogin(BaseModel):
@@ -36,6 +38,15 @@ class LearnerSignup(BaseModel):
     user_un: str
     user_sp: str
     recovery_answers: RecoveryAnswers
+    email_code: str | None = Field(default=None, pattern=r"^[0-9]{8}$")
+
+    @field_validator("recovery_answers")
+    @classmethod
+    def signup_question_count(cls, values):
+        expected = 1 if settings.signup_email_verification_enabled else 3
+        if len(values) != expected:
+            raise PydanticCustomError("answers_count", "복구 질문과 답변을 확인해 주세요.")
+        return values
 
     @field_validator("user_id", "user_name", "user_un", "user_sp", mode="before")
     @classmethod
@@ -47,8 +58,9 @@ class LearnerSignup(BaseModel):
     def check_id(cls, value: str) -> str:
         if not value:
             raise PydanticCustomError("signup_empty", "아이디를 입력해 주세요.")
-        if len(value) > 30:
-            raise PydanticCustomError("signup_too_long", "아이디는 30자 이내로 입력해 주세요.")
+        limit = EMAIL_MAX_LENGTH if settings.signup_email_verification_enabled else 30
+        if len(value) > limit:
+            raise PydanticCustomError("signup_too_long", f"아이디는 {limit}자 이내로 입력해 주세요.")
         return value
 
     @field_validator("user_name")

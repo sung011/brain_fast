@@ -16,7 +16,7 @@ from models.userModel import UserModel  # noqa: F401 — FK 대상 테이블을 
 class UserRecoveryAnswerModel(Base):
     __tablename__ = "user_recovery_answer"
     __table_args__ = (
-        CheckConstraint("ura_question_id IN ('Q01','Q02','Q03')", name="user_recovery_answer_qid_check"),
+        CheckConstraint("ura_question_id IN ('Q01','Q02','Q03','Q04')", name="user_recovery_answer_qid_check"),
         UniqueConstraint("ura_u_idx", "ura_question_id", name="user_recovery_answer_user_question_uq"),
         {"comment": "비밀번호 찾기 질문 답변(정규화 후 bcrypt 해시만, 평문 없음)"},
     )

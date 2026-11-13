@@ -13,7 +13,7 @@ from repositories import accountRepositories as repositories
 from schemas.accountRecoverySchemas import answer_map
 from schemas.accountSchemas import FindId, FindPw, VerifyAccount
 from services import accountRecoveryServices as recovery
-from services.userServices import format_updated_at
+from services.userServices import format_updated_at, resolve_account_id
 from utils.password import hash_password
 from utils.rate_limit import RateLimiter
 
@@ -54,7 +54,7 @@ def find_id(db: Session, body: FindId, client_ip: str) -> list[str]:
 
 def verify_account(db: Session, body: VerifyAccount, client_ip: str) -> bool:
     _check_limit(client_ip, f"id:{body.user_id.lower()}")   # bcrypt 보다 먼저
-    user = repositories.find_member(db, body.user_id, body.user_name, body.user_birth)
+    user = repositories.find_member(db, resolve_account_id(db, body.user_id), body.user_name, body.user_birth)
     rows = recovery_repositories.answers_for(db, user.idx) if user is not None else {}
     matched = recovery.check_answers(rows, answer_map(body.answers))   # 회원이 없어도 3회 검증
     return user is not None and matched
@@ -69,7 +69,7 @@ def reset_password(db: Session, body: FindPw, client_ip: str) -> bool:
     answers = answer_map(body.answers)
     # 화면의 확인 결과를 신뢰하지 않고, 변경 요청에서도 신원과 답을 잠금 안에서 다시 검사한다.
     try:
-        user = repositories.lock_member_for_reset(db, body.user_id, body.user_name, body.user_birth)
+        user = repositories.lock_member_for_reset(db, resolve_account_id(db, body.user_id), body.user_name, body.user_birth)
         rows = recovery_repositories.answers_for(db, user.idx) if user is not None else {}
         matched = recovery.check_answers(rows, answers)
         if user is None or not matched:

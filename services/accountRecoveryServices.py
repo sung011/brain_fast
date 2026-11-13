@@ -1,25 +1,28 @@
 """비밀번호 찾기 질문(복구 B안) 서비스: 답 해시·검증, 가입과 답 동시 등록, 로그인 후 등록·변경, 등록 상태.
 
 - 해시: 정규화한 답을 utils.password.hash_password(bcrypt cost 12, 답마다 gensalt)로 저장한다. 평문 0.
-- 검증(D1): 세 슬롯 모두 verify_password 를 **단락 없이** 실행한 뒤 AND 한다.
+- 검증: 새 선택형은 등록한 질문 하나의 답을 검증하고, 기존 등록형은 세 답을 모두 검증한다. 각 요청은 더미를 포함해 bcrypt 세 번을 수행한다.
   회원 없음·미등록·행 0~2개·버전 다름·해시 손상 슬롯은 시작 때 1회 만든 유효 더미 해시(cost 12)로 검증해 3회를 맞춘다. 결과는 실패.
   시간 완전 동일은 보장하지 않는다. 시도 제한은 호출자가 bcrypt 보다 먼저 한다.
-- 가입(D2): 비밀번호·답 해시를 트랜잭션 전에 만들고, 회원 생성(flush) → 답 3행(flush) → commit 1회. 예외는 전체 rollback.
+- 가입: 이메일 확인이 켜져 있으면 일회용 인증번호를 먼저 잠그고 확인한다. 인증번호 소비와 회원·답 저장을 함께 commit 한다. 예외는 전체 rollback.
   user_member 의 user_id unique 위반만 DuplicateUserId(409). 그 밖의 무결성·인프라 오류는 그대로 올려 고정 500 으로 닫는다.
   관리자 userServices.create_user 는 바꾸지 않는다.
-- 등록·변경: 승인 learner → (라우터의 엄격 Origin) → learner 5 / IP 30(정보 수정과 공유) → 답 해시 → 회원 잠금 → 현재 비밀번호 → 3행 교체 → commit.
+- 등록·변경: 승인 learner → (라우터의 엄격 Origin) → learner 5 / IP 30(정보 수정과 공유) → 답 해시 → 회원 잠금 → 현재 비밀번호 → 답 행 교체 → commit.
 """
 import re
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from config import settings
+
 from repositories import accountRecoveryRepositories as repositories
 from repositories import accountSettingsRepositories as settings_repositories
 from repositories import userRepositories as user_repositories
-from schemas.accountRecoverySchemas import NORM_VERSION, QUESTION_IDS, QUESTION_SET, RecoveryQuestionsPut, RecoveryStatus, answer_map
+from schemas.accountRecoverySchemas import CHOICE_QUESTION_IDS, CHOICE_QUESTION_SET, NORM_VERSION, QUESTION_IDS, QUESTION_SET, RecoveryQuestionsPut, RecoveryStatus, answer_map
 from schemas.userSchemas import LearnerSignup
 from services import accountSettingsServices as settings_service
+from services import signupEmailServices as signup_email
 from services.userServices import format_updated_at
 from utils.password import hash_password, verify_password
 
@@ -45,30 +48,49 @@ DUMMY_HASH = _make_dummy_hash()
 def _slot_usable(row) -> bool:
     return (
         row is not None
-        and row.ura_question_set == QUESTION_SET
+        and row.ura_question_set in (QUESTION_SET, CHOICE_QUESTION_SET)
         and row.ura_norm_version == NORM_VERSION
         and isinstance(row.ura_answer_hash, str)
         and _BCRYPT.match(row.ura_answer_hash) is not None
     )
 
 
+def _registered_questions(rows: dict) -> tuple[str, ...]:
+    if len(rows) == 1:
+        question_id, row = next(iter(rows.items()))
+        if question_id in CHOICE_QUESTION_IDS and _slot_usable(row) and row.ura_question_set == CHOICE_QUESTION_SET:
+            return (question_id,)
+    if set(rows) == set(QUESTION_IDS) and all(
+        _slot_usable(rows[q]) and rows[q].ura_question_set == QUESTION_SET for q in QUESTION_IDS
+    ):
+        return QUESTION_IDS
+    return ()
+
+
 def is_registered(rows: dict) -> bool:
-    return all(_slot_usable(rows.get(question_id)) for question_id in QUESTION_IDS)
+    return bool(_registered_questions(rows))
 
 
 def check_answers(rows: dict, answers: dict[str, str]) -> bool:
-    """세 슬롯을 모두 검증(bcrypt 정확히 3회)한 뒤 결과를 합친다. 쓸 수 없는 슬롯은 더미로 검증하고 실패로 센다."""
-    ok = True
-    for question_id in QUESTION_IDS:
-        row = rows.get(question_id)
-        usable = _slot_usable(row)
-        matched = verify_password(answers.get(question_id, ""), row.ura_answer_hash if usable else DUMMY_HASH)
-        ok = ok and usable and matched
+    """등록 방식과 관계없이 bcrypt 를 정확히 3회 실행한 뒤 결과를 합친다.
+
+    필요한 질문(v1 세 개, v2 한 개)을 먼저 검증하고 모자란 횟수는 더미 해시로 채운다. 쓸 수 없는 슬롯·미등록도 더미로 3회.
+    """
+    required = _registered_questions(rows)
+    ok = bool(required) and set(answers) == set(required)
+    slots = list(required) + [None] * (len(QUESTION_IDS) - len(required))
+    for question_id in slots:
+        row = rows.get(question_id) if question_id else None
+        usable = question_id is not None and _slot_usable(row)
+        candidate = answers.get(question_id, "") if question_id else ""
+        matched = verify_password(candidate, row.ura_answer_hash if usable else DUMMY_HASH)
+        if question_id is not None:
+            ok = ok and usable and matched
     return ok
 
 
 def hash_answers(answers: dict[str, str]) -> dict[str, str]:
-    return {question_id: hash_password(answers[question_id]) for question_id in QUESTION_IDS}
+    return {question_id: hash_password(answers[question_id]) for question_id in sorted(answers)}
 
 
 def _is_user_id_unique_violation(exc: IntegrityError) -> bool:
@@ -79,16 +101,25 @@ def _is_user_id_unique_violation(exc: IntegrityError) -> bool:
     return getattr(diag, "table_name", None) == "user_member" and getattr(diag, "constraint_name", None) in USER_ID_UNIQUE_NAMES
 
 
-def create_learner_with_answers(db: Session, body: LearnerSignup):
-    """학습자 가입 + 답 3개 등록을 한 트랜잭션으로. 회원만 있고 답이 없는 상태를 남기지 않는다."""
-    password_hash = hash_password(body.user_pw)
-    answer_hashes = hash_answers(answer_map(body.recovery_answers))
+def create_learner_with_answers(db: Session, body: LearnerSignup, client_ip: str = "unknown"):
+    """학습자 가입과 복구 답 등록을 한 트랜잭션으로. 회원만 있고 답이 없는 상태를 남기지 않는다."""
     try:
-        if user_repositories.get_by_user_id(db, body.user_id, active_only=False) is not None:
+        user_id = body.user_id
+        email_required = settings.signup_email_verification_enabled
+        if email_required:
+            user_id = signup_email.require_code(db, user_id, body.email_code, client_ip)
+            if user_repositories.email_id_exists(db, user_id):
+                raise DuplicateUserId
+        elif body.email_code is not None:
+            raise signup_email.EmailSignupUnavailable
+
+        password_hash = hash_password(body.user_pw)
+        answer_hashes = hash_answers(answer_map(body.recovery_answers))
+        if not email_required and user_repositories.get_by_user_id(db, user_id, active_only=False) is not None:
             raise DuplicateUserId
         user = user_repositories.create(
             db,
-            user_id=body.user_id,
+            user_id=user_id,
             user_pw=password_hash,
             user_name=body.user_name,
             user_birth=body.user_birth,
@@ -110,7 +141,13 @@ def create_learner_with_answers(db: Session, body: LearnerSignup):
 
 def get_status(db: Session, session: object) -> RecoveryStatus:
     user = settings_service._authenticated(db, session)
-    return RecoveryStatus(registered=is_registered(repositories.answers_for(db, user.idx)))
+    rows = repositories.answers_for(db, user.idx)
+    required = _registered_questions(rows)
+    return RecoveryStatus(
+        registered=bool(required),
+        question_set=CHOICE_QUESTION_SET if len(required) == 1 else QUESTION_SET,
+        question_ids=list(required or QUESTION_IDS),
+    )
 
 
 def save_answers(db: Session, session: object, body: RecoveryQuestionsPut, client_ip: str) -> RecoveryStatus:
@@ -129,4 +166,8 @@ def save_answers(db: Session, session: object, body: RecoveryQuestionsPut, clien
     except Exception:
         db.rollback()
         raise
-    return RecoveryStatus(registered=True)
+    return RecoveryStatus(
+        registered=True,
+        question_set=CHOICE_QUESTION_SET if len(answer_hashes) == 1 else QUESTION_SET,
+        question_ids=sorted(answer_hashes),
+    )

@@ -8,6 +8,7 @@ from datetime import date
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from schemas.accountRecoverySchemas import RecoveryAnswers
+from schemas.signupEmailSchemas import EMAIL_MAX_LENGTH
 
 
 class FindId(BaseModel):
@@ -36,7 +37,7 @@ class FindId(BaseModel):
 class VerifyAccount(FindId):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    user_id: str = Field(min_length=1, max_length=30)
+    user_id: str = Field(min_length=1, max_length=EMAIL_MAX_LENGTH)
     answers: RecoveryAnswers
 
     @field_validator("user_id", mode="before")

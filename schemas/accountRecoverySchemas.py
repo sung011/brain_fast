@@ -1,6 +1,7 @@
 """비밀번호 찾기 질문(복구 B안) 입력·응답 형식. 설계: FOLLOWUP2_DESIGN.md 3-B·3-C, 계획 FOLLOWUP2_RECOVERY_B_PLAN.md r2.
 
-- 질문은 고정 3개(security_questions_v1: Q01·Q02·Q03). 답은 3개 모두 필요하고 ID 중복·누락은 422.
+- 새 이메일 가입은 Q01~Q04 중 하나와 답변 한 개를 저장한다(security_question_choice_v2).
+- 기존 security_questions_v1 등록 계정은 Q01·Q02·Q03 세 답을 함께 검증한다. 두 개·중복 ID·Q04 를 포함한 세 개는 422.
 - 답 정규화 answer_norm_v1: 문자열만, 원문 1~256자, 줄바꿈·제어문자 거절 → NFC → 앞뒤 공백 제거 → 유니코드 공백 연속을 공백 1개로 → ASCII A–Z 만 소문자.
   정규화 뒤 1~50자이고 UTF-8 72바이트 이내. 비밀번호에는 적용하지 않는다.
 - 정규화한 답은 SecretStr 로 감싸 repr·로그에 값이 나오지 않게 한다. 해시·DB 는 이 검사를 통과한 뒤에만 한다.
@@ -14,12 +15,15 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, SecretStr, St
 from pydantic_core import PydanticCustomError
 
 QUESTION_SET = "security_questions_v1"
+CHOICE_QUESTION_SET = "security_question_choice_v2"
 NORM_VERSION = "answer_norm_v1"
-QUESTION_IDS = ("Q01", "Q02", "Q03")
+QUESTION_IDS = ("Q01", "Q02", "Q03")                 # 기존 세 답 등록형(v1)
+CHOICE_QUESTION_IDS = ("Q01", "Q02", "Q03", "Q04")   # 질문 하나 선택형(v2)
 QUESTION_LABELS = {
     "Q01": "처음 다닌 초등학교 이름",
     "Q02": "어릴 때 사용하던 별명",
     "Q03": "어릴 때 살았던 동네 이름",
+    "Q04": "내 보물 1호",
 }
 
 RAW_MAX_CHARS = 256
@@ -55,7 +59,7 @@ def normalize_answer(value: object) -> str:
 class RecoveryAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    question_id: Literal["Q01", "Q02", "Q03"]
+    question_id: Literal["Q01", "Q02", "Q03", "Q04"]
     answer: SecretStr
 
     @field_validator("answer", mode="before")
@@ -66,13 +70,17 @@ class RecoveryAnswer(BaseModel):
 
 def _exact_question_set(answers: list[RecoveryAnswer]) -> list[RecoveryAnswer]:
     ids = [item.question_id for item in answers]
-    if sorted(ids) != list(QUESTION_IDS):
+    if len(ids) not in (1, 3):
+        raise PydanticCustomError("answers_count", "복구 질문과 답변을 확인해 주세요.")
+    if len(set(ids)) != len(ids):
         raise PydanticCustomError("answers_duplicate", "질문마다 답을 하나씩 입력해 주세요.")
+    if len(ids) == 3 and sorted(ids) != list(QUESTION_IDS):
+        raise PydanticCustomError("answers_count", "복구 질문과 답변을 확인해 주세요.")
     return sorted(answers, key=lambda item: item.question_id)
 
 
-# 정확히 3개(Q01·Q02·Q03 각 1개). 개수가 다르면 too_short/too_long, ID 중복이면 answers_duplicate.
-RecoveryAnswers = Annotated[list[RecoveryAnswer], Field(min_length=3, max_length=3), AfterValidator(_exact_question_set)]
+# 선택형 한 개와 기존 등록형 세 개를 받는다. 가입의 활성화된 이메일 경로는 한 개만 허용한다.
+RecoveryAnswers = Annotated[list[RecoveryAnswer], Field(min_length=1, max_length=3), AfterValidator(_exact_question_set)]
 
 
 def answer_map(answers: list[RecoveryAnswer]) -> dict[str, str]:
@@ -91,7 +99,7 @@ def _password(value: object, label: str, min_len: int = 1) -> str:
 
 
 class RecoveryQuestionsPut(BaseModel):
-    """PUT /me/recovery-questions. 현재 비밀번호 + 답 3개. 회원은 서버 세션으로만 정한다."""
+    """PUT /me/recovery-questions. 현재 비밀번호 + 질문 답. 회원은 서버 세션으로만 정한다."""
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     current_password: StrictStr
@@ -104,10 +112,10 @@ class RecoveryQuestionsPut(BaseModel):
 
 
 class RecoveryStatus(BaseModel):
-    """GET·PUT /me/recovery-questions 응답. 등록 여부만 알려 주고 답·해시는 담지 않는다."""
+    """GET·PUT /me/recovery-questions 응답. 등록 방식과 질문 ID를 알려 주고 답·해시는 담지 않는다."""
     model_config = ConfigDict(extra="forbid")
 
     ok: Literal[True] = True
     registered: bool
-    question_set: Literal["security_questions_v1"] = QUESTION_SET
+    question_set: Literal["security_questions_v1", "security_question_choice_v2"] = QUESTION_SET
     question_ids: list[str] = Field(default_factory=lambda: list(QUESTION_IDS))

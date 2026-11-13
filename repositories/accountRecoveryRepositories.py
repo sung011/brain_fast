@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from models.userRecoveryAnswerModel import UserRecoveryAnswerModel as Answer
-from schemas.accountRecoverySchemas import NORM_VERSION, QUESTION_SET
+from schemas.accountRecoverySchemas import CHOICE_QUESTION_SET, NORM_VERSION, QUESTION_SET
 
 
 def answers_for(db: Session, user_idx: int) -> dict[str, Answer]:
@@ -32,7 +32,7 @@ def insert_answers(db: Session, user_idx: int, hashes: dict[str, str], updated_a
             ura_u_idx=user_idx,
             ura_question_id=question_id,
             ura_answer_hash=hashes[question_id],
-            ura_question_set=QUESTION_SET,
+            ura_question_set=CHOICE_QUESTION_SET if len(hashes) == 1 else QUESTION_SET,
             ura_norm_version=NORM_VERSION,
             updated_at=updated_at,
         ))
@@ -40,7 +40,7 @@ def insert_answers(db: Session, user_idx: int, hashes: dict[str, str], updated_a
 
 
 def replace_answers(db: Session, user_idx: int, hashes: dict[str, str], updated_at: str) -> None:
-    """기존 답을 모두 지우고 새 3행을 넣는다. 호출자는 회원 행을 먼저 잠근 상태여야 한다. commit 은 호출자가 한다."""
+    """기존 답을 모두 지우고 새 답 행을 넣는다. 호출자는 회원 행을 먼저 잠근 상태여야 한다. commit 은 호출자가 한다."""
     db.execute(delete(Answer).where(Answer.ura_u_idx == user_idx).execution_options(synchronize_session=False))
     db.flush()
     insert_answers(db, user_idx, hashes, updated_at)

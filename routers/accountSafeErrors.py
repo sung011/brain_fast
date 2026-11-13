@@ -47,7 +47,7 @@ def _fields(*names: str) -> set[tuple]:
     return {("body", name) for name in names}
 
 
-SIGNUP_LOCS = frozenset({_BODY} | _fields("user_id", "user_pw", "user_name", "user_birth", "user_un", "user_sp") | _answer_locs("recovery_answers"))
+SIGNUP_LOCS = frozenset({_BODY} | _fields("user_id", "user_pw", "user_name", "user_birth", "user_un", "user_sp", "email_code") | _answer_locs("recovery_answers"))
 VERIFY_LOCS = frozenset({_BODY} | _fields("user_id", "user_name", "user_birth") | _answer_locs("answers"))
 RESET_LOCS = frozenset(VERIFY_LOCS | _fields("user_pw", "user_pw_confirm"))
 PUT_LOCS = frozenset({_BODY} | _fields("current_password") | _answer_locs("answers"))
@@ -56,6 +56,8 @@ BODYLESS_LOCS = frozenset({_BODY})
 # (메서드, 주소) → (로그용 고정 이름, 허용 위치). 목록에 없는 주소는 ["body"] 만 허용한다(안전 쪽 기본값).
 ROUTE_POLICY: dict[tuple[str, str], tuple[str, frozenset]] = {
     ("POST", "/signup"): ("signup", SIGNUP_LOCS),
+    ("POST", "/signup/email-code"): ("signup_email_code", frozenset({_BODY} | _fields("email"))),
+    ("POST", "/signup/email-code/verify"): ("signup_email_verify", frozenset({_BODY} | _fields("email", "email_code"))),
     ("POST", "/find-pw/verify"): ("find_pw_verify", VERIFY_LOCS),
     ("POST", "/find-pw"): ("find_pw_reset", RESET_LOCS),
     ("PUT", "/me/recovery-questions"): ("recovery_questions_put", PUT_LOCS),
@@ -92,6 +94,7 @@ _CODE_BY_TYPE = {
     "birth_future": "future_date",
     "birth_under_age": "under_age",
     "answers_duplicate": "answers_duplicate",
+    "answers_count": "answers_count",
 }
 _ANSWER_CONTAINERS = {("body", "answers"), ("body", "recovery_answers")}
 ALL_CODES = frozenset(set(_CODE_BY_TYPE.values()) | {"invalid_value", "answers_count"})
