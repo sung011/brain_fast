@@ -1,4 +1,5 @@
 import httpx
+from importlib import import_module
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
@@ -19,6 +20,8 @@ from schemas.studySchemas import (
 )
 
 KST = timezone(timedelta(hours=9))
+
+THORAX_PART = "2"  # study.st_part 흉부
 
 ALLOWED_BODY_PARTS = {"brain", "chest", "abdomen", "knee", "other"}
 
@@ -280,10 +283,28 @@ def get_answer_boxes(db: Session, study_idx: int | None) -> list[dict] | None:
     """
     문제의 정답 박스(0~1 비율 x, y, width, height, finding 목록). 흉부 채점에 쓴다.
 
-    study 테이블에 정답 박스 칸이 아직 없다(팀 결정 전). 칸이 생기면 여기서 읽는다.
-    지금은 늘 None 이라, 흉부 채점은 예전처럼 AI 결과를 기준으로 한다.
+    DB 가 아니라 class/thorax/answer_boxes.json(NIH 의사 박스)에서 문제 사진 이름으로 찾는다.
+    흉부 문제가 아니거나, 표에 없거나, 관리자가 병명을 바꿔 표의 정답과 다르면 None 이라
+    흉부 채점은 예전처럼 AI 결과를 기준으로 한다.
     """
-    return None
+    answer = _thorax_answer(db, study_idx)
+    return answer["boxes"] if answer else None
+
+
+def get_view_position(db: Session, study_idx: int | None) -> str | None:
+    """흉부 문제 사진의 촬영 방향 "AP"/"PA". 모르면 None. (해설 문장 고르기에 쓴다)"""
+    answer = _thorax_answer(db, study_idx)
+    return answer["view"] if answer else None
+
+
+def _thorax_answer(db: Session, study_idx: int | None) -> dict | None:
+    if study_idx is None:
+        return None
+    row = study_repositories.get_by_idx(db, int(study_idx))
+    if row is None or row.st_part != THORAX_PART:
+        return None
+    answers = import_module("class.thorax.answers")
+    return answers.find_answer(row.st_image, row.st_disease)
 
 
 def get_problem(db: Session, study_idx: int) -> StudyModel | None:
