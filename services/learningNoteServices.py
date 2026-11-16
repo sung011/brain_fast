@@ -15,7 +15,8 @@ _from_rag() 만 채우면 되고, 라우터·화면은 고치지 않는다.
         "appearance_sources": [[{"title": "...", "url": "https://..."}], ...],   # appearance 줄마다 출처(같은 순서)
         "appearance_extra": ["지침 확인 전 일반 설명(검수 전)", ...],
         "locations": ["하부-환자 우측", ...],  # 이 영상의 의심 부위 위치. 채점 결과로 채운다(RAG 는 비워도 됨)
-        "case_summary": "이 영상에서는 … 의심 부위가 1곳 있습니다: …",  # 채점 결과로 만든 문장(RAG 는 비워도 됨)
+        "case_summary": "위치: 하부-환자 우측(중간) — 한쪽 1곳 · …",  # 채점 결과로 만든 줄을 이은 문자열(RAG 는 비워도 됨)
+        "case_lines": ["위치: …", "AP 사진 → …"],   # 화면이 한 줄씩 보여 주는 같은 내용(목록). 비면 case_summary 를 쓴다
         "related": ["감별할 질환 — 짧은 이유", ...],
         "confirm": ["확인하려면 — 원인 질환을 확인하는 검사", ...],
         "confirm_note": "X-ray 는 소견까지만 … (확진할 수 없다는 안내)",
@@ -24,6 +25,7 @@ _from_rag() 만 채우면 되고, 라우터·화면은 고치지 않는다.
                         "evidence": "guideline", "source": {"title": "...", "url": "https://..."}}],
                                              # 지침·용어집으로 확인한 줄만. 없으면 빈 목록
         "pitfall": "헷갈리기 쉬운 점",
+        "pitfall_lines": ["헷갈리기 쉬운 점 한 줄", ...],  # 화면용 목록. 비면 pitfall 문자열을 쓴다
         "references": [{"title": "...", "url": "https://..."}],
         "disclaimer": "학습용 참고 정보이며 진단이 아닙니다 …",
         "source": "static" | "rag",          # 어디서 왔는지
@@ -42,37 +44,50 @@ from config import settings
 
 THORAX_PART = "2"
 NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "appearance_sources", "appearance_extra",
-             "locations", "case_summary", "related",
-             "confirm", "confirm_note", "combinations", "next_steps", "pitfall", "references", "disclaimer")
-LIST_KEYS = ("appearance", "appearance_sources", "appearance_extra", "locations", "related", "confirm",
-             "combinations", "next_steps", "references")
+             "locations", "case_summary", "case_lines", "related",
+             "confirm", "confirm_note", "combinations", "next_steps", "pitfall", "pitfall_lines", "references",
+             "disclaimer")
+LIST_KEYS = ("appearance", "appearance_sources", "appearance_extra", "locations", "case_lines", "related", "confirm",
+             "combinations", "next_steps", "pitfall_lines", "references")
 TEXT_KEYS = ("code", "name", "name_en", "summary", "case_summary", "confirm_note", "pitfall", "disclaimer")
 # 부위별 정답의 성격. 흉부 문제의 정답은 소견, 그 밖은 병명
 KIND_BY_PART = {THORAX_PART: "finding"}
 
 
-def get_learning_note(st_part: str | None, disease: str | None, targets: list[dict] | None = None) -> dict | None:
+def get_learning_note(st_part: str | None, disease: str | None, targets: list[dict] | None = None, *,
+                      view: str | None = None, target_source: str | None = None) -> dict | None:
     """정답(소견·병명)으로 학습 해설을 고른다. RAG → 고정 해설 순서. 둘 다 없으면 None.
-    targets 는 채점 응답의 의심 부위(0~1 비율 박스)로, "이 영상에서는" 위치를 채우는 데 쓴다."""
+    targets 는 채점 응답의 의심 부위(0~1 비율 박스)로, "이 영상에서는" 위치를 채우는 데 쓴다.
+    view(AP/PA)·target_source(dataset/ai)는 이 영상에 맞는 문장을 고르는 데 쓴다(흉부)."""
     if not disease or not str(disease).strip():
         return None
+    case = {"targets": targets, "view": view, "target_source": target_source}
     for source, provider in (("rag", _from_rag), ("static", _from_static)):
-        note = provider(st_part, disease, targets)
+        note = provider(st_part, disease, case)
         if note:
-            return _with_glossary_definition(_normalize(note, source, st_part))
+            note = _normalize(note, source, st_part)
+            # 흉부 고정 해설은 자체 정의(짧고 해설 말투에 맞춘 글)를 쓴다. 팀 사전(CSV) 글은 줄글이고
+            # 근거를 확인하지 못한 문장이 섞여 있어 흉부 "이 소견은"을 덮어쓰지 않는다(2026-11-16).
+            if source == "static" and st_part == THORAX_PART:
+                note["summary_source"] = source
+                return note
+            return _with_glossary_definition(note)
     return None
 
 
-def _from_rag(st_part: str | None, disease: str, targets: list[dict] | None) -> dict | None:
-    """의학용어 사전(RAG) 자리. 연결 전이라 늘 None → 고정 해설을 쓴다."""
+def _from_rag(st_part: str | None, disease: str, case: dict) -> dict | None:
+    """의학용어 사전(RAG) 자리. 연결 전이라 늘 None → 고정 해설을 쓴다.
+    case = {"targets", "view", "target_source"} (이 영상의 의심 부위·촬영 방향·채점 기준)."""
     return None
 
 
-def _from_static(st_part: str | None, disease: str, targets: list[dict] | None) -> dict | None:
+def _from_static(st_part: str | None, disease: str, case: dict) -> dict | None:
     """부위별 고정 해설. 지금은 흉부만 있다."""
     if st_part != THORAX_PART:
         return None
-    return import_module("class.thorax.report_format").learning_note(disease, targets)
+    return import_module("class.thorax.report_format").learning_note(
+        disease, case["targets"], view=case["view"], target_source=case["target_source"]
+    )
 
 
 def _with_glossary_definition(note: dict) -> dict:

@@ -587,7 +587,7 @@ def test_learning_note_for_chest_answer():
     # 흉막삼출이 들어간 조합만 나온다
     assert any("심부전" in text for text in note["combinations"])
     assert all("기흉" not in text or "수기흉" in text for text in note["combinations"])
-    assert "진단이 아닙니다" in note["disclaimer"]
+    assert "진단이 아니" in note["disclaimer"]
     assert thorax.learning_note("Pleural effusion")["code"] == "pleural_effusion"
 
 
@@ -616,7 +616,7 @@ def test_learning_note_prefers_rag_and_fills_missing_keys(monkeypatch):
 
     # 의학용어 사전(RAG)이 연결되면 그쪽이 먼저다. 빠진 키는 빈 값으로 채운다
     monkeypatch.setattr(learningNoteServices, "_from_rag",
-                        lambda part, disease, targets: {"name": disease, "summary": "RAG 설명"})
+                        lambda part, disease, case: {"name": disease, "summary": "RAG 설명"})
     note = learningNoteServices.get_learning_note("1", "경막하출혈")
     assert note["source"] == "rag" and note["summary"] == "RAG 설명"
     assert note["related"] == [] and note["pitfall"] == "" and note["references"] == [] and note["next_steps"] == []
@@ -638,16 +638,97 @@ def test_learning_note_fills_location_from_targets():
 def test_case_summary_describes_this_image_from_targets():
     rf = import_module("class.thorax.report_format")
     one = rf.case_summary("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2}])
-    assert one == "이 영상에서는 흉막삼출 의심 부위가 1곳 있습니다: 하부-환자 우측(중간 범위). 한쪽에만 있습니다."
+    assert one == "하부 환자 우측(중간 범위)에 1곳 있다. 한쪽에만 있다."
     both = rf.case_summary("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2},
                                     {"x": 0.7, "y": 0.7, "width": 0.1, "height": 0.1}])
-    assert "2곳" in both and both.endswith("양쪽에 있습니다.")
+    assert "2곳 있다" in both and both.endswith("양쪽에 있다.")
     assert rf.case_summary("기흉", []) == ""
     note = thorax.learning_note("흉막삼출", [{"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2}])
-    assert note["case_summary"].startswith("이 영상에서는 흉막삼출")
+    assert note["case_lines"] == [one] and note["case_summary"] == one
 
 
-def test_glossary_definition_replaces_summary(tmp_path, monkeypatch):
+AI_LIKE = ("—", "→", " · ", "'")
+
+
+def _screen_lines(note):
+    lines = note["appearance"] + note["appearance_extra"] + note["related"] + note["confirm"] + note["pitfall"]
+    for step in note["next_steps"]:
+        lines += [step["sign"], step["suspect"], step["next"]]
+    return lines + [note["summary"]]
+
+
+def test_screen_text_is_short_and_one_tone():
+    """화면 글: 짧은 항목. 해설은 "~다.", 학습자에게 하는 안내(맨 아래 안내)는 "~요.". 화살표·대시·가운뎃점·작은따옴표를 쓰지 않는다."""
+    rf = import_module("class.thorax.report_format")
+    assert rf.NOTE_DISCLAIMER.endswith("요.")
+    extra = [rf.CONFIRM_NOTE] + [text for _, text in rf.COMBINATIONS]
+    extra += [t for views in rf.VIEW_POINTS.values() for t in views.values()]
+    extra += [rule[0] for rules in rf.SIDE_POINTS.values() for rule in rules.values()]
+    for code, note in rf.NOTES.items():
+        assert isinstance(note["pitfall"], list) and note["pitfall"]
+        for line in _screen_lines(note) + extra:
+            assert len(line) <= 80, line
+            assert line.endswith("다."), line
+            assert not any(mark in line for mark in AI_LIKE), line
+    full = thorax.learning_note("심비대", [{"x": 0.35, "y": 0.45, "width": 0.3, "height": 0.3}],
+                                view="AP", target_source="dataset")
+    assert full["pitfall_lines"] == rf.NOTES["cardiomegaly"]["pitfall"]
+    assert full["pitfall"] == " ".join(full["pitfall_lines"])
+    assert len(full["case_lines"]) == 2 and full["case_lines"][0].endswith("가운데에 있다.")
+
+
+RIGHT_LOW = {"x": 0.1, "y": 0.7, "width": 0.2, "height": 0.2}
+LEFT_LOW = {"x": 0.7, "y": 0.7, "width": 0.1, "height": 0.1}
+
+
+def test_case_points_pick_sentences_for_this_image():
+    """B안: 정답 박스의 한쪽/양쪽과 AP/PA 로 문장을 고르고, 해당 줄을 앞으로 올린다."""
+    one = thorax.learning_note("흉막삼출", [RIGHT_LOW], target_source="dataset")
+    assert any(line.startswith("한쪽에만 있으면 감염이나 악성 종양") for line in one["case_lines"])
+    assert one["next_steps"][0]["sign"] == "한쪽에만 있다."
+
+    both = thorax.learning_note("흉막삼출", [RIGHT_LOW, LEFT_LOW], target_source="dataset")
+    assert any(line.startswith("양쪽에 있으면 심부전") for line in both["case_lines"])
+    assert both["related"][0].startswith("심부전")
+
+    ap = thorax.learning_note("심비대", [], view="AP", target_source="dataset")
+    pa = thorax.learning_note("심비대", [], view="PA", target_source="dataset")
+    assert ap["case_lines"][0].startswith("AP 사진이라") and pa["case_lines"][0].startswith("PA 사진이라")
+    assert ap["case_summary"] != pa["case_summary"]
+
+
+def test_case_points_skip_side_when_graded_by_ai():
+    """AI 박스 채점이면 위치가 틀릴 수 있어 좌우 문장을 쓰지 않는다. 촬영 방향 문장은 쓴다."""
+    note = thorax.learning_note("흉막삼출", [RIGHT_LOW, LEFT_LOW], view="AP", target_source="ai")
+    assert not any("심부전" in line for line in note["case_lines"])
+    assert any(line.startswith("AP 사진이라") for line in note["case_lines"])
+    plain = thorax.learning_note("흉막삼출", [RIGHT_LOW])          # 조건이 없으면 위치 줄만
+    assert plain["case_summary"] == import_module("class.thorax.report_format").case_summary("흉막삼출", [RIGHT_LOW])
+    assert plain["related"] == import_module("class.thorax.report_format").NOTES["pleural_effusion"]["related"]
+
+
+def test_case_points_do_not_add_new_medical_lines():
+    """고른 문장이 가리키는 줄(관련 질환·다음 단계)은 NOTES 에 실제로 있어야 한다."""
+    rf = import_module("class.thorax.report_format")
+    for code, rules in rf.SIDE_POINTS.items():
+        for _, related_first, step_first in rules.values():
+            if related_first:
+                assert any(line.startswith(related_first) for line in rf.NOTES[code]["related"])
+            if step_first:
+                assert any(step["sign"] == step_first for step in rf.NOTES[code]["next_steps"])
+    for code in rf.VIEW_POINTS:
+        pitfall = " ".join(rf.NOTES[code]["pitfall"])
+        assert "AP" in pitfall or "누워서" in pitfall     # 촬영 방향 문장과 같은 내용이 '헷갈리기 쉬운 점'에 있다
+
+
+def test_learning_note_service_passes_view_and_source():
+    from services import learningNoteServices
+
+    note = learningNoteServices.get_learning_note("2", "심비대", [], view="AP", target_source="dataset")
+    assert note["case_lines"][0].startswith("AP 사진이라") and note["pitfall_lines"]
+
+
+def test_glossary_definition_reads_two_sentences_but_thorax_keeps_own_summary(tmp_path, monkeypatch):
     from services import learningNoteServices
 
     csv_path = tmp_path / "glossary.csv"
@@ -656,11 +737,16 @@ def test_glossary_definition_replaces_summary(tmp_path, monkeypatch):
                         encoding="utf-8")
     monkeypatch.setattr(learningNoteServices.settings, "glossary_csv_path", str(csv_path))
     learningNoteServices._glossary.cache_clear()
+    # 사전 읽기 자체는 그대로 (RAG 등 다른 해설에서 쓴다)
+    assert learningNoteServices.glossary_definition("Pleural effusion") == "흉막강 내에 액체가 존재하는 상태. 질병의 징후이다."
+    # 흉부 고정 해설은 사전에 같은 용어가 있어도 자체 정의를 쓴다
     note = learningNoteServices.get_learning_note("2", "흉막삼출")
-    assert note["summary_source"] == "glossary"
-    assert note["summary"] == "흉막강 내에 액체가 존재하는 상태. 질병의 징후이다."   # 두 문장까지
-    # 사전에 없는 용어는 고정 해설 그대로
-    assert learningNoteServices.get_learning_note("2", "폐음영")["summary_source"] == "static"
+    assert note["summary_source"] == "static"
+    assert note["summary"] == import_module("class.thorax.report_format").NOTES["pleural_effusion"]["summary"]
+    # RAG 해설이면 사전 정의로 바꾼다
+    monkeypatch.setattr(learningNoteServices, "_from_rag",
+                        lambda part, disease, case: {"name": disease, "name_en": "Pleural effusion", "summary": "RAG"})
+    assert learningNoteServices.get_learning_note("2", "흉막삼출")["summary_source"] == "glossary"
     learningNoteServices._glossary.cache_clear()
 
 
