@@ -45,10 +45,10 @@ from config import settings
 THORAX_PART = "2"
 NOTE_KEYS = ("kind", "code", "name", "name_en", "summary", "appearance", "appearance_sources", "appearance_extra",
              "locations", "case_summary", "case_lines", "related",
-             "confirm", "confirm_note", "combinations", "next_steps", "pitfall", "pitfall_lines", "references",
-             "disclaimer")
+             "confirm", "confirm_note", "combinations", "combination_items", "next_steps", "pitfall",
+             "pitfall_lines", "references", "disclaimer")
 LIST_KEYS = ("appearance", "appearance_sources", "appearance_extra", "locations", "case_lines", "related", "confirm",
-             "combinations", "next_steps", "pitfall_lines", "references")
+             "combinations", "combination_items", "next_steps", "pitfall_lines", "references")
 TEXT_KEYS = ("code", "name", "name_en", "summary", "case_summary", "confirm_note", "pitfall", "disclaimer")
 # 부위별 정답의 성격. 흉부 문제의 정답은 소견, 그 밖은 병명
 KIND_BY_PART = {THORAX_PART: "finding"}

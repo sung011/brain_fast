@@ -661,7 +661,7 @@ def test_screen_text_is_short_and_one_tone():
     """화면 글: 짧은 항목. 해설은 "~다.", 학습자에게 하는 안내(맨 아래 안내)는 "~요.". 화살표·대시·가운뎃점·작은따옴표를 쓰지 않는다."""
     rf = import_module("class.thorax.report_format")
     assert rf.NOTE_DISCLAIMER.endswith("요.")
-    extra = [rf.CONFIRM_NOTE] + [text for _, text in rf.COMBINATIONS]
+    extra = [rf.CONFIRM_NOTE] + [line for _, sign, suspect, _ in rf.COMBINATIONS for line in (sign, suspect)]
     extra += [t for views in rf.VIEW_POINTS.values() for t in views.values()]
     extra += [rule[0] for rules in rf.SIDE_POINTS.values() for rule in rules.values()]
     for code, note in rf.NOTES.items():
@@ -719,6 +719,23 @@ def test_case_points_do_not_add_new_medical_lines():
     for code in rf.VIEW_POINTS:
         pitfall = " ".join(rf.NOTES[code]["pitfall"])
         assert "AP" in pitfall or "누워서" in pitfall     # 촬영 방향 문장과 같은 내용이 '헷갈리기 쉬운 점'에 있다
+
+
+def test_sources_show_name_citation_and_place():
+    """출처는 짧은 이름·서지·주소를 갖고, 동반 소견 카드는 소견·의심 질환으로 나뉜다."""
+    rf = import_module("class.thorax.report_format")
+    for src in (rf._BTS_PLEURAL, rf._ATS_IDSA_CAP, rf._AHA_HF, rf._FLEISCHNER):
+        assert src["label"] and src["citation"] and src["url"].startswith("https://")
+    note = thorax.learning_note("흉막삼출")
+    items = note["combination_items"]
+    assert all(item["sign"] and item["suspect"] for item in items)
+    sourced = [item for item in items if item["source"]]
+    assert sourced and all(item["source"]["where"] for item in sourced)
+    assert any(item["source"] is None for item in items)          # 원문에서 못 찾은 줄은 출처 없음(지침 확인 전)
+    assert all(src[0].get("where") for src in note["appearance_sources"])
+    # 단독 소견 카드도 모두 원문 위치가 있다
+    for name in ("흉막삼출", "폐음영", "기흉", "심비대"):
+        assert all(step["source"].get("where") for step in thorax.learning_note(name)["next_steps"]), name
 
 
 def test_learning_note_service_passes_view_and_source():

@@ -26,15 +26,29 @@ from .constants import LABELS, class_ko, class_label, finding_code
 
 NOTE_DISCLAIMER = "학습용 참고 정보예요. 진단이 아니고, 실제 판단은 임상 정보와 함께 의사가 해요."
 
-# 이렇게 보이면(next_steps) 출처
+# 출처. 화면은 label(짧은 이름)을 보여 주고, citation(서지)과 where(원문에서 확인한 표·항목)를 함께 단다.
+#   title: 원문 제목 그대로(예전 화면 호환), url: 원문 주소
 _BTS_PLEURAL = {"title": "British Thoracic Society Guideline for pleural disease (Thorax 2023)",
+                "label": "BTS 흉막질환 지침 2023",
+                "citation": "Roberts ME, et al. Thorax 2023;78(Suppl 3):1-42",
                 "url": "https://brit-thoracic.org.uk/document-library/guidelines/pleural-disease/bts-guideline-for-pleural-disease"}
 _ATS_IDSA_CAP = {"title": "ATS/IDSA Community-acquired Pneumonia Guideline (AJRCCM 2019)",
+                 "label": "ATS/IDSA 지역사회획득폐렴 지침 2019",
+                 "citation": "Metlay JP, et al. Am J Respir Crit Care Med 2019;200(7):e45-e67",
                  "url": "https://www.atsjournals.org/doi/10.1164/rccm.201908-1581ST"}
 _AHA_HF = {"title": "2022 AHA/ACC/HFSA Guideline for the Management of Heart Failure (Circulation 2022)",
+           "label": "AHA/ACC/HFSA 심부전 지침 2022",
+           "citation": "Heidenreich PA, et al. Circulation 2022;145(18):e895-e1032",
            "url": "https://www.ahajournals.org/doi/10.1161/CIR.0000000000001063"}
 _FLEISCHNER = {"title": "Fleischner Society: Glossary of Terms for Thoracic Imaging (Radiology 2024)",
+               "label": "Fleischner 흉부영상 용어집 2024",
+               "citation": "Bankier AA, et al. Radiology 2024;310(2):e232558",
                "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10902601/"}
+
+
+def _at(source: dict, where: str) -> dict:
+    """출처에 원문 위치(표·항목)를 붙인다. 원문을 읽고 확인한 위치만 쓴다."""
+    return {**source, "where": where}
 
 
 def _step(sign: str, suspect: str, next_: str, source: dict) -> dict:
@@ -56,10 +70,12 @@ NOTES = {
         "appearance": [
             "양이 적으면 늑골횡격막각이 뭉툭해질 수 있다.",
             "그 자리가 초승달 모양(메니스커스)으로 보일 수 있다.",
-        ],
-        "appearance_sources": [[_FLEISCHNER], [_FLEISCHNER]],
-        "appearance_extra": [
+            # BTS 2023: 한쪽(unilateral)과 양쪽(bilateral, 표 4 원인 목록)을 나눠 원인을 찾는다
             "한쪽인지 양쪽인지 확인한다.",
+        ],
+        "appearance_sources": [[_at(_FLEISCHNER, "Pleura(Effusion) 항목")], [_at(_FLEISCHNER, "Pleura(Effusion) 항목")],
+                               [_at(_BTS_PLEURAL, "표 4 양쪽 흉막삼출의 원인")]],
+        "appearance_extra": [
             "양이 많으면 종격동이 반대쪽으로 밀린다.",
         ],
         "related": [
@@ -78,11 +94,15 @@ NOTES = {
         ],
         "next_steps": [
             _step("한쪽에만 있다.", "감염이나 악성 종양 같은 원인을 찾아야 한다.",
-                  "초음파로 보면서 흉수를 뽑아 검사한다.", _BTS_PLEURAL),
+                  "초음파로 보면서 흉수를 뽑아 검사한다.",
+                  _at(_BTS_PLEURAL, "미확진 한쪽 흉막삼출 검사, 영상 유도 흉수천자 권고")),
+            # 원문: 세포검사를 첫 검사로 하고, 음성이면 추가 검사를 고려한다(흉막 조직검사는 별도 권고)
             _step("한쪽에 있고 악성 종양이 의심된다.", "악성 흉수일 수 있다.",
-                  "흉수 세포검사를 먼저 한다. 음성이어도 CT나 조직검사를 고려한다.", _BTS_PLEURAL),
+                  "흉수 세포검사를 먼저 한다. 음성이면 흉막 조직검사 같은 추가 검사를 고려한다.",
+                  _at(_BTS_PLEURAL, "흉수 검사 권고, 세포검사를 첫 검사로")),
             _step("같은 쪽에 폐음영이 있고 열이 난다.", "폐렴에 따른 삼출이나 흉막 감염일 수 있다.",
-                  "흉수를 뽑아 세균 검사를 한다.", _BTS_PLEURAL),
+                  "흉수를 뽑아 세균 검사를 한다.",
+                  _at(_BTS_PLEURAL, "흉수 검체 권고, 감염 의심 시 혈액배양병에도 담기")),
         ],
         "pitfall": [
             "누워서 찍은 사진에서는 액체가 등 쪽으로 퍼져서 한쪽 폐가 뿌옇게만 보인다. 그래서 놓치기 쉽다.",
@@ -98,7 +118,8 @@ NOTES = {
             "하얀 음영 속에 검은 기관지가 보일 수 있다. 이를 공기기관지조영이라고 한다.",
             "심장이나 횡격막 경계가 흐려지는 것을 실루엣 징후라고 한다. 맞닿은 구조와 농도가 비슷할 때 생긴다.",
         ],
-        "appearance_sources": [[_FLEISCHNER], [_FLEISCHNER], [_FLEISCHNER]],
+        "appearance_sources": [[_at(_FLEISCHNER, "Consolidation 항목")], [_at(_FLEISCHNER, "Air bronchogram 항목")],
+                               [_at(_FLEISCHNER, "Silhouette sign 항목")]],
         "appearance_extra": [
             "한 엽에 몰려 있는지, 양쪽에 퍼져 있는지 본다.",
         ],
@@ -117,10 +138,10 @@ NOTES = {
         ],
         "next_steps": [
             _step("하얀 음영 속에 검은 기관지가 보인다.", "폐포가 차 있는 경화다. 이것만으로 원인은 알 수 없다.",
-                  "증상과 혈액검사를 같이 보고 원인을 판단한다.", _FLEISCHNER),
+                  "증상과 혈액검사를 같이 보고 원인을 판단한다.", _at(_FLEISCHNER, "Air bronchogram 항목")),
             _step("열과 기침이 있어 폐렴이 의심된다.", "폐렴일 수 있다.",
                   "외래 환자는 객담 검사를 보통 하지 않는다. 5~7일 안에 좋아지면 추적 X-ray도 필요 없다.",
-                  _ATS_IDSA_CAP),
+                  _at(_ATS_IDSA_CAP, "질문 1 객담 검사, 질문 16 추적 흉부 영상")),
         ],
         "pitfall": [
             "유방이나 근육 같은 연조직이 겹치면 폐음영처럼 보일 수 있다. 양쪽을 비교해 본다.",
@@ -135,7 +156,7 @@ NOTES = {
             "폐와 공기 사이 경계가 얇은 곡선으로 보인다. 이 선을 흉막선이라고 한다.",
             "긴장성 기흉은 주로 증상과 진찰로 진단한다. 사진에서는 종격동이 반대쪽으로 밀리고 횡격막이 내려간다.",
         ],
-        "appearance_sources": [[_FLEISCHNER], [_FLEISCHNER]],
+        "appearance_sources": [[_at(_FLEISCHNER, "Pneumothorax 항목")], [_at(_FLEISCHNER, "Pneumothorax 항목")]],
         "appearance_extra": [
             "흉막선 바깥에는 폐 혈관 무늬가 보이지 않는다.",
         ],
@@ -152,7 +173,8 @@ NOTES = {
         ],
         "next_steps": [
             _step("얇은 흉막선이 있고 바깥에 혈관 무늬가 없으며 증상이 적다.", "자발성 기흉일 수 있다.",
-                  "증상이 적으면 크기와 상관없이 경과를 지켜볼 수 있다.", _BTS_PLEURAL),
+                  "증상이 적으면 크기와 상관없이 경과를 지켜볼 수 있다.",
+                  _at(_BTS_PLEURAL, "자발성 기흉 급성기 처치 권고")),
         ],
         "pitfall": [
             "피부 주름이나 날개뼈 가장자리를 흉막선으로 잘못 보기 쉽다.",
@@ -172,7 +194,7 @@ NOTES = {
             "폐혈관이 두드러지는지, 흉막삼출이 같이 있는지 본다.",
         ],
         "related": [
-            "심부전일 수 있다.",
+            "심부전에서 흔히 보인다.",
             "판막 질환일 수 있다.",
             "심근병증일 수 있다.",
             "심낭삼출이 있으면 심장 주변 액체 때문에 커 보일 수 있다.",
@@ -185,10 +207,11 @@ NOTES = {
         ],
         "next_steps": [
             _step("심장 그림자가 커 보인다.", "심부전 같은 심장 질환일 수 있다. X-ray만으로는 원인을 알 수 없다.",
-                  "병력과 진찰 다음 첫 검사는 심초음파다. 심장 구조와 박출률을 확인한다.", _AHA_HF),
+                  "병력과 진찰 다음 첫 검사는 심초음파다. 심장 구조와 박출률을 확인한다.",
+                  _at(_AHA_HF, "4.4 심장 영상 평가")),
             _step("숨이 차는 등 심부전이 의심된다.", "심부전일 수 있다.",
                   "BNP나 NT-proBNP로 확인한다. 두 검사의 기준값은 서로 바꿔 쓰지 않고, 비만이면 낮게 나올 수 있다.",
-                  _AHA_HF),
+                  _at(_AHA_HF, "4.2 바이오마커 사용")),
         ],
         "pitfall": [
             "누워서 찍었거나 숨을 덜 들이쉰 사진에서는 심장이 실제보다 커 보인다.",
@@ -201,16 +224,23 @@ NOTES = {
     },
 }
 
-# 두 소견이 같이 보일 때. 순서 없는 쌍 → 설명
+# 두 소견이 같이 보일 때. (순서 없는 쌍, 설명, 출처 또는 None)
+# 출처는 원문을 읽고 확인한 것만 단다(2026-11-16 대조). None 은 화면에 "지침 확인 전"으로 나간다.
+#   심비대 + 양쪽 흉막삼출: BTS 2023 표 7 "Cardiac dysfunction: usually bilateral; cardiomegaly; pericardial effusion"
+#   폐음영 + 흉막삼출: BTS 2023 "presence of pulmonary consolidation" 은 악성보다 흉막 감염(부폐렴성 삼출·농흉)에 흔하다
+#   (CT 소견이고 민감도는 낮다). 폐부종(폐문 주위 음영)·수기흉(공기-액체 경계)은 Fleischner 2024·BTS 2023 에서 찾지 못했다.
+# 화면은 "동반 소견" 카드(소견 / 의심 질환 / 출처)로 보여 준다.
 COMBINATIONS = [
     ({"cardiomegaly", "pleural_effusion"},
-     "심비대와 양쪽 흉막삼출이 같이 보이면 심부전을 먼저 생각한다."),
+     "심비대와 양쪽 흉막삼출이 같이 보인다.", "심부전을 먼저 생각한다.",
+     _at(_BTS_PLEURAL, "표 7 한쪽 흉막삼출의 원인별 동반 영상 소견")),
     ({"cardiomegaly", "airspace_opacity"},
-     "심비대와 함께 양쪽 폐문 주위로 음영이 퍼지면 폐부종을 생각한다."),
+     "심비대와 함께 양쪽 폐문 주위로 음영이 퍼진다.", "폐부종일 수 있다.", None),
     ({"airspace_opacity", "pleural_effusion"},
-     "같은 쪽에 폐음영과 흉막삼출이 같이 있으면 폐렴에 따른 삼출을 생각한다."),
+     "같은 쪽에 폐음영과 흉막삼출이 같이 있다.", "폐렴에 따른 삼출이나 농흉일 수 있다.",
+     _at(_BTS_PLEURAL, "흉막 감염 절의 CT 소견")),
     ({"pneumothorax", "pleural_effusion"},
-     "공기와 액체가 같이 고이면 수평한 경계가 보일 수 있다. 이를 수기흉이라고 한다."),
+     "공기와 액체가 같이 고여 수평한 경계가 보인다.", "수기흉일 수 있다.", None),
 ]
 
 # 이 영상에 맞춰 고르는 문장(B안). 새 의학 주장을 만들지 않고, 위 NOTES 의 같은 소견 문장(pitfall·related·next_steps)을
@@ -361,7 +391,11 @@ def learning_note(disease: str | None, targets: list[dict] | None = None, *,
         "related": related,
         "confirm": list(note.get("confirm", [])),
         "confirm_note": CONFIRM_NOTE,
-        "combinations": [text for pair, text in COMBINATIONS if code in pair],
+        "combinations": [f"{sign} {suspect}" for pair, sign, suspect, _ in COMBINATIONS if code in pair],
+        # 화면용 "동반 소견" 카드: 소견·의심 질환·출처(없으면 None = 지침 확인 전)
+        "combination_items": [{"sign": sign, "suspect": suspect, "text": f"{sign} {suspect}",
+                               "source": dict(src) if src else None}
+                              for pair, sign, suspect, src in COMBINATIONS if code in pair],
         "next_steps": steps,
         "pitfall": " ".join(pitfall_lines),
         "pitfall_lines": pitfall_lines,
