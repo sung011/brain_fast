@@ -570,6 +570,7 @@
           <select id="bodyPart" class="part-select" aria-label="분석 부위">
             <option value="brain">뇌 CT</option>
             <option value="thorax">흉부 X-ray</option>
+            <option value="abdomen">복부 CT</option>
           </select>
           <button id="btnShare">화면 공유 시작</button>
           <button id="btnClear" class="secondary" disabled>박스 지우기</button>
@@ -740,10 +741,11 @@
     const btnStop = document.getElementById("btnStop");
     const bodyPart = document.getElementById("bodyPart");
 
-    // 부위별 분석 API. 흉부는 판독문(MedGemma)이 아직 없다.
+    // 부위별 분석 API. 흉부는 판독문(MedGemma)이 아직 없다. 복부는 template/MedGemma 판독문이 있다.
     const PART_API = {
       brain: { analyze: "/api/v1/analyze/screen-roi", explain: true, title: "출혈 최상위", list: "출혈 (ICH)" },
       thorax: { analyze: "/api/v1/thorax/analyze/screen-roi", explain: false, title: "흉부 최상위 소견", list: "흉부 X-ray 소견" },
+      abdomen: { analyze: "/api/v1/abdomen/analyze/screen-roi", explain: true, explainUrl: "/api/v1/abdomen/analyze/screen-roi/explain", title: "복부 최상위 장기", list: "복부 CT 장기" },
     };
     function currentPart() {
       return PART_API[bodyPart.value] || PART_API.brain;
@@ -1244,7 +1246,8 @@
         form.append("overlay_png_base64", analysis.overlay_png_base64);
       }
 
-      const res = await fetch("/api/v1/analyze/screen-roi/explain", {
+      const explainUrl = currentPart().explainUrl || "/api/v1/analyze/screen-roi/explain";
+      const res = await fetch(explainUrl, {
         method: "POST",
         body: form,
       });

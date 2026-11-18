@@ -67,7 +67,7 @@ brain_fast/
 |---|---|---|
 | `class/brain/` | 뇌 CT (출혈 + germinoma) | 있음 |
 | `class/thorax/` | 흉부 X-ray | 있음 (팀 모델 연결 전) |
-| `class/abdomen/` | 복부 | 팀원이 추가 |
+| `class/abdomen/` | 복부 CT 장기 검출 (YOLO26m, kimsungil/abdomen_m1) | 있음 |
 | `class/knee/` | 무릎 | 팀원이 추가 |
 | `class/brain_mri/` | 뇌 MRI 5질환 (YOLO26s-Seg) | 있음. `class/brain/`과 섞지 않는다 |
 

@@ -3,7 +3,8 @@
 
 업로드 이미지에서 이상 부위를 찾고, 사용자가 그린 박스/원과
 겹치는 정도로 정답 / 부분정답 / 오답을 판정한다.
-흉부 X-ray(st_part=2)는 class/thorax, 그 밖에는 class/brain 모델로 이상 부위를 찾는다.
+흉부 X-ray(st_part=2)는 class/thorax, 복부 CT(st_part=3)는 class/abdomen,
+그 밖에는 class/brain 모델로 이상 부위를 찾는다.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ PARTIAL_IOU = 0.15
 PARTIAL_RECALL = 0.25
 # 중심이 이미지 대각선 대비 이 비율 이내면 "비슷함"
 NEAR_CENTER_RATIO = 0.15
-# 흉부: 의심 부위를 다 찾았어도 그린 영역 중 의심 부위가 이 비율보다 적으면 "너무 넓게 그림" → 부분정답
+# 흉부·복부: 의심 부위를 다 찾았어도 그린 영역 중 의심 부위가 이 비율보다 적으면 "너무 넓게 그림" → 부분정답
 MIN_PRECISION = 0.25
 # 오답 노트용 사용자 ROI 윤곽 (1px dashed cyan)
 _ROI_OUTLINE = (0, 230, 255, 255)
@@ -32,10 +33,43 @@ _ROI_GAP = 3
 
 # study.st_part / st_modal 코드 (schemas/studySchemas.py ST_PART_ALIASES)
 THORAX_PART = "2"
+ABDOMEN_PART = "3"
 XRAY_MODAL = "1"
+CT_MODAL = "2"
+MRI_MODAL = "3"
 
 _brain_mod: ModuleType | None = None
 _thorax_mod: ModuleType | None = None
+_abdomen_mod: ModuleType | None = None
+
+
+def _part_code(st_part: str | None) -> str | None:
+    """brain/abdomen/3 같은 입력을 study 코드로 맞춘다."""
+    if st_part is None:
+        return None
+    key = str(st_part).strip().lower()
+    if key in ("2", "chest", "thorax", "흉부"):
+        return THORAX_PART
+    if key in ("3", "abdomen", "복부"):
+        return ABDOMEN_PART
+    if key in ("1", "brain", "뇌"):
+        return "1"
+    if key in ("4", "knee", "무릎"):
+        return "4"
+    return str(st_part).strip() or None
+
+
+def _modal_code(st_modal: str | None) -> str | None:
+    if st_modal is None:
+        return None
+    key = str(st_modal).strip().lower()
+    if key in ("1", "xray", "x-ray"):
+        return XRAY_MODAL
+    if key in ("2", "ct"):
+        return CT_MODAL
+    if key in ("3", "mri"):
+        return MRI_MODAL
+    return str(st_modal).strip() or None
 
 
 def load_brain() -> ModuleType:
@@ -83,6 +117,30 @@ def ensure_thorax(thorax: ModuleType) -> None:
     except Exception as exc:
         raise RuntimeError(
             thorax.detector_service.error or f"흉부 모델 로드 실패: {exc}"
+        ) from exc
+
+
+def load_abdomen() -> ModuleType:
+    global _abdomen_mod
+    if _abdomen_mod is not None:
+        return _abdomen_mod
+    try:
+        _abdomen_mod = import_module("class.abdomen")
+        return _abdomen_mod
+    except Exception as exc:
+        raise RuntimeError(
+            f"복부 분석 모듈을 불러오지 못했습니다. 의존성(torch·ultralytics 등)을 설치하세요. {exc}"
+        ) from exc
+
+
+def ensure_abdomen(abdomen: ModuleType) -> None:
+    if abdomen.detector_service.ready:
+        return
+    try:
+        abdomen.detector_service.load()
+    except Exception as exc:
+        raise RuntimeError(
+            abdomen.detector_service.error or f"복부 모델 로드 실패: {exc}"
         ) from exc
 
 
@@ -586,15 +644,33 @@ def grade_image_roi(
     """
     이미지 + 사용자 ROI를 채점하고 overlay PNG(base64)를 돌려준다.
 
-    st_part 가 흉부(2)면 흉부 X-ray 모델로, 그 밖에는 뇌 CT 모델로 채점한다.
-    rois(ROI 여러 개)는 흉부만 쓴다. 없으면 roi_type·좌표 한 개로 채점한다. 뇌는 rois 를 보지 않는다.
-    answer_boxes(데이터셋 정답 박스)도 흉부만 쓴다. 있으면 AI 대신 그 박스로 채점하고 AI 결과는 참고로만 둔다.
+    st_part 가 흉부(2)면 흉부 X-ray, 복부(3)면 복부 장기 검출, 그 밖에는 뇌 CT 모델로 채점한다.
+    rois(ROI 여러 개)·answer_boxes 는 흉부·복부에서 쓴다. 없으면 roi_type·좌표 한 개로 채점한다.
+    뇌는 rois 를 보지 않는다. answer_boxes 가 있으면 AI 대신 그 박스로 채점하고 AI 결과는 참고로만 둔다.
+    복부 채점 결과는 뇌·흉부와 같이 review_node(포함률 rn_recall, iou 등)에 저장된다.
     """
+    st_part = _part_code(st_part)
+    st_modal = _modal_code(st_modal)
+
     if st_part == THORAX_PART:
         if st_modal not in (None, XRAY_MODAL):
             raise ValueError("흉부는 X-ray 영상만 채점할 수 있습니다.")
         single = dict(roi_type=roi_type, x=x, y=y, width=width, height=height, cx=cx, cy=cy, radius=radius)
         return _grade_thorax(
+            image_bytes,
+            filename,
+            roi_args_list=[_roi_args(shape, normalized) for shape in (rois or [single])],
+            include_overlay=include_overlay,
+            answer_boxes=answer_boxes,
+        )
+
+    if st_part == ABDOMEN_PART:
+        # CT 권장. MRI·모달 미기입 문제도 올린 이미지로 채점·저장한다(학습 기록이 빠지지 않게).
+        # X-ray 복부 문제만 거절한다.
+        if st_modal == XRAY_MODAL:
+            raise ValueError("복부 X-ray 는 이 모델로 채점하지 않습니다. CT(또는 MRI) 문제를 사용하세요.")
+        single = dict(roi_type=roi_type, x=x, y=y, width=width, height=height, cx=cx, cy=cy, radius=radius)
+        return _grade_abdomen(
             image_bytes,
             filename,
             roi_args_list=[_roi_args(shape, normalized) for shape in (rois or [single])],
@@ -890,6 +966,154 @@ def _grade_thorax(
             "confidence": top["score"],
             "findings": findings,
             "task": "thorax",
+        },
+        "germinoma": None,
+        "disclaimer": constants.DISCLAIMER,
+        "_review_png": _to_png_bytes(review_img),
+    }
+
+
+def _grade_abdomen(
+    image_bytes: bytes,
+    filename: str,
+    *,
+    roi_args_list: list[dict],
+    include_overlay: bool,
+    answer_boxes: list[dict] | None = None,
+) -> dict:
+    """
+    복부 CT 장기 위치 채점. 응답 형식은 흉부와 같고(germinoma 는 항상 None),
+    의심 부위별 결과(targets, target_count, found_count, too_wide)가 붙는다.
+
+    기준 부위는 YOLO 장기 박스(또는 answer_boxes). 박스가 없으면 오답.
+    recall(포함률)·iou 는 review_node.rn_recall / rn_iou 로 저장된다.
+    """
+    config = import_module("class.abdomen.config")
+    constants = import_module("class.abdomen.constants")
+
+    if len(image_bytes) > config.MAX_UPLOAD_BYTES:
+        raise ValueError("이미지가 너무 큽니다 (최대 5MB).")
+    if len(image_bytes) < 64:
+        raise ValueError("유효한 이미지가 아닙니다.")
+
+    abdomen = load_abdomen()
+    ensure_abdomen(abdomen)
+    service = abdomen.detector_service
+
+    try:
+        img_uint8 = abdomen.Preprocess.load_image_uint8_from_bytes(
+            image_bytes, filename or "roi.png"
+        )
+    except Exception as exc:
+        raise ValueError(f"이미지 디코딩 실패: {exc}") from exc
+
+    h, w = img_uint8.shape[:2]
+    users = [(roi_mask(h, w, **args), args["roi_type"]) for args in roi_args_list]
+    user = np.zeros((h, w), dtype=bool)
+    for mask, _ in users:
+        user |= mask
+
+    classes = list(service.classes)
+    detections = service.detect(img_uint8)
+    probs = service.scores(detections)
+    mask_union, per_class = abdomen.Localization.locate_abnormality(detections, img_uint8)
+    ai_summary = abdomen.Localization.summarize_targets(per_class, classes=classes)
+
+    if answer_boxes:
+        source = "dataset"
+        targets = _answer_targets(answer_boxes, h, w)
+        answer_mask = np.zeros((h, w), dtype=bool)
+        for x1, y1, x2, y2 in (t["box"] for t in targets):
+            answer_mask[y1:y2, x1:x2] = True
+    else:
+        source = "ai"
+        targets = _thorax_targets(per_class, constants)
+        answer_mask = mask_union
+
+    shown = {"answer": {"mask": answer_mask, "boxes": [(t["box"], 1.0) for t in targets]}}
+    answer_findings = {str(b.get("finding")) for b in (answer_boxes or []) if b.get("finding")}
+    ai_targets = (
+        _ai_reference_targets(per_class, h, w, constants, answer_findings)
+        if source == "dataset"
+        else []
+    )
+    if ai_targets:
+        shown = {
+            "ai_ref": {
+                "mask": mask_union,
+                "outline_only": True,
+                "boxes": [(t["box"], t["confidence"]) for t in ai_targets],
+            },
+            **shown,
+        }
+
+    scored = grade_overlap(user, answer_mask)
+    scored.update(grade_regions([m for m, _ in users], targets, h, w))
+    scored["feedback"] = roi_feedback(
+        [m for m, _ in users],
+        [t["box"] for t in targets],
+        w,
+        h,
+        found=[t["found"] for t in scored["targets"]],
+        too_wide=scored["too_wide"],
+        chest=True,
+        result=scored["result"],
+    )
+
+    overlay_b64 = None
+    overlay_summary = None
+    overlay = None
+    if scored["has_abnormality"]:
+        overlay = abdomen.Localization.build_overlay_image(img_uint8, shown)
+        overlay_summary = ai_summary if source == "ai" else f"AI 참고 — {ai_summary}"
+        if include_overlay:
+            overlay_b64 = abdomen.Localization.overlay_to_base64(overlay)
+
+    review_img = overlay if overlay is not None else img_uint8
+    for mask, kind in users:
+        review_img = draw_user_roi(review_img, mask, kind)
+
+    findings = [
+        {
+            "label": name,
+            "label_ko": constants.class_ko(name),
+            "score": float(probs[i]),
+        }
+        for i, name in enumerate(classes)
+    ]
+    findings.sort(key=lambda f: f["score"], reverse=True)
+    top = findings[0] if findings else {"label": "none", "label_ko": "검출 없음", "score": 0.0}
+
+    return {
+        "ok": True,
+        "result": scored["result"],
+        "has_abnormality": scored["has_abnormality"],
+        "iou": scored["iou"],
+        "recall": scored["recall"],
+        "precision": scored["precision"],
+        "near_center": scored["near_center"],
+        "feedback": scored["feedback"],
+        "center_distance_px": scored["center_distance_px"],
+        "overlay_png_base64": overlay_b64,
+        "overlay_summary": overlay_summary,
+        "abnormality_bbox": _bbox_from_mask(answer_mask),
+        "user_roi_bbox": _bbox_from_mask(user),
+        "image": {"width": w, "height": h},
+        "target_source": source,
+        "metrics_text": _metrics_text(
+            scored["recall"], scored["precision"], source, bool(user.any() and answer_mask.any())
+        ),
+        "targets": scored["targets"],
+        "target_count": scored["target_count"],
+        "found_count": scored["found_count"],
+        "too_wide": scored["too_wide"],
+        "ai_targets": [{k: v for k, v in t.items() if k != "box"} for t in ai_targets],
+        "classification": {
+            "top_label": top["label"],
+            "top_label_ko": top["label_ko"],
+            "confidence": top["score"],
+            "findings": findings,
+            "task": "abdomen",
         },
         "germinoma": None,
         "disclaimer": constants.DISCLAIMER,

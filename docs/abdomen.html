@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>복부 CT 장기 검출 설명</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; line-height: 1.65; color: #1b2430; background: #f4f7fa; }
+    main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    h1 { font-size: 1.7rem; line-height: 1.3; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.2rem; margin: 2rem 0 0.6rem; }
+    h3 { font-size: 1.05rem; margin: 0 0 0.4rem; }
+    p, li { margin: 0.35rem 0; }
+    a { color: #1a6b73; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; background: #e8eef4; padding: 0.05rem 0.3rem; border-radius: 4px; }
+    ol, ul { padding-left: 1.25rem; }
+    .lead { font-size: 1.05rem; }
+    .note, article { background: #fff; border: 1px solid #d5dee8; border-radius: 10px; padding: 1rem 1.1rem; margin: 0.8rem 0; }
+    .note { background: #fff8e8; border-color: #ead7a2; }
+    dl { margin: 0.4rem 0 0; }
+    dt { font-weight: 700; margin-top: 0.55rem; }
+    dd { margin: 0.15rem 0 0 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <p><a href="index.html">학습 문서 목록</a></p>
+    <h1>복부 CT 장기 검출은 무엇을 하는가</h1>
+    <p class="lead">화면 캡처(또는 DICOM) 복부 CT 절편 한 장을 받아, YOLO26m(<code>kimsungil/abdomen_m1</code>)으로 13개 장기의 박스와 점수를 돌리고, 뇌 CT와 같은 형식의 한국어 판독문(학습용)을 만듭니다.</p>
+    <div class="note">
+      <p>결과는 교육·연구용 참고입니다. 질환 진단이 아니라 <strong>장기 위치</strong>를 표시합니다. 최종 판단은 의사에게 있습니다.</p>
+      <p>뇌 CT(<a href="brain.html">출혈·germinoma</a>)·흉부(<a href="thorax.html">X-ray</a>)와 주소·패키지가 모두 따로입니다.</p>
+    </div>
+
+    <h2>한 번 요청이 지나가는 순서</h2>
+    <ol>
+      <li>브라우저가 ROI 이미지를 <code>POST /api/v1/abdomen/analyze/screen-roi</code>로 보냅니다.</li>
+      <li><code>routers/abdomen.py</code>가 <code>class/abdomen/</code>을 불러 전처리 → 탐지 → overlay를 부릅니다.</li>
+      <li>응답 형식은 뇌 CT 분석과 같습니다. <code>classification.task</code>가 <code>abdomen</code>이고, 장기 점수는 그 장기 박스의 최고 신뢰도입니다.</li>
+      <li>판독문이 필요하면 <code>POST /api/v1/abdomen/analyze/screen-roi/explain</code>에 같은 이미지와 <code>probs_json</code>(13개)을 보냅니다.</li>
+    </ol>
+
+    <h2>검출 클래스 (13)</h2>
+    <p>adrenal_gland, bladder, colon, duodenum, esophagus, gallbladder, kidney, liver, pancreatic, prostate, spleen, stomach, uterus</p>
+
+    <article>
+      <h3>class/abdomen/config.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>복부 전용 환경 변수를 읽습니다. DB·NAS 설정과 섞지 않습니다.</dd>
+        <dt>받는 것</dt><dd><code>ABDOMEN_HF_REPO</code>, <code>ABDOMEN_HF_FILENAME</code>, <code>ABDOMEN_MODEL_PATH</code>, <code>ABDOMEN_CONF_THRESHOLD</code> 등.</dd>
+        <dt>하는 일</dt><dd>가중치 위치와 검출 기준값을 정합니다.</dd>
+        <dt>돌리는 것</dt><dd>설정 상수·헬퍼.</dd>
+        <dt>하지 않는 일</dt><dd>추론·판독문을 만들지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>뇌용 <code>HF_REPO</code>와 다릅니다. 복부만 <code>ABDOMEN_HF_REPO</code>를 씁니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/abdomen/constants.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>장기 코드 순서·한글 이름·overlay 색·면책 문구를 둡니다.</dd>
+        <dt>받는 것</dt><dd>없음(상수).</dd>
+        <dt>하는 일</dt><dd>학습 때 클래스 순서를 코드에 고정합니다.</dd>
+        <dt>돌리는 것</dt><dd><code>class_ko()</code> 등.</dd>
+        <dt>하지 않는 일</dt><dd>모델을 부르지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>모델 안의 이름은 <code>pancreatic</code>입니다. 한글만 "췌장"입니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/abdomen/preprocess.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>업로드 바이트를 HxWx3 uint8로 바꿉니다.</dd>
+        <dt>받는 것</dt><dd>PNG/JPG/DICOM 바이트.</dd>
+        <dt>하는 일</dt><dd>DICOM은 soft-tissue 윈도우(WL=40, WW=400). 화면 캡처는 그레이 3채널.</dd>
+        <dt>돌리는 것</dt><dd>모델 입력 이미지와 밝기 통계.</dd>
+        <dt>하지 않는 일</dt><dd>탐지·판독문을 하지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>뇌 CT의 brain/subdural 윈도우와 다릅니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/abdomen/ensemble.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>YOLO26m 가중치를 불러 장기 박스를 탐지합니다.</dd>
+        <dt>받는 것</dt><dd>HxWx3 uint8.</dd>
+        <dt>하는 일</dt><dd>첫 요청 때 HF에서 <code>best.pt</code>를 받고(또는 로컬 경로), <code>detect()</code>·<code>scores()</code>를 제공합니다.</dd>
+        <dt>돌리는 것</dt><dd><code>Detection</code> 목록과 클래스별 최고 점수.</dd>
+        <dt>하지 않는 일</dt><dd>질환을 진단하지 않습니다. overlay·판독문은 다른 파일이 합니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>파일 이름은 ensemble이지만 역할은 탐지기입니다(흉부와 같은 자리).</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/abdomen/localization.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>박스를 색으로 칠한 overlay와 한 줄 요약을 만듭니다.</dd>
+        <dt>받는 것</dt><dd>검출 목록과 원본 이미지.</dd>
+        <dt>하는 일</dt><dd>겹치는 박스를 합치고 장기마다 최대 2곳을 남깁니다.</dd>
+        <dt>돌리는 것</dt><dd>마스크, overlay PNG(base64), 요약 문자열.</dd>
+        <dt>하지 않는 일</dt><dd>Grad-CAM을 쓰지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>박스가 없어도 원본만 그린 overlay가 나옵니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>class/abdomen/report_format.py · medgemma.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>뇌 CT와 같은 【검사】~【면책】 형식의 한국어 판독문을 만듭니다.</dd>
+        <dt>받는 것</dt><dd>13개 점수, overlay, (선택) 원본 이미지.</dd>
+        <dt>하는 일</dt><dd>기본은 <code>template</code>(다운로드 없음). <code>api</code>/<code>local</code>은 MedGemma.</dd>
+        <dt>돌리는 것</dt><dd>판독문 문자열.</dd>
+        <dt>하지 않는 일</dt><dd>치료 권고·확진을 쓰지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>점수가 0이어도 explain은 호출할 수 있습니다. "검출 없음" 문장이 나옵니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>routers/abdomen.py</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>복부 분석 주소를 열고 <code>class/abdomen/</code>을 부릅니다.</dd>
+        <dt>받는 것</dt><dd><code>GET /health</code>, <code>POST /analyze/screen-roi</code>, <code>POST /analyze/screen-roi/explain</code>.</dd>
+        <dt>하는 일</dt><dd>크기 검사·오류 코드만 정하고 계산은 패키지에 넘깁니다.</dd>
+        <dt>돌리는 것</dt><dd>뇌 CT와 같은 <code>ScreenRoiResponse</code> / <code>ExplainResponse</code>.</dd>
+        <dt>하지 않는 일</dt><dd>SQL·HTML을 넣지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>주소 가운데에 <code>/abdomen</code>이 들어갑니다. 뇌 CT는 <code>/api/v1/analyze/...</code>입니다.</dd>
+      </dl>
+    </article>
+
+    <h2>설정</h2>
+    <p>가중치(<code>best.pt</code>)는 깃 저장소에 넣지 않습니다. 뇌 MRI와 같이 <code>.env</code>에만 경로·HF 저장소를 적습니다. 둘 다 비우면 복부 API만 503이고 다른 기능은 그대로입니다.</p>
+    <pre><code>ABDOMEN_HF_REPO=kimsungil/abdomen_m1
+ABDOMEN_HF_FILENAME=best.pt
+ABDOMEN_CONF_THRESHOLD=0.15</code></pre>
+    <h2>학습 ROI 채점·저장</h2>
+    <p>복부 문제(<code>study.st_part=3</code>)는 <code>POST /learning/roi-grade</code>에서 복부 YOLO로 채점합니다. 응답의 <code>recall</code>(포함률)·<code>iou</code>가 <code>review_node.rn_recall</code>·<code>rn_iou</code>에 저장됩니다. 예전에는 복부도 뇌 CT 모델로 떨어져 포함률이 비거나 잘못 나왔습니다.</p>
+
+    <p><code>GET /api/v1/abdomen/health</code>로 로드 상태를 확인합니다. <code>pytest tests/test_abdomen.py</code>는 가짜 탐지기로 응답 형식·채점 저장 필드를 확인합니다.</p>
+  </main>
+</body>
+</html>

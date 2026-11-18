@@ -637,8 +637,8 @@ async def learning_roi_grade(
         st_part: str | None = Form(
             None,
             description=(
-                    "부위(brain, chest 또는 1~4). 다음 문제와 채점 모델 선택에 쓴다. "
-                    "study_idx가 있으면 study 행 값이 우선"
+                    "부위(brain, chest, abdomen 또는 1~4). 다음 문제와 채점 모델 선택에 쓴다. "
+                    "study_idx가 있으면 study 행 값이 우선. 복부(3)는 복부 CT 장기 검출 모델로 채점한다"
             ),
         ),
         st_modal: str | None = Form(
@@ -664,13 +664,15 @@ async def learning_roi_grade(
     - CT/단일 영상은 기존과 동일. slice_index·image_path는 optional.
     - 흉부(st_part=2) X-ray 문제는 흉부 모델로 채점한다. 흉부 모델이 준비되지 않았으면 503.
       rois 로 ROI 여러 개를 보내면 의심 부위마다 따로 채점하고 targets·found_count 를 돌려준다.
+    - 복부(st_part=3) CT 문제는 복부 장기 검출 모델로 채점한다. 모델이 준비되지 않았으면 503.
+      흉부와 같이 rois·포함률(rn_recall)·ROI 정확도(rn_iou)를 review_node 에 남긴다.
     - 제출 이미지는 사용자 ROI(박스/원)를 그린 뒤
       Object Storage /stylesheets/assets/review 에 저장하고
       review_node.rn_image 에 웹 경로를 넣는다.
     - Object Storage 가 꺼져 있거나 업로드에 실패해도 채점 결과와 review_node 기록은 남긴다.
       이때 image_saved=false, image_error 에 이유가 들어간다.
     - 포함률(rn_recall), ROI 정확도(rn_iou), 위치 요약(rn_overlay_summary),
-      출혈·germinoma 소견(rn_findings), MRI 슬라이스(rn_slice_index)도 같은 행에 넣는다.
+      출혈·germinoma·흉부·복부 소견(rn_findings), MRI 슬라이스(rn_slice_index)도 같은 행에 넣는다.
     - user_idx + study_idx 를 넣으면 제출 이력이 남아
       이후 GET /learning/problem?user_idx=... 에서 같은 문제가 제외된다.
     - next: 방금 푼 문제를 제외한 다음 랜덤 문제(없으면 null).

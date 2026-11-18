@@ -34,7 +34,7 @@ class ClassificationResult(BaseModel):
     confidence: float
     findings: list[FindingItem]
     probs: list[float] = Field(description="CLASSES 순서의 원시 확률")
-    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma | thorax")
+    task: str = Field(default="hemorrhage", description="hemorrhage | germinoma | thorax | abdomen")
 
 
 class NasUploadInfo(BaseModel):

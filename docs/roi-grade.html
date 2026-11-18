@@ -87,9 +87,9 @@
         <dt>한 줄</dt>
         <dd>올린 이미지에서 이상 부위를 찾고 사용자 ROI와 겹침으로 판정합니다.</dd>
         <dt>받는 것</dt>
-        <dd>이미지 바이트와 박스/원 좌표.</dd>
+        <dd>이미지 바이트와 박스/원 좌표. <code>st_part</code>가 흉부(2)·복부(3)이면 해당 탐지 모델을 씁니다.</dd>
         <dt>하는 일</dt>
-        <dd>뇌 앙상블·localization으로 GT 마스크를 만들고 IoU·재현율로 정답/부분정답/오답을 냅니다.</dd>
+        <dd>뇌는 앙상블·localization, 흉부·복부는 YOLO 박스로 GT 마스크를 만들고 IoU·재현율(포함률)로 정답/부분정답/오답을 냅니다. 그 값이 <code>review_node.rn_iou</code>·<code>rn_recall</code>에 저장됩니다.</dd>
         <dt>돌려주는 것</dt>
         <dd>판정, 점수, overlay PNG(base64), 사용자/이상 bbox.</dd>
         <dt>하지 않는 일</dt>
