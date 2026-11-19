@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from models.studyModel import StudyModel
 from repositories import studyRepositories as repositories
-from schemas.studySchemas import ST_MODAL_VALUES, ST_PART_VALUES
+from schemas.studySchemas import ST_MODAL_VALUES, ST_PART_VALUES, parse_study_image_paths
 
 
 def format_updated_at(now: datetime | None = None) -> str:
@@ -12,8 +12,35 @@ def format_updated_at(now: datetime | None = None) -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
+def summarize_st_image_for_list(st_image: str | None) -> str:
+    """목록용 짧은 표시. 슬라이드 JSON 전체를 내려보내지 않는다."""
+    paths = parse_study_image_paths(st_image)
+    if paths:
+        return f"슬라이드 {len(paths)}장"
+    return (st_image or "").strip()
+
+
 def list_studies(db: Session) -> list[StudyModel]:
     return repositories.list_all(db)
+
+
+def list_studies_for_admin(db: Session) -> list[dict]:
+    """관리자 학습 목록. st_image는 요약만 넣어 응답 크기를 줄인다."""
+    rows = repositories.list_all(db)
+    return [
+        {
+            "idx": row.idx,
+            "del_yn": row.del_yn,
+            "st_part": row.st_part,
+            "st_modal": row.st_modal,
+            "st_image": summarize_st_image_for_list(row.st_image),
+            "st_disease": row.st_disease,
+            "created_at": row.created_at,
+            "updated_at": row.updated_at,
+            "state": row.state,
+        }
+        for row in rows
+    ]
 
 
 def get_study(db: Session, idx: int) -> StudyModel | None:

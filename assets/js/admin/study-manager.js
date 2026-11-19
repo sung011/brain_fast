@@ -138,6 +138,8 @@
             $table.DataTable({
                 destroy: true,
                 paging: true,
+                processing: true,
+                deferRender: true,
                 ajax: {
                     url: '/admin/studies_all',
                     type: 'GET',
@@ -222,6 +224,8 @@
                     info: '_START_ - _END_ / 총 _TOTAL_건',
                     infoEmpty: '0 건',
                     infoFiltered: '(전체 _MAX_건 중 필터)',
+                    loadingRecords: '불러오는 중…',
+                    processing: '불러오는 중…',
                     paginate: {previous: '이전', next: '다음'},
                 },
                 order: [[5, 'desc']],

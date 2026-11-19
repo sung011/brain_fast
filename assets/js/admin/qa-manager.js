@@ -143,6 +143,14 @@
             language: {
                 emptyTable: '문의 내역이 없습니다.',
                 zeroRecords: '검색 결과가 없습니다.',
+                search: '검색:',
+                lengthMenu: '_MENU_개씩 보기',
+                info: '_START_ - _END_ / 총 _TOTAL_건',
+                infoEmpty: '0 건',
+                infoFiltered: '(전체 _MAX_건 중 필터)',
+                loadingRecords: '불러오는 중…',
+                processing: '불러오는 중…',
+                paginate: {previous: '이전', next: '다음'},
             },
         });
 

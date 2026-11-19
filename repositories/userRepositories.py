@@ -38,15 +38,35 @@ def get_by_user(db: Session, user_id: str, user_pw: str) -> UserModel | None:
     return db.scalars(stmt).first()
 
 
+def _member_list_filters(*, active_only: bool = True):
+    """회원 관리 목록과 같은 조건. 로그인용 admin 계정은 목록·인원 집계에서 뺀다."""
+    filters = []
+    if active_only:
+        filters.extend(
+            [
+                UserModel.del_yn == "N",
+                UserModel.state == "N",
+                UserModel.user_id != "admin",
+            ]
+        )
+    return filters
+
+
+def count_members(db: Session, *, active_only: bool = True) -> int:
+    """회원 관리에 보이는 인원 수(대시보드 카드와 동일)."""
+    stmt = select(func.count()).select_from(UserModel)
+    filters = _member_list_filters(active_only=active_only)
+    if filters:
+        stmt = stmt.where(*filters)
+    return int(db.scalar(stmt) or 0)
+
+
 def list_all(db: Session, *, active_only: bool = True) -> list[UserModel]:
     """회원 목록을 최신 가입순으로 조회한다."""
     stmt = select(UserModel).order_by(UserModel.created_at.desc())
-    if active_only:
-        stmt = stmt.where(
-            UserModel.del_yn == "N",
-            UserModel.state == "N",
-            UserModel.user_id != "admin",
-        )
+    filters = _member_list_filters(active_only=active_only)
+    if filters:
+        stmt = stmt.where(*filters)
     return list(db.scalars(stmt).all())
 
 

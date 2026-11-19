@@ -490,7 +490,8 @@ def study_detail_page(idx: int, request: Request, partial: bool = False):
 
 @router.get("/studies_all", response_model=list[StudyOut])
 def studies_all(db: Session = Depends(get_db)):
-    return study_service.list_studies(db)
+    """학습 목록 JSON. 슬라이드 문제는 경로 배열 대신 '슬라이드 N장'만 보낸다."""
+    return study_service.list_studies_for_admin(db)
 
 
 @router.get("/studies/stream")

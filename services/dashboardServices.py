@@ -11,7 +11,7 @@ from sqlalchemy.types import Date
 
 from models.reviewNodeModel import ReviewNodeModel
 from models.studyModel import StudyModel
-from models.userModel import UserModel
+from repositories import userRepositories as user_repositories
 from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
 from services.reviewNodeServices import list_for_admin, solution_label
 
@@ -28,14 +28,8 @@ def get_stats(db: Session) -> dict[str, Any]:
     today_start = datetime.combine(today, datetime.min.time())
     week_start = datetime.combine(today - timedelta(days=6), datetime.min.time())
 
-    user_count = int(
-        db.scalar(
-            select(func.count())
-            .select_from(UserModel)
-            .where(UserModel.del_yn == "N")
-        )
-        or 0
-    )
+    # 회원 관리(/admin/users_all)와 같은 기준: 활성 회원, 로그인용 admin 제외
+    user_count = user_repositories.count_members(db)
     study_count = int(
         db.scalar(
             select(func.count())
