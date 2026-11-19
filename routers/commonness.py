@@ -705,7 +705,7 @@ async def learning_roi_grade(
             st_modal=st_modal,
         )
         roi_list = parse_rois(rois)
-        # 정답 박스가 있는 문제면 AI 대신 그 박스로 채점한다 (흉부만. 지금은 칸이 없어 늘 None)
+        # 정답 박스가 있는 문제면 AI 대신 그 박스로 채점한다 (흉부만. class/thorax/answer_boxes.json 에 없는 문제면 None)
         answer_boxes = learning_service.get_answer_boxes(db, study_idx)
     except ValueError as exc:
         raise HTTPException(
@@ -775,7 +775,9 @@ async def learning_roi_grade(
         result["expected_disease"] = answered.st_disease if answered else None
     # 정답(흉부는 소견)으로 고른 학습 해설. 정답을 보여 준 뒤라 함께 돌려줘도 된다 (RAG 연결 전에는 흉부 고정 해설)
     result["learning_note"] = learning_note_service.get_learning_note(
-        grade_part, result.get("expected_disease"), result.get("targets")
+        grade_part, result.get("expected_disease"), result.get("targets"),
+        view=learning_service.get_view_position(db, study_idx),
+        target_source=result.get("target_source"),
     )
 
     await review_events.publish(
