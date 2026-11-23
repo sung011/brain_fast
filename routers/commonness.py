@@ -569,6 +569,9 @@ def learning_submit(body: LearningSubmitBody, db: Session = Depends(get_db)):
         "correct": result["correct"],
         "study_idx": result["study_idx"],
         "expected": result["expected"],
+        # 흉부: 사진에 같이 있는 다른 소견. also_match 면 "있는 소견이지만 이 문제의 주 소견은 아니에요" 로 안내
+        "also_findings": result.get("also_findings", []),
+        "also_match": result.get("also_match", False),
         "exclude_idxs": result["exclude_idxs"],
         "next": _problem_payload(next_row) if next_row else None,
     }
@@ -707,6 +710,8 @@ async def learning_roi_grade(
         roi_list = parse_rois(rois)
         # 정답 박스가 있는 문제면 AI 대신 그 박스로 채점한다 (흉부만. class/thorax/answer_boxes.json 에 없는 문제면 None)
         answer_boxes = learning_service.get_answer_boxes(db, study_idx)
+        # 같이 있는 소견(흉부): 그 자리에 그린 ROI 는 틀린 곳으로 보지 않고 안내만 한다
+        answer_also = learning_service.get_answer_also(db, study_idx)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -732,6 +737,7 @@ async def learning_roi_grade(
             st_modal=grade_modal,
             rois=roi_list,
             answer_boxes=answer_boxes,
+            answer_also=answer_also,
         )
     except ValueError as exc:
         raise HTTPException(

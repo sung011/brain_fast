@@ -29,7 +29,7 @@
     <h1>흉부 X-ray 분석은 무엇을 하는가</h1>
     <p class="lead">흉부 X-ray 화면의 일부를 받아, 소견마다 따로 있는 탐지 모델로 이상 부위를 <strong>네모 박스</strong>로 찾고 색으로 표시합니다. 학습용 보조이며 진단이 아닙니다.</p>
     <div class="note">
-      <p>지금 연결할 수 있는 모델은 <strong>폐음영</strong>(mediscan_opacity_detector_v3. 2026-11-05에 v2에서 바꿈: RSNA에 다른 병원 의사 박스 자료 SIIM-COVID·VinDr를 더해 처음부터 학습. 학습에 쓰지 않은 스페인 병원 사진 PadChest-GR에서 구분력이 0.750에서 0.812로 올랐고, NIH 사진에서는 거의 같았습니다. 기준값 0.0519)과 <strong>흉막삼출</strong>(mediscan_effusion_detector_v2_3) 두 가지와, 2026-10-20에 추가한 <strong>기흉</strong>(mediscan_pneumothorax_detector_v2, SIIM+VinDr 학습, 기준값 0.125)입니다. 기흉은 NIH 다른 병원 사진 20장을 모두 찾았지만 위치는 대략적입니다(겹침 0.3 이상 11/20). <strong>심비대</strong>(mediscan_cardiomegaly_detector_v1, VinDr 학습, 기준값 0.35)는 2026-10-21에 추가했습니다. NIH 심비대 사진 20장 중 18장을 찾았지만, 누워서 찍은(AP) 사진은 심장이 크게 보여 정상 사진도 심비대로 표시하는 일이 많습니다. NIH 정상 AP 사진을 학습에 더해 봤더니 헛짚기는 줄었지만 진짜 심비대도 거의 못 찾게 되어(모델이 "NIH AP 사진은 정상"이라는 지름길을 배움) 처음 모델을 쓰고, 해설에 AP 사진의 한계를 적었습니다.</p>
+      <p>지금 연결할 수 있는 모델은 <strong>폐음영</strong>(mediscan_opacity_detector_v3. 2026-11-05에 v2에서 바꿈: RSNA에 다른 병원 의사 박스 자료 SIIM-COVID·VinDr를 더해 처음부터 학습. 학습에 쓰지 않은 스페인 병원 사진 PadChest-GR에서 구분력이 0.750에서 0.812로 올랐고, NIH 사진에서는 거의 같았습니다. 기준값 0.0519. 2026-11-23에 v4(mediscan_opacity_detector_v4)로 바꿈: v3에서 이어 학습하면서 ChestX-Det(NIH 사진, 영상의학과 전문의 3명 라벨)의 경화 박스를 폐음영으로, 경화 없이 다른 소견만 있는 사진을 "폐음영 없음"으로 가르침. 의사 라벨 문제 138장에서 폐음영 없는 사진의 잘못 표시가 45%에서 35%로, PadChest-GR 구분력이 0.812에서 0.887로 좋아졌고 찾는 비율은 거의 같음. 기준값 0.131)과 <strong>흉막삼출</strong>(mediscan_effusion_detector_v2_3) 두 가지와, 2026-10-20에 추가한 <strong>기흉</strong>(mediscan_pneumothorax_detector_v2, SIIM+VinDr 학습, 기준값 0.125)입니다. 기흉은 NIH 다른 병원 사진 20장을 모두 찾았지만 위치는 대략적입니다(겹침 0.3 이상 11/20). <strong>심비대</strong>(mediscan_cardiomegaly_detector_v1, VinDr 학습, 기준값 0.35)는 2026-10-21에 추가했습니다. NIH 심비대 사진 20장 중 18장을 찾았지만, 누워서 찍은(AP) 사진은 심장이 크게 보여 정상 사진도 심비대로 표시하는 일이 많습니다. NIH 정상 AP 사진을 학습에 더해 봤더니 헛짚기는 줄었지만 진짜 심비대도 거의 못 찾게 되어(모델이 "NIH AP 사진은 정상"이라는 지름길을 배움) 처음 모델을 쓰고, 해설에 AP 사진의 한계를 적었습니다.</p>
       <p>흉막삼출은 v2.1 대신 v2.3을 씁니다. PadChest 독립 테스트 913장에서 위양성이 130개에서 89개로 줄었고(놓친 병변은 7개에서 8개), AUROC는 0.86에서 0.94로 올랐습니다. 매우 큰 흉막삼출을 놓칠 수 있는 약점은 남아 있습니다.</p>
       <p><code>.env</code>에 <code>THORAX_PACKAGES</code>와 <code>THORAX_HF_REPO</code>(개발 중에는 <code>THORAX_LOCAL_DIR</code>)를 넣기 전까지 흉부 분석과 흉부 ROI 채점은 "모델 준비 중"(503)을 돌려줍니다. 판독문(MedGemma)은 아직 없습니다.</p>
     </div>
@@ -153,6 +153,18 @@
         <dt>돌려주는 것</dt><dd>소견별 점수, overlay, 요약, 면책 문구.</dd>
         <dt>하지 않는 일</dt><dd>판독문(<code>/explain</code>)은 없습니다.</dd>
         <dt>헷갈리기 쉬운 점</dt><dd>뇌 CT 주소는 <code>/api/v1/analyze/...</code>, 흉부는 가운데에 <code>/thorax</code>가 들어갑니다.</dd>
+      </dl>
+    </article>
+
+    <article>
+      <h3>같이 있는 소견 (class/thorax/answers.py · answer_boxes.json 의 also)</h3>
+      <dl>
+        <dt>한 줄로</dt><dd>문제 사진에 대표 소견 말고 실제로 같이 있는 소견을 적어 두고, 학습자가 그걸 맞혀도 틀린 것으로 보지 않게 합니다.</dd>
+        <dt>받는 것</dt><dd>NIH 문제는 NIH 원래 라벨(Data_Entry_2017 의 Finding Labels)에서, ChestX-Det 문제는 problems.csv 의 also_findings 열(전문의 라벨)에서 채웁니다.</dd>
+        <dt>하는 것</dt><dd>병명 제출: 같이 있는 소견을 내면 오답은 그대로 두고 <code>also_match</code> 로 "있는 소견이지만 이 문제의 주 소견은 아니에요"를 알려 줍니다. ROI 채점: 그 소견 자리(ChestX-Det 은 의사 박스, NIH 는 그 소견의 AI 영역)에 그린 ROI 는 "정답이 아닌 곳"·"너무 넓게 그림" 계산에서 빼고, 찾았는지만 <code>also_targets</code> 로 알려 줍니다.</dd>
+        <dt>돌려주는 것</dt><dd>제출 응답의 <code>also_findings</code>, <code>also_match</code>. ROI 채점 응답의 <code>also_findings</code>, <code>also_targets</code>(0~1 비율 좌표, found).</dd>
+        <dt>하지 않는 일</dt><dd>판정(정답·부분정답·오답)은 대표 소견으로만 합니다. 같이 있는 소견으로 점수를 올리지 않습니다.</dd>
+        <dt>헷갈리기 쉬운 점</dt><dd>문제 401장 중 144장이 소견 2개 이상인 사진이었습니다. 대표 소견 하나만 정답으로 보면 AI 1순위 일치율이 53%로 낮게 보이지만, 같이 있는 소견까지 보면 67%입니다. NIH 라벨은 판독문에서 자동으로 뽑은 것이라 틀릴 수 있어 안내만 하고 판정에는 쓰지 않습니다.</dd>
       </dl>
     </article>
 

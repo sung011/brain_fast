@@ -389,6 +389,9 @@ def roi_feedback(
     too_wide: bool = False,
     chest: bool = False,
     result: str | None = None,
+    also_boxes: list[tuple[int, int, int, int]] | None = None,
+    also_names: list[str] | None = None,
+    also_found: list[bool] | None = None,
 ) -> list[str]:
     """
     틀린 이유를 학습자가 알아듣게 한두 줄로 알려 준다. 채점 숫자(겹침·중심)를 말로 바꾼 것이다.
@@ -432,11 +435,18 @@ def roi_feedback(
             tips.append(f"다른 곳을 골랐어요. 정답은 {direction}에 있어요.")
         else:
             tips.append("다른 곳을 골랐어요. 색칠된 곳을 확인해 보세요.")
-    extra = sum(1 for u in users if all(_box_iou(u, t) == 0 for t in target_boxes))
+    # 같이 있는 소견 자리에 그린 ROI 는 "정답이 아닌 곳"으로 세지 않는다
+    extra = sum(1 for u in users if all(_box_iou(u, t) == 0 for t in list(target_boxes) + list(also_boxes or [])))
     if extra and len(users) > 1:
         tips.append(f"정답이 아닌 곳에 그린 ROI 가 {extra}개 있어요.")
     if too_wide:
         tips.append("병변은 다 감쌌어요. 다만 너무 넓게 그려서, 이상한 부분만 감싸 보세요.")
+    if also_names:
+        names = "·".join(also_names)
+        if any(also_found or []):
+            tips.append(f"이 사진에는 {names}도 있어요. 그 자리에 그린 ROI 도 실제로 있는 병변이라 틀린 게 아니에요.")
+        else:
+            tips.append(f"이 사진에는 {names}도 같이 있어요. 이 문제의 주 소견은 아니지만 함께 봐 두세요.")
     # 같은 말이 여러 번 나오지 않게
     return list(dict.fromkeys(tips))
 
@@ -461,6 +471,7 @@ def grade_regions(
     targets: list[dict],
     height: int,
     width: int,
+    also_targets: list[dict] | None = None,
 ) -> dict:
     """
     흉부: 의심 부위마다 따로 채점한다.
@@ -471,6 +482,9 @@ def grade_regions(
 
     의심 부위를 하나로 합쳐 비교하지 않는 이유: 두 곳의 중심을 합치면 그 사이(아무것도 없는 곳)가
     "가깝다"고 판정되고, 한 곳만 찾았는지 둘 다 찾았는지 구분하지 못한다.
+
+    also_targets(같이 있는 소견 부위)는 판정에 넣지 않는다. 다만 그 안에 그린 영역은 "너무 넓게 그림"
+    계산에서 틀린 곳으로 치지 않고, 찾았는지(겹치거나 가까움)만 따로 돌려준다.
     """
     diag = float(np.hypot(width, height))
     user_any = np.zeros((height, width), dtype=bool)
@@ -511,6 +525,26 @@ def grade_regions(
             "iou": round(best_iou, 4),
         })
 
+    also_graded = []
+    for target in also_targets or []:
+        x1, y1, x2, y2 = target["box"]
+        t_mask = np.zeros((height, width), dtype=bool)
+        t_mask[y1:y2, x1:x2] = True
+        center = ((x1 + x2) / 2, (y1 + y2) / 2)
+        hit = False
+        for mask in user_masks:
+            uc = _center(mask)
+            if np.logical_and(mask, t_mask).any() or (
+                uc and diag > 0 and math.hypot(uc[0] - center[0], uc[1] - center[1]) / diag <= NEAR_CENTER_RATIO
+            ):
+                hit = True
+        target_any |= t_mask
+        also_graded.append({
+            "x": round(x1 / width, 6), "y": round(y1 / height, 6),
+            "width": round((x2 - x1) / width, 6), "height": round((y2 - y1) / height, 6),
+            "findings": target["findings"], "found": hit,
+        })
+
     user_n = int(user_any.sum())
     precision = int(np.logical_and(user_any, target_any).sum()) / user_n if user_n else 0.0
     found_count = sum(t["found"] for t in graded)
@@ -532,6 +566,7 @@ def grade_regions(
         "target_count": len(graded),
         "found_count": found_count,
         "too_wide": too_wide,
+        "also_targets": also_graded,
     }
 
 
@@ -640,9 +675,11 @@ def grade_image_roi(
     st_modal: str | None = None,
     rois: list[dict] | None = None,
     answer_boxes: list[dict] | None = None,
+    answer_also: dict | None = None,
 ) -> dict:
     """
     이미지 + 사용자 ROI를 채점하고 overlay PNG(base64)를 돌려준다.
+    answer_also(흉부만): 대표 소견 말고 사진에 같이 있는 소견 {"findings", "boxes"}. 그 자리 ROI 는 틀린 곳으로 보지 않는다.
 
     st_part 가 흉부(2)면 흉부 X-ray, 복부(3)면 복부 장기 검출, 그 밖에는 뇌 CT 모델로 채점한다.
     rois(ROI 여러 개)·answer_boxes 는 흉부·복부에서 쓴다. 없으면 roi_type·좌표 한 개로 채점한다.
@@ -662,6 +699,7 @@ def grade_image_roi(
             roi_args_list=[_roi_args(shape, normalized) for shape in (rois or [single])],
             include_overlay=include_overlay,
             answer_boxes=answer_boxes,
+            answer_also=answer_also,
         )
 
     if st_part == ABDOMEN_PART:
@@ -835,6 +873,7 @@ def _grade_thorax(
     roi_args_list: list[dict],
     include_overlay: bool,
     answer_boxes: list[dict] | None = None,
+    answer_also: dict | None = None,
 ) -> dict:
     """
     흉부 X-ray 채점. 응답 형식은 뇌 CT 채점과 같고(germinoma 는 항상 None),
@@ -899,13 +938,25 @@ def _grade_thorax(
             **shown,
         }
 
+    # 같이 있는 소견(데이터셋 정답일 때만): 박스가 있으면 그 박스, 없으면(NIH) 그 소견의 AI 영역
+    also_names = list((answer_also or {}).get("findings") or []) if source == "dataset" else []
+    also_targets = []
+    if also_names:
+        also_targets = _answer_targets((answer_also or {}).get("boxes") or [], h, w)
+        boxed = {f for t in also_targets for f in t["findings"]}
+        rest = {code: info for code, info in per_class.items()
+                if constants.class_ko(code) in also_names and constants.class_ko(code) not in boxed}
+        also_targets += _thorax_targets(rest, constants)
+
     # iou·recall·precision 은 전체를 합쳐 계산한 참고값. 판정(result)은 의심 부위별 채점으로 바꾼다
     scored = grade_overlap(user, answer_mask)
-    scored.update(grade_regions([m for m, _ in users], targets, h, w))
+    scored.update(grade_regions([m for m, _ in users], targets, h, w, also_targets=also_targets))
     scored["feedback"] = roi_feedback(
         [m for m, _ in users], [t["box"] for t in targets], w, h,
         found=[t["found"] for t in scored["targets"]], too_wide=scored["too_wide"], chest=True,
         result=scored["result"],
+        also_boxes=[t["box"] for t in also_targets], also_names=also_names,
+        also_found=[a["found"] for a in scored["also_targets"]],
     )
 
     overlay_b64 = None
@@ -960,6 +1011,9 @@ def _grade_thorax(
         "too_wide": scored["too_wide"],
         # 정답이 데이터셋 박스일 때 AI 가 찾은 부위(참고). 0~1 비율 좌표. 없으면 빈 목록
         "ai_targets": [{k: v for k, v in t.items() if k != "box"} for t in ai_targets],
+        # 사진에 같이 있는 다른 소견(판정에 안 넣음). also_targets: 그 자리(0~1 비율)와 학습자가 그 자리를 그렸는지(found)
+        "also_findings": also_names,
+        "also_targets": scored["also_targets"],
         "classification": {
             "top_label": top["label"],
             "top_label_ko": top["label_ko"],

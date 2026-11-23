@@ -452,6 +452,19 @@ def test_answer_boxes_replace_ai_as_grading_target(detector):
     assert on_ai_box["result"] == "오답"
 
 
+def test_roi_on_co_existing_finding_is_not_counted_as_wrong(detector):
+    """같이 있는 소견 자리(AI 폐음영 자리)에 그린 ROI 는 '정답이 아닌 곳'으로 세지 않고, 찾았다고 알려 준다."""
+    answer = [{"x": 0.0, "y": 0.6, "width": 0.3, "height": 0.3, "finding": "기흉"}]
+    also = {"findings": ["폐음영"], "boxes": []}                      # NIH 문제처럼 박스 없음 → AI 폐음영 영역을 쓴다
+    result = grade(rois=[box(0, 120, 60, 60), box(20, 20, 60, 60)], answer_boxes=answer, answer_also=also)
+    assert result["result"] == "정답"                                  # 판정은 대표 소견(기흉)만
+    assert result["also_findings"] == ["폐음영"] and result["also_targets"][0]["found"] is True
+    assert not any("정답이 아닌 곳" in t for t in result["feedback"])
+    assert any("폐음영도 있어요" in t for t in result["feedback"])
+    plain = grade(rois=[box(0, 120, 60, 60), box(20, 20, 60, 60)], answer_boxes=answer)
+    assert any("정답이 아닌 곳" in t for t in plain["feedback"])        # 같이 있는 소견을 모르면 예전처럼
+
+
 def test_without_answer_boxes_ai_is_the_target(detector):
     result = grade(x=20, y=20, width=60, height=60)
     assert result["target_source"] == "ai"
