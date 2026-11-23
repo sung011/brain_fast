@@ -71,6 +71,11 @@ async def health() -> HealthResponse:
             service.load()
         except Exception:
             pass
+    if not abdomen.medgemma_service.ready:
+        try:
+            abdomen.medgemma_service.load()
+        except Exception:
+            pass
     error = service.error
     if not config.model_configured():
         error = import_module("class.abdomen.ensemble").NOT_CONFIGURED

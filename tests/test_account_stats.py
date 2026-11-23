@@ -34,11 +34,10 @@ STATS_KEYS = {"ok", "stats_version", "owner_idx", "as_of", "summary", "calendar"
 
 @pytest.fixture(scope="module")
 def pg():
-    import pgserver
+    from temp_pg import start_temp_pg, sqlalchemy_url
 
-    tmp = Path(tempfile.mkdtemp(prefix="account_stats_pg_"))
-    server = pgserver.get_server(tmp / "pg", cleanup_mode="stop")
-    engine = create_engine(server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1))
+    server = start_temp_pg("account_stats_pg_")
+    engine = create_engine(sqlalchemy_url(server.get_uri()))
     Base.metadata.create_all(engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])
     # 이 **임시 DB 안에서만**: '날짜 없는 과거 기록' 경계 시험(설계 A-1 9번)을 위해 created_at 의 NOT NULL·기본값을 푼다(실제 스키마·제품 DDL 은 그대로).
     with engine.begin() as conn:
@@ -46,7 +45,6 @@ def pg():
     yield engine
     engine.dispose()
     server.cleanup()
-    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _rv(idx, user, study, code, at, **kw):

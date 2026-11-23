@@ -79,15 +79,15 @@ class BcryptCounter:
 
 
 def start_pg():
-    import pgserver
+    from temp_pg import start_temp_pg, sqlalchemy_url
 
-    tmp = Path(tempfile.mkdtemp(prefix="recovery_b_pg_"))
-    server = pgserver.get_server(tmp / "pg", cleanup_mode="stop")
-    engine = create_engine(server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1), pool_size=10, max_overflow=5)
+    server = start_temp_pg("recovery_b_pg_")
+    engine = create_engine(sqlalchemy_url(server.get_uri()), pool_size=10, max_overflow=5)
     Base.metadata.create_all(engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])
     setup_roles(engine)
     apply_ddl(engine)
-    return tmp, server, engine
+    # stop_pg(tmp, server, engine) 호환: tmp 는 server.tmp, server 는 TempPg
+    return server.tmp, server, engine
 
 
 APP_ROLE = "app_owner"   # 합성: 백엔드가 접속하는 역할(회원 표·새 답 표의 소유자, NOSUPERUSER·NOBYPASSRLS)
@@ -147,7 +147,8 @@ def app_engine(engine, role: str = APP_ROLE):
 def stop_pg(tmp, server, engine):
     engine.dispose()
     server.cleanup()
-    shutil.rmtree(tmp, ignore_errors=True)
+    if tmp is not None:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def seed(engine, pw_hash, answer_hashes):

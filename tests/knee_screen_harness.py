@@ -118,14 +118,14 @@ class Harness:
             raise
 
     def _setup(self, slice_count, rep, ref_box, approve):
-        import pgserver
+        from temp_pg import start_temp_pg, sqlalchemy_url
 
-        self.tmp = Path(tempfile.mkdtemp(prefix="knee_screen_pg_"))
-        self._stack.callback(shutil.rmtree, self.tmp, ignore_errors=True)
-        server = pgserver.get_server(self.tmp / "pg", cleanup_mode="stop")
+        server = start_temp_pg("knee_screen_pg_")
+        self.tmp = server.tmp
+        if self.tmp is not None:
+            self._stack.callback(shutil.rmtree, self.tmp, ignore_errors=True)
         self._stack.callback(server.cleanup)
-        uri = server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1)
-        self.engine = create_engine(uri)
+        self.engine = create_engine(sqlalchemy_url(server.get_uri()))
         self._stack.callback(self.engine.dispose)
         # 이 시험에 필요한 세 테이블만 만든다(프로젝트의 다른 테이블·정식 DDL 은 건드리지 않는다).
         Base.metadata.create_all(self.engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])

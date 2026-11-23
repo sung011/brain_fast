@@ -28,10 +28,11 @@ from db import get_db
 from logging_setup import ERROR_LOGGER
 
 try:
-    import pgserver  # noqa: F401
+    from temp_pg import HAVE_DB_TOOLS
     import psycopg  # noqa: F401
     import PIL  # noqa: F401
-    HAVE_DB_TOOLS = True
+    if not HAVE_DB_TOOLS:
+        raise ImportError("temp pg backend missing")
 except ImportError:  # pragma: no cover
     HAVE_DB_TOOLS = False
 

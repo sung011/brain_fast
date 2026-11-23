@@ -35,16 +35,14 @@ PROFILE_KEYS = {"idx", "user_id", "user_name", "user_un", "user_sp"}
 
 @pytest.fixture(scope="module")
 def pg():
-    import pgserver
+    from temp_pg import start_temp_pg, sqlalchemy_url
 
-    tmp = Path(tempfile.mkdtemp(prefix="account_settings_pg_"))
-    server = pgserver.get_server(tmp / "pg", cleanup_mode="stop")
-    engine = create_engine(server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1), pool_size=10)
+    server = start_temp_pg("account_settings_pg_")
+    engine = create_engine(sqlalchemy_url(server.get_uri()), pool_size=10)
     Base.metadata.create_all(engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])
     yield engine
     engine.dispose()
     server.cleanup()
-    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _users(pw_hash):

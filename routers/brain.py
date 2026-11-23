@@ -66,6 +66,17 @@ async def health() -> HealthResponse:
             models_loaded=False,
             models_error=_brain_error,
         )
+    # 흉부·복부와 같이 health 에서도 로드를 시도해, 분석 가능 상태와 models_loaded 를 맞춘다.
+    if not brain.ensemble_service.ready:
+        try:
+            brain.ensemble_service.load()
+        except Exception:
+            pass
+    if not brain.medgemma_service.ready:
+        try:
+            brain.medgemma_service.load()
+        except Exception:
+            pass
     return HealthResponse(
         status="ok" if brain.ensemble_service.ready else "degraded",
         models_loaded=brain.ensemble_service.ready,

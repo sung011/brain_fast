@@ -63,6 +63,12 @@ async def brain_mri_health() -> BrainMriHealthResponse:
     config = import_module("class.brain_mri.config")
     constants = import_module("class.brain_mri.constants")
     svc = import_module("class.brain_mri").segmentation_service
+    # 분석 주소와 같이 설정이 있으면 health 에서도 로드해 model_loaded 상태를 맞춘다.
+    if not svc.ready and config.model_configured():
+        try:
+            svc.load()
+        except Exception:
+            pass
     return BrainMriHealthResponse(
         status="ok" if svc.ready else "degraded",
         model=config.MODEL_NAME,

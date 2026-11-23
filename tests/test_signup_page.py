@@ -264,7 +264,23 @@ class AdminSignupStaysProtectedTests(unittest.TestCase):
             self.assertIn("/admin/login", response.headers.get("location", ""))
 
     def test_user_router_does_not_touch_admin_paths(self) -> None:
-        paths = {route.path for route in user_router.routes}
+        # FastAPI 0.141+ 의 include_router 는 _IncludedRouter 라서 .path 가 없다.
+        from dataclasses import is_dataclass
+
+        from fastapi.routing import APIRoute
+
+        def _paths(routes) -> set[str]:
+            found: set[str] = set()
+            for route in routes:
+                if isinstance(route, APIRoute):
+                    found.add(route.path)
+                elif is_dataclass(route) and hasattr(route, "include_context"):
+                    nested = route.include_context.included_router
+                    found |= _paths(nested.routes)
+            return found
+
+        paths = _paths(user_router.routes)
+        self.assertTrue(paths)  # 가입·마이페이지 경로가 실제로 잡혀야 한다
         self.assertFalse([p for p in paths if p.startswith("/admin")])
 
 

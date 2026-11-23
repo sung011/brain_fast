@@ -28,11 +28,10 @@ KST_NOW = datetime.fromisoformat("2026-11-06T12:00:00+09:00")
 
 @pytest.fixture(scope="module")
 def big():
-    import pgserver
+    from temp_pg import start_temp_pg, sqlalchemy_url
 
-    tmp = Path(tempfile.mkdtemp(prefix="account_stats_perf_pg_"))
-    server = pgserver.get_server(tmp / "pg", cleanup_mode="stop")
-    engine = create_engine(server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1))
+    server = start_temp_pg("account_stats_perf_pg_")
+    engine = create_engine(sqlalchemy_url(server.get_uri()))
     Base.metadata.create_all(engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])
     with engine.begin() as conn:
         conn.execute(text("INSERT INTO user_member (idx, user_id, user_name, user_birth, user_pw, user_un, user_sp, del_yn, state, mb_level) "
@@ -52,7 +51,6 @@ def big():
     yield engine
     engine.dispose()
     server.cleanup()
-    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _one_request(engine):

@@ -628,7 +628,11 @@ def test_table_still_present_and_no_drop_in_code():
 
 
 # ── 스키마 누락(테이블 없음): 고정 500·쓰기 0, 404 와 구분 ─────────────────
-def test_missing_table_is_fixed_500_not_404(env, tmp_path):
+def test_missing_table_is_fixed_500_not_404(env, tmp_path, monkeypatch):
+    from config import settings
+
+    # 이메일 인증이 켜져 있으면 가입이 답 개수 422 로 먼저 막혀 DB 누락 500 을 못 본다.
+    monkeypatch.setattr(settings, "signup_email_verification_enabled", False)
     engine = env.engine
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE user_recovery_answer RENAME TO user_recovery_answer_hidden"))

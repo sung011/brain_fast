@@ -35,6 +35,9 @@ def env(pg, monkeypatch):
     monkeypatch.setattr(settings, "signup_email_code_secret", SecretStr("synthetic-email-code-test-secret-2026"))
     monkeypatch.setattr(settings, "signup_smtp_host", "mail.example.test")
     monkeypatch.setattr(settings, "signup_smtp_from", "signup@example.test")
+    # .env 에 SMTP 계정이 있어도 합성 InboxSMTP 경로만 쓴다.
+    monkeypatch.setattr(settings, "signup_smtp_user", "")
+    monkeypatch.setattr(settings, "signup_smtp_password", SecretStr(""))
     for limiter in (mail.send_ip_limit, mail.send_total_limit, mail.verify_ip_limit):
         limiter.reset()
     with pg.begin() as connection:
@@ -49,6 +52,9 @@ def env(pg, monkeypatch):
         def starttls(self, *, context):
             assert context.check_hostname
             self.tls = True
+
+        def login(self, user, password):
+            return None
 
         def __enter__(self):
             return self
@@ -172,7 +178,9 @@ def test_mail_failures_and_maintenance_are_fixed(env, pg, monkeypatch):
     invalid = client.post("/signup/email-code", json={"email": "not-an-email", "sensitive-unknown-key": "test"})
     assert invalid.status_code == 422 and "sensitive-unknown-key" not in invalid.text
     with monkeypatch.context() as failing:
+        # .env 의 SSL 설정과 무관하게 실패 경로를 탄다.
         failing.setattr(mail.smtplib, "SMTP", BadSMTP)
+        failing.setattr(mail.smtplib, "SMTP_SSL", BadSMTP)
         response = client.post("/signup/email-code", json={"email": ADDRESS})
     assert response.status_code == 503 and "sensitive-smtp-error" not in response.text
     assert tally(pg) == (0, 0, 0)

@@ -43,9 +43,10 @@ from services.objectStorageServices import ObjectStorageService, storage_service
 from utils.review_sse import review_events
 
 try:
-    import pgserver  # noqa: F401
+    from temp_pg import HAVE_DB_TOOLS
     import psycopg  # noqa: F401
-    HAVE_DB_TOOLS = True
+    if not HAVE_DB_TOOLS:
+        raise ImportError("temp pg backend missing")
 except ImportError:  # pragma: no cover
     HAVE_DB_TOOLS = False
 
@@ -59,14 +60,15 @@ class Env:
     """임시 PostgreSQL + 합성 문제 행. 실제 DB 와 무관하고 close() 때 지운다."""
 
     def __init__(self):
-        import pgserver
+        from temp_pg import start_temp_pg, sqlalchemy_url
+
         self._stack = contextlib.ExitStack()
-        self.tmp = Path(tempfile.mkdtemp(prefix="common_guard_pg_"))
-        self._stack.callback(shutil.rmtree, self.tmp, ignore_errors=True)
-        server = pgserver.get_server(self.tmp / "pg", cleanup_mode="stop")
+        server = start_temp_pg("common_guard_pg_")
+        self.tmp = server.tmp
+        if self.tmp is not None:
+            self._stack.callback(shutil.rmtree, self.tmp, ignore_errors=True)
         self._stack.callback(server.cleanup)
-        uri = server.get_uri().replace("postgresql://", "postgresql+psycopg://", 1)
-        self.engine = create_engine(uri)
+        self.engine = create_engine(sqlalchemy_url(server.get_uri()))
         self._stack.callback(self.engine.dispose)
         Base.metadata.create_all(self.engine, tables=[UserModel.__table__, StudyModel.__table__, ReviewNodeModel.__table__])
         self.Session = sessionmaker(bind=self.engine, autoflush=False)          # 제품 SessionLocal 과 같은 autoflush=False

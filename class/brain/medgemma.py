@@ -77,6 +77,17 @@ class MedGemmaService:
                 self.ready = True
                 self.error = None
             except Exception as exc:
+                # api/local 실패 시 template 로 대체해 판독문·health 가 비지 않게 한다.
+                if MEDGEMMA_FALLBACK_TEMPLATE and self.backend != "template":
+                    try:
+                        self._load_template()
+                        self.backend = "template"
+                        self._last_source = "template-fallback"
+                        self.ready = True
+                        self.error = None
+                        return
+                    except Exception:
+                        pass
                 self.ready = False
                 self.error = str(exc)
                 raise

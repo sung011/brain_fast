@@ -14,19 +14,28 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from config import settings
 from db import get_db
 from routers import commonness, user
 from schemas.userSchemas import LearnerSignup
 
 try:
-    import pgserver  # noqa: F401
+    from temp_pg import HAVE_DB_TOOLS
     import psycopg  # noqa: F401
-    HAVE_DB_TOOLS = True
+    if not HAVE_DB_TOOLS:
+        raise ImportError("temp pg backend missing")
 except ImportError:  # pragma: no cover
     HAVE_DB_TOOLS = False
 
 PASSWORD = "synthetic-pass-1234"
-ANSWERS = [{"question_id": "Q01", "answer": "합성 초등학교"}, {"question_id": "Q02", "answer": "합성별명"}, {"question_id": "Q03", "answer": "합성동"}]
+# 이메일 인증 켜짐 → 질문 1개, 꺼짐 → 기존 3개. .env 설정과 스키마 검증을 맞춘다.
+ANSWERS_LEGACY = [
+    {"question_id": "Q01", "answer": "합성 초등학교"},
+    {"question_id": "Q02", "answer": "합성별명"},
+    {"question_id": "Q03", "answer": "합성동"},
+]
+ANSWERS_CHOICE = [{"question_id": "Q01", "answer": "합성 초등학교"}]
+ANSWERS = ANSWERS_CHOICE if settings.signup_email_verification_enabled else ANSWERS_LEGACY
 
 
 class LearnerSignupSchemaTests(unittest.TestCase):
@@ -111,6 +120,11 @@ class LearnerSignupApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from knee_screen_harness import Harness
+        from config import settings
+
+        # 이 시험은 이메일 인증 끄고 질문 답만으로 가입하는 경로를 본다.
+        cls._prev_email = settings.signup_email_verification_enabled
+        settings.signup_email_verification_enabled = False
 
         cls.h = Harness()
         from models.userRecoveryAnswerModel import UserRecoveryAnswerModel
@@ -128,9 +142,14 @@ class LearnerSignupApiTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        from config import settings
+
+        settings.signup_email_verification_enabled = getattr(cls, "_prev_email", False)
         cls.h.close()
 
     def test_signup_saves_profile_and_login_has_no_password_fields(self) -> None:
+        # 이메일 인증을 끈 경로이므로 복구 질문 3개를 넣는다.
+        answers = ANSWERS_LEGACY
         created = self.client.post(
             "/signup",
             json={
@@ -140,7 +159,7 @@ class LearnerSignupApiTests(unittest.TestCase):
                 "user_birth": "2000-05-05",
                 "user_un": "합성대학교",
                 "user_sp": "의학과",
-                "recovery_answers": ANSWERS,
+                "recovery_answers": answers,
             },
         )
         self.assertEqual(created.status_code, 200, created.text)
@@ -159,7 +178,7 @@ class LearnerSignupApiTests(unittest.TestCase):
                 "user_birth": "2000-05-05",
                 "user_un": "합성대학교",
                 "user_sp": "의학과",
-                "recovery_answers": ANSWERS,
+                "recovery_answers": answers,
             },
         )
         self.assertEqual(again.status_code, 409)

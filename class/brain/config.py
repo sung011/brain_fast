@@ -58,16 +58,34 @@ HIGH_PROB_THR = float(os.environ.get("HIGH_PROB_THR", "0.9"))
 
 MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(5 * 1024 * 1024)))
 
-MEDGEMMA_MODEL_ID = os.environ.get("MEDGEMMA_MODEL_ID", "google/medgemma-1.5-4b-it")
-MEDGEMMA_MAX_NEW_TOKENS = int(os.environ.get("MEDGEMMA_MAX_NEW_TOKENS", "768"))
-MEDGEMMA_DUAL_IMAGE = os.environ.get("MEDGEMMA_DUAL_IMAGE", "1") == "1"
-# api = HF Inference API(원격) / template = 앙상블 요약(다운로드·API 없음) / local = PC 8GB+
-MEDGEMMA_BACKEND = os.environ.get("MEDGEMMA_BACKEND", "api").strip().lower()
+def _env(key: str, default: str = "") -> str:
+    """환경 변수 → 프로젝트 .env 순으로 값을 찾는다(복부 class/abdomen/config 와 동일)."""
+    value = (os.environ.get(key) or "").strip()
+    if value:
+        return value
+    env_path = BASE_DIR / ".env"
+    if env_path.is_file():
+        try:
+            from dotenv import dotenv_values
+
+            value = (dotenv_values(env_path).get(key) or "").strip()
+            if value:
+                return value
+        except Exception:
+            pass
+    return default
+
+
+MEDGEMMA_MODEL_ID = _env("MEDGEMMA_MODEL_ID", "google/medgemma-1.5-4b-it") or "google/medgemma-1.5-4b-it"
+MEDGEMMA_MAX_NEW_TOKENS = int(_env("MEDGEMMA_MAX_NEW_TOKENS", "768") or "768")
+MEDGEMMA_DUAL_IMAGE = (_env("MEDGEMMA_DUAL_IMAGE", "1") or "1") == "1"
+# api = HF Inference API / template = 앙상블 요약(.env.example·복부와 같이 기본) / local = 8GB+
+MEDGEMMA_BACKEND = (_env("MEDGEMMA_BACKEND", "template") or "template").strip().lower()
 if MEDGEMMA_BACKEND not in ("api", "local", "template"):
-    MEDGEMMA_BACKEND = "api"
+    MEDGEMMA_BACKEND = "template"
 # api 실패(403 등) 시 template 으로 자동 대체. 0 이면 오류 그대로 반환.
-MEDGEMMA_FALLBACK_TEMPLATE = os.environ.get("MEDGEMMA_FALLBACK_TEMPLATE", "1") == "1"
-LOAD_MEDGEMMA_ON_STARTUP = os.environ.get("LOAD_MEDGEMMA_ON_STARTUP", "0") == "1"
+MEDGEMMA_FALLBACK_TEMPLATE = (_env("MEDGEMMA_FALLBACK_TEMPLATE", "1") or "1") == "1"
+LOAD_MEDGEMMA_ON_STARTUP = (_env("LOAD_MEDGEMMA_ON_STARTUP", "0") or "0") == "1"
 
 # 관리자 서버가 바로 뜨도록 기본은 끄고, 첫 분석 요청에서 로드한다.
 LOAD_MODELS_ON_STARTUP = os.environ.get("LOAD_MODELS_ON_STARTUP", "0") == "1"

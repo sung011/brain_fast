@@ -154,11 +154,13 @@ def summarize_targets(per_class: dict, *, classes: list[str]) -> str:
     bits = []
     for name in classes:
         info = per_class.get(name)
-        if not info or not info["boxes"]:
+        boxes = (info or {}).get("boxes") or []
+        mask = (info or {}).get("mask")
+        if not boxes or mask is None:
             continue
-        h, w = info["mask"].shape
+        h, w = mask.shape
         places: dict[str, list[float]] = {}
-        for (x1, y1, x2, y2), conf in sorted(info["boxes"], key=lambda b: b[1], reverse=True):
+        for (x1, y1, x2, y2), conf in sorted(boxes, key=lambda b: b[1], reverse=True):
             places.setdefault(_place((y1 + y2) / 2, (x1 + x2) / 2, h, w), []).append(conf)
         parts = []
         for place, confs in list(places.items())[:SUMMARY_MAX_PLACES]:
