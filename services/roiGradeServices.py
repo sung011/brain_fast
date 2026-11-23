@@ -921,15 +921,15 @@ def _grade_thorax(
     for mask, kind in users:
         review_img = draw_user_roi(review_img, mask, kind)
 
+    # 1순위는 점수 그대로가 아니라 기준값 대비 배수 순 (소견마다 점수 눈금이 달라서, ensemble.ranking)
     findings = [
         {
-            "label": name,
-            "label_ko": constants.class_ko(name),
+            "label": classes[i],
+            "label_ko": constants.class_ko(classes[i]),
             "score": float(probs[i]),
         }
-        for i, name in enumerate(classes)
+        for i in service.ranking(probs)
     ]
-    findings.sort(key=lambda f: f["score"], reverse=True)
     top = findings[0]
 
     return {

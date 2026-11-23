@@ -95,13 +95,14 @@ def _ensure_detector(thorax: ModuleType) -> None:
         ) from exc
 
 
-def _build_classification(probs, *, classes: list[str]) -> ClassificationResult:
+def _build_classification(probs, *, classes: list[str], order: list[int] | None = None) -> ClassificationResult:
     constants = import_module("class.thorax.constants")
+    # order: 1순위부터 소견 번호(detector.ranking, 기준값 대비 배수 순). 없으면 점수 순
+    order = order or sorted(range(len(classes)), key=lambda i: float(probs[i]), reverse=True)
     findings = [
-        FindingItem(label=name, label_ko=constants.class_ko(name), score=float(probs[i]))
-        for i, name in enumerate(classes)
+        FindingItem(label=classes[i], label_ko=constants.class_ko(classes[i]), score=float(probs[i]))
+        for i in order
     ]
-    findings.sort(key=lambda f: f.score, reverse=True)
     top = findings[0]
     return ClassificationResult(
         top_label=top.label,
@@ -184,7 +185,8 @@ async def analyze_screen_roi(
     service = thorax.detector_service
     classes = list(service.classes)
     detections = service.detect(img_uint8)
-    classification = _build_classification(service.scores(detections), classes=classes)
+    probs = service.scores(detections)
+    classification = _build_classification(probs, classes=classes, order=service.ranking(probs))
     stats = thorax.Preprocess.image_stats(img_uint8)
 
     _, per_class = thorax.Localization.locate_abnormality(detections, img_uint8)

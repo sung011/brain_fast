@@ -8,10 +8,12 @@ VIEW_POINTS·SIDE_POINTS 에서 문장을 골라 case_summary 뒤에 붙이고 �
 
 해설 순서: 이 소견은(summary) → 판독 포인트(appearance, 이 소견이면 보통 이렇게 보인다)
 → 이 영상에서는(case_summary·locations, 채점한 의심 부위로 문제마다 만든다)
-→ 감별할 질환(related) → 확인하려면(confirm, 원인을 확인하는 검사) → 다른 소견과 같이 보이면(combinations)
+→ 감별할 질환(related) → 그 밖의 검사(confirm) → 다른 소견과 같이 보이면(combinations)
 → 헷갈리기 쉬운 점(pitfall). X-ray 는 소견까지만 보여 주고 원인 질환을 확진하지 못하므로 CONFIRM_NOTE 를 함께 둔다.
 이렇게 보이면(next_steps)은 "보이는 것 → 의심 → 다음 검사"를 잇는 줄로, 학회 진료지침·용어집으로 확인한 줄만 넣고
 줄마다 출처를 단다(evidence="guideline"). 근거를 못 찾은 줄은 넣지 않는다.
+그 밖의 검사(confirm)는 화면에서 next_steps 바로 아래에 붙으므로, next_steps 에 이미 나온 검사는 넣지 않는다
+(2026-11-16 정리: 흉수천자·흉부 초음파, 객담·추적 X-ray·증상 확인, 심초음파·BNP 를 뺐다).
 
 - NOTES: 소견 코드별 설명
 - COMBINATIONS: 두 소견이 같이 보일 때 생각해 볼 상황
@@ -44,6 +46,21 @@ _FLEISCHNER = {"title": "Fleischner Society: Glossary of Terms for Thoracic Imag
                "label": "Fleischner 흉부영상 용어집 2024",
                "citation": "Bankier AA, et al. Radiology 2024;310(2):e232558",
                "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC10902601/"}
+# 교과서. Fleischner 용어집에 심비대 항목이 없어 심흉비 기준은 교과서로 확인했다(둘 다 NCBI Bookshelf 에서 무료로 열람)
+#   Clinical Methods 3판(Butterworths 1990) 34장: 심장 그림자 최대 가로 폭 ÷ 흉곽 안쪽 최대 폭, 정상 상한 0.5.
+#   숨을 덜 들이쉰 사진과 AP 사진은 심장을 커 보이게 한다. 판독 순서는 심장 크기·모양 다음 폐혈관
+_CLINICAL_METHODS = {"title": "Clinical Methods: The History, Physical, and Laboratory Examinations, 3rd ed. "
+                              "Chapter 34 Chest Roentgenography for Cardiovascular Evaluation",
+                     "label": "Clinical Methods 3판 1990",
+                     "citation": "Manheimer E. In: Walker HK, Hall WD, Hurst JW, editors. Clinical Methods. "
+                                 "3rd ed. Boston: Butterworths; 1990. Chapter 34",
+                     "url": "https://www.ncbi.nlm.nih.gov/books/NBK355/"}
+#   StatPearls(동료 검토 공개 교과서, 2022 갱신): PA 사진에서 심장 그림자 가로 폭이 흉곽 가로 폭의 50% 이상
+_STATPEARLS_CARDIOMEGALY = {"title": "Cardiomegaly (StatPearls, NCBI Bookshelf)",
+                            "label": "StatPearls 심비대 2022",
+                            "citation": "Amin H, Siddiqui WJ. Cardiomegaly. StatPearls [Internet]. "
+                                        "StatPearls Publishing; updated 2022 Nov 20. NBK542296, PMID 31194436",
+                            "url": "https://www.ncbi.nlm.nih.gov/books/NBK542296/"}
 
 
 def _at(source: dict, where: str) -> dict:
@@ -87,8 +104,6 @@ NOTES = {
             "간경화나 신증후군처럼 혈액 단백질이 줄어드는 병에서도 생긴다.",
         ],
         "confirm": [
-            "흉부 초음파로 적은 양도 찾고, 흉수를 뽑을 자리를 정한다.",
-            "흉수천자로 삼출액인지 여출액인지 나눠 원인을 좁힌다.",
             "흉수천자가 위험하거나 원인을 더 찾아야 하면 흉부 CT를 찍는다. 악성 종양이 의심되면 배와 골반까지 찍는다.",
             "심부전이 의심되면 심초음파로 심장 기능을 본다. 정상이어도 심부전을 완전히 배제하지는 못한다.",
         ],
@@ -131,10 +146,7 @@ NOTES = {
             "종양일 수 있다.",
         ],
         "confirm": [
-            "증상, 진찰과 흉부 X-ray를 함께 본다. 프로칼시토닌 수치만 보고 항생제 시작을 미루지는 않는다.",
-            "객담 검사는 중증이거나 입원한 환자에서 한다. 외래 환자는 보통 하지 않는다.",
             "X-ray가 애매하거나 놓쳤을 것 같으면 흉부 CT를 찍는다.",
-            "추적 X-ray는 5~7일 안에 좋아지면 보통 찍지 않는다. 좋아지지 않을 때 고려한다.",
         ],
         "next_steps": [
             _step("하얀 음영 속에 검은 기관지가 보인다.", "폐포가 차 있는 경화다. 이것만으로 원인은 알 수 없다.",
@@ -168,7 +180,6 @@ NOTES = {
         ],
         "confirm": [
             "대부분 흉부 X-ray로 확인한다. 작거나 애매하면 CT를 쓰기도 한다.",
-            "흉부 CT로 작은 기흉을 확인하고, 폐 기포 같은 원인을 찾는다.",
             "증상과 활력징후를 보고 응급인 긴장성 기흉인지 판단한다.",
         ],
         "next_steps": [
@@ -186,13 +197,23 @@ NOTES = {
     },
     "cardiomegaly": {
         "summary": "심장 그림자가 커진 상태다.",
-        # 심비대는 Fleischner 용어집에 해당 용어가 없어 지침으로 확인된 줄이 아직 없다
-        "appearance": [],
-        "appearance_sources": [],
-        "appearance_extra": [
-            "PA 사진에서 심장 폭이 흉곽 폭의 절반보다 크면 커졌다고 본다. 이 비율을 심흉비라고 한다.",
-            "폐혈관이 두드러지는지, 흉막삼출이 같이 있는지 본다.",
+        # Fleischner 용어집에는 심비대 항목이 없다. 2026-11-16 원문 대조:
+        #   Clinical Methods 34장 The Cardiac Silhouette: 최대 가로 심장 폭 ÷ 흉곽 안쪽 최대 폭, 정상 상한 0.5
+        #   StatPearls Cardiomegaly: PA 사진에서 50% 이상(Introduction), 50% 넘으면 심비대 시사(Evaluation)
+        #   AHA/ACC/HFSA 2022 4.4 권고별 설명 1: 흉부 X-ray 로 심비대, 폐정맥 울혈, 간질·폐포 부종을 본다
+        #   Clinical Methods 34장: 판독 순서는 심장 크기·모양 다음 폐혈관(폐야, 폐문)
+        # 예전 "흉막삼출이 같이 있는지 본다"는 동반 소견 카드(BTS 2023 표 7)와 같은 말이라 뺐다
+        "appearance": [
+            "PA 사진에서 심장의 가장 넓은 폭이 흉곽 안쪽 가장 넓은 폭의 절반을 넘으면 심비대를 시사한다. "
+            "이 비율을 심흉비라고 한다.",
+            # 폐부종은 동반 소견 카드(심비대 + 폐문 주위 음영)에 있어 여기서는 폐울혈만 쓴다
+            "심장 크기와 함께 폐울혈이 있는지 본다.",
         ],
+        "appearance_sources": [[_at(_CLINICAL_METHODS, "34장 The Cardiac Silhouette 절"),
+                                _at(_STATPEARLS_CARDIOMEGALY, "Introduction, Evaluation 절의 심흉비 기준")],
+                               [_at(_AHA_HF, "4.4 권고별 설명 1 흉부 X-ray"),
+                                _at(_CLINICAL_METHODS, "34장 판독 순서, 심장 크기 다음 폐혈관")]],
+        "appearance_extra": [],
         "related": [
             "심부전에서 흔히 보인다.",
             "판막 질환일 수 있다.",
@@ -201,9 +222,7 @@ NOTES = {
             "고혈압과 관련될 수 있다.",
         ],
         "confirm": [
-            "심초음파로 실제로 커졌는지, 심낭삼출 때문인지, 심장 기능은 어떤지 본다.",
             "심전도로 리듬과 심장 부담을 본다.",
-            "BNP 같은 혈액검사로 심부전인지 본다.",
         ],
         "next_steps": [
             _step("심장 그림자가 커 보인다.", "심부전 같은 심장 질환일 수 있다. X-ray만으로는 원인을 알 수 없다.",
@@ -249,7 +268,8 @@ COMBINATIONS = [
 VIEW_POINTS = {
     "cardiomegaly": {
         "AP": "AP 사진이라 심장이 실제보다 커 보일 수 있다.",
-        "PA": "PA 사진이라 심장 폭이 흉곽 폭의 절반을 넘는지로 크기를 볼 수 있다.",
+        # 기준(절반)은 판독 포인트에 있어 되풀이하지 않는다
+        "PA": "PA 사진이라 심흉비로 크기를 판단할 수 있다.",
     },
     "pleural_effusion": {
         "AP": "AP 사진이라 누워서 찍었다면 액체가 퍼져 뿌옇게만 보일 수 있다.",
