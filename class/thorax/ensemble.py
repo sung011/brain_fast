@@ -57,6 +57,8 @@ class FindingModel:
         self.findings = {int(k): finding_code(v) for k, v in names.items()}
         self.image_size = int(settings.get("image_size") or settings.get("input_image_size") or 640)
         self.confidence = float(settings.get("confidence_threshold", 0.25))
+        # 화면에 띄우는 기준값. 심흉비 판정 때문에 confidence 를 낮춰도 이 값은 그대로 둔다(1순위 고르기에 씀)
+        self.threshold = self.confidence
         self.nms_iou = float(settings.get("nms_iou_threshold", 0.7))
         self.max_det = int(settings.get("max_detections", 100))
         # 학습 노트북의 후처리 규칙과 같은 이름. 없으면 0 (거르지 않음)
@@ -266,6 +268,28 @@ class ThoraxDetector:
         elif top is not None:
             others.append(Detection("cardiomegaly", score, top.box))
         return others
+
+    def thresholds(self) -> np.ndarray:
+        """classes 순서의 소견별 기준값. 심흉비 모델이 있으면 심비대는 합친 점수의 기준값."""
+        classes = self.classes
+        out = np.ones(len(classes), dtype=np.float32)
+        for model in self.models:
+            for code in model.findings.values():
+                if code in classes:
+                    out[classes.index(code)] = model.threshold
+        if self.ratio_model is not None and "cardiomegaly" in classes:
+            out[classes.index("cardiomegaly")] = self.ratio_model.threshold
+        return out
+
+    def ranking(self, probs: np.ndarray) -> list[int]:
+        """
+        1순위부터 소견 번호(classes 순서) 목록. 점수를 그대로 비교하지 않고 "기준값의 몇 배인가"로 비교한다.
+        소견마다 점수 눈금이 달라서다(예: 폐음영 기준 0.05, 심비대 합친 점수 기준 0.70).
+        흉부 문제 401장에서 1순위가 정답 소견과 맞는 비율이 49% → 53% 로 올랐다(2026-11-16, 아무 소견도 안 켜진 사진은 틀린 것으로 셈).
+        """
+        probs = np.asarray(probs, dtype=np.float32)
+        strength = probs / np.maximum(self.thresholds(), 1e-6)
+        return sorted(range(len(probs)), key=lambda i: (float(strength[i]), float(probs[i])), reverse=True)
 
     def scores(self, detections: list[Detection]) -> np.ndarray:
         """classes 순서의 소견별 점수(그 소견 박스의 최고 신뢰도, 없으면 0)."""

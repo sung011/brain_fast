@@ -335,6 +335,22 @@ def test_scores_are_best_box_confidence_per_finding():
     assert service.scores(detections).tolist() == pytest.approx([0.6, 0.0])
 
 
+def test_top_finding_is_the_one_furthest_above_its_threshold():
+    """1순위는 점수 그대로가 아니라 기준값의 몇 배인지로 고른다 (소견마다 점수 눈금이 다르다)."""
+    service = thorax.ThoraxDetector()
+    service.use_models(fake_models())                        # 기준값: 폐음영 0.05, 흉막삼출 0.06
+    assert service.thresholds().tolist() == pytest.approx([0.05, 0.06])
+    assert service.ranking([0.40, 0.45]) == [0, 1]           # 폐음영 8배 > 흉막삼출 7.5배 (점수는 흉막삼출이 큼)
+    assert service.ranking([0.0, 0.10]) == [1, 0]
+    cardio = thorax.FindingModel("cardio", {"class_names": {"0": "cardiomegaly"}, "confidence_threshold": 0.35},
+                                 FakePredictor([]))
+    with_ratio = thorax.ThoraxDetector()
+    with_ratio.use_models([fake_models()[0], cardio], ratio_model=_ratio_model(96))   # 심비대 기준 = 합친 점수 0.6
+    assert cardio.threshold == 0.35 and cardio.confidence == 0.001                     # 탐지 하한만 낮추고 기준값은 그대로
+    assert with_ratio.thresholds().tolist() == pytest.approx([0.05, 0.6])
+    assert with_ratio.ranking([0.10, 0.65]) == [0, 1]       # 폐음영 2배 > 심비대 1.08배
+
+
 def test_without_model_settings_api_answers_503(client, monkeypatch):
     monkeypatch.setattr(thorax_config, "PACKAGES", [])
     monkeypatch.setattr(thorax, "detector_service", thorax.ThoraxDetector())
@@ -599,6 +615,35 @@ def test_learning_note_next_steps_have_guideline_source():
             assert step["evidence"] == "guideline" and step["source"]["url"].startswith("https://")
     assert len(thorax.learning_note("흉막삼출")["next_steps"]) == 3
     assert len(thorax.learning_note("심비대")["next_steps"]) == 2   # AHA/ACC/HFSA 2022 원문 요약부로 확인
+
+
+def test_confirm_keeps_only_tests_not_in_next_steps():
+    """그 밖의 검사(confirm)는 화면에서 다음 단계 아래에 붙는다. 다음 단계에 이미 나온 검사는 되풀이하지 않는다."""
+    kept = {"흉막삼출": ("흉부 CT", "심초음파"), "폐음영": ("흉부 CT",), "기흉": ("CT", "긴장성 기흉"), "심비대": ("심전도",)}
+    for name, words in kept.items():
+        note = thorax.learning_note(name)
+        steps = " ".join(step["sign"] + step["suspect"] + step["next"] for step in note["next_steps"])
+        assert len(note["confirm"]) == len(words), name
+        for line, word in zip(note["confirm"], words):
+            assert word in line and word not in steps, (name, line)
+        for word in ("BNP", "객담", "추적", "흉수천자로", "흉부 초음파"):   # 다음 단계로 옮겨 간 검사
+            assert all(word not in line for line in note["confirm"]), (name, word)
+
+
+def test_cardiomegaly_reading_points_have_sources_and_do_not_repeat_view_lines():
+    """심비대 판독 포인트: 심흉비 기준은 교과서(Clinical Methods 3판, StatPearls), 폐울혈은 AHA 2022 와 교과서로
+    원문 위치와 함께 단다. AP/PA 문장(case_lines)과 판독 시 주의점에는 같은 기준을 되풀이하지 않는다."""
+    rf = import_module("class.thorax.report_format")
+    note = thorax.learning_note("심비대", view="PA")
+    assert len(note["appearance"]) == len(note["appearance_sources"]) == 2
+    assert "절반" in note["appearance"][0] and "심흉비" in note["appearance"][0]
+    labels = [[src["label"].split(" ")[0] for src in line] for line in note["appearance_sources"]]
+    assert labels == [["Clinical", "StatPearls"], ["AHA/ACC/HFSA", "Clinical"]]
+    assert all(src["where"] and src["citation"] and src["url"].startswith("https://")
+               for line in note["appearance_sources"] for src in line)
+    assert note["appearance_extra"] == []
+    assert rf.VIEW_POINTS["cardiomegaly"]["PA"] in note["case_lines"]
+    assert all("절반" not in line for line in note["case_lines"] + note["pitfall_lines"])
 
 
 def test_learning_note_unknown_or_brain_is_none():
