@@ -6,12 +6,13 @@
 DB·NAS·모델·torch 를 쓰지 않는다. 승인 표(class/knee/slide_references.py)는 비어 있어서 지금은 어떤 슬라이드 문제도
 채점되지 않는다. 시험은 합성 데이터를 임시로 끼워 넣어 확인한다.
 
-판단 순서(설계 4-3 의 3~5):
+판단 순서(설계 4-3 의 3~5, 학습 화면 요청 반영):
   1) slice_index 형식(400) → 2) 목록 검사(쓸 수 없으면 미채점) → 3) 범위(400)
   4) 승인 기준 조회: 없음/모호 → 미채점(토큰 요구 없음)
   5) 토큰 서명·만료·사용자·문제, 목록 버전·목록 해시 대조 → 미채점 사유
-  6) 대표가 아닌 장 → 미채점(no_reference_for_slice, 저장 없음)
-  7) 대표 장이면 토큰의 대표 번호·내용 해시·기준 ID/버전 대조 → 자산 확인 훅 → 채점
+  6) 토큰의 대표 번호·내용 해시·기준 ID/버전 대조 → 자산 확인 훅
+  7) 제출한 장(0부터, 범위 안)이면 승인된 기준 ROI(정규화 좌표)로 채점한다.
+     대표 장이 아니어도 같은 기준 박스로 IoU 를 낸다(학습용. 장마다 별도 승인표는 없을 때).
 """
 from __future__ import annotations
 
@@ -102,8 +103,6 @@ def grade_slide(
     if claims["mv"] != manifest.version or claims["ls"] != manifest.list_sha256:
         return _not_graded(user_mask, "presentation_changed")
 
-    if index != ref.slice_no:   # 범위 안의 유효한 장이지만 대표가 아니다. 대표로 바꿔 계산하지 않는다.
-        return _not_graded(user_mask, "no_reference_for_slice")
     if (claims["sn"], claims["is"], claims["ri"], claims["rv"]) != (ref.slice_no, ref.image_sha256, ref.reference_id, ref.version):
         return _not_graded(user_mask, "presentation_changed")
 
@@ -112,16 +111,18 @@ def grade_slide(
         if reason:
             return _not_graded(user_mask, reason if reason in _ASSET_REASONS else "asset_changed")
 
+    # 제출 장이 대표가 아니어도, 문제에 승인된 기준 ROI 가 있으면 그 정규화 박스로 채점한다.
     result = knee_grade.grade(user_mask, ref)
     if not result["graded"]:
         return SlideOutcome(result, None)
+    save_path = manifest.paths[index] if 0 <= index < len(manifest.paths) else ref.image_path
     result.update(
         slice_index=index,
         rule_version=knee_grade.RULE_VERSION,
         reference_basis=REFERENCE_BASIS,
         clinical_validated=False,
     )
-    return SlideOutcome(result, ref.image_path, (manifest, ref))
+    return SlideOutcome(result, save_path, (manifest, ref))
 
 
 def _task_base() -> dict:

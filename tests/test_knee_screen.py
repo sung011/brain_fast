@@ -488,20 +488,20 @@ class GradeConnectionTests(ConnectedBase):
             union = sent[2] * sent[3] + ref[2] * ref[3] - inter
             self.assertLessEqual(abs(body["iou"] - inter / union), 0.02, (sent, body["iou"], inter / union))
 
-    def test_representative_slice_is_bound_to_the_presented_task(self):
+    def test_any_in_range_slice_can_be_graded_with_the_presented_token(self):
         self.login()
         task = self.task()
         before = len(self.rows())
-        # 범위 안의 다른 장: 채점·저장 없음, review_idx 없음
+        # 범위 안의 다른 장도 승인 기준 ROI 로 채점·저장한다
         other = self.grade(task=task, slice_index="5").json()
-        self.assertEqual((other["graded"], other["not_graded_reason"], other["review_idx"]), (False, "no_reference_for_slice", None))
-        self.assertIsNone(other["result"])
-        self.assertIsNone(other["iou"])
+        self.assertTrue(other["graded"])
+        self.assertEqual(other["slice_index"], 5)
+        self.assertIsNotNone(other["review_idx"])
+        self.assertEqual(len(self.rows()), before + 1)
         # 범위 밖·형식 오류·누락은 400(임의 첫 장으로 바꾸지 않는다)
         for bad in ("24", "999999", "-1", "1.5", "+3", " 3", "abc", "", "٣"):
             self.assertEqual(self.grade(task=task, slice_index=bad).status_code, 400, repr(bad))
         self.assertEqual(self.grade(task=task, slice_index=None).status_code, 400)
-        self.assertEqual(len(self.rows()), before)
 
     def test_token_problems_are_not_graded(self):
         self.login()

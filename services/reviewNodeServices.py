@@ -108,8 +108,57 @@ def _summary_group(value: Any) -> dict[str, Any] | None:
     }
 
 
+def _norm_roi_shape(value: Any, default_type: str = "box") -> dict[str, Any] | None:
+    """학습자 ROI/정답 박스(0~1)를 화면용 한 덩어리로 맞춘다. 잘못된 값은 None."""
+    if not isinstance(value, dict):
+        return None
+    try:
+        x = float(value["x"])
+        y = float(value["y"])
+        width = float(value["width"])
+        height = float(value["height"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not all(v == v and abs(v) != float("inf") for v in (x, y, width, height)):
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    kind = str(value.get("type") or value.get("roi_type") or default_type).strip().lower() or "box"
+    if kind in ("rect", "rectangle"):
+        kind = "box"
+    if kind in ("ellipse", "원"):
+        kind = "circle"
+    if kind not in ("box", "circle"):
+        kind = "box"
+    return {
+        "type": kind,
+        "x": round(x, 6),
+        "y": round(y, 6),
+        "width": round(width, 6),
+        "height": round(height, 6),
+    }
+
+
+def _rois_from_grade(grade: dict[str, Any]) -> list[dict[str, Any]]:
+    """채점 결과에서 학습자가 그린 ROI 목록을 뽑는다."""
+    rois: list[dict[str, Any]] = []
+    raw_list = grade.get("user_rois")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            shape = _norm_roi_shape(item)
+            if shape is not None:
+                rois.append(shape)
+    if rois:
+        return rois
+    single = _norm_roi_shape(
+        grade.get("user_roi_bbox") or grade.get("user_roi"),
+        str(grade.get("roi_type") or "box"),
+    )
+    return [single] if single is not None else []
+
+
 def grade_findings_json(grade: dict[str, Any]) -> str | None:
-    """결과 요약에 다시 쓸 출혈·germinoma 소견만 JSON으로 남긴다."""
+    """결과 요약·학습자 ROI를 JSON으로 남긴다. 학습 기록/리뷰에서 다시 그린다."""
     payload: dict[str, Any] = {}
     classification = _summary_group(grade.get("classification"))
     germinoma = _summary_group(grade.get("germinoma"))
@@ -117,6 +166,18 @@ def grade_findings_json(grade: dict[str, Any]) -> str | None:
         payload["classification"] = classification
     if germinoma:
         payload["germinoma"] = germinoma
+    rois = _rois_from_grade(grade)
+    if rois:
+        payload["user_rois"] = rois
+        payload["user_roi"] = rois[0]
+    answer = _norm_roi_shape(grade.get("abnormality_bbox") or grade.get("reference_bbox"))
+    if answer is not None:
+        payload["abnormality_bbox"] = {
+            "x": answer["x"],
+            "y": answer["y"],
+            "width": answer["width"],
+            "height": answer["height"],
+        }
     if not payload:
         return None
     return json.dumps(payload, ensure_ascii=False)
@@ -130,6 +191,102 @@ def load_findings_json(raw: str | None) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def learner_roi_fields(raw_findings: str | None) -> dict[str, Any]:
+    """rn_findings 에서 학습자 ROI·정답 박스를 꺼낸다. 없으면 빈 값."""
+    data = load_findings_json(raw_findings) or {}
+    rois: list[dict[str, Any]] = []
+    raw_list = data.get("user_rois")
+    if isinstance(raw_list, list):
+        for item in raw_list:
+            shape = _norm_roi_shape(item)
+            if shape is not None:
+                rois.append(shape)
+    if not rois:
+        single = _norm_roi_shape(data.get("user_roi"))
+        if single is not None:
+            rois = [single]
+    answer = _norm_roi_shape(data.get("abnormality_bbox"))
+    return {
+        "user_roi": rois[0] if rois else None,
+        "user_rois": rois,
+        "abnormality_bbox": (
+            {
+                "x": answer["x"],
+                "y": answer["y"],
+                "width": answer["width"],
+                "height": answer["height"],
+            }
+            if answer is not None
+            else None
+        ),
+    }
+
+
+async def upload_review_png(
+    content: bytes,
+    *,
+    study_idx: int | None = None,
+) -> tuple[str | None, str | None, str | None]:
+    """ROI 를 그린 PNG 를 Object Storage review 경로에 올린다.
+
+    반환: (rn_image 공개 경로, remote_path, image_error). 설정 없거나 실패해도 예외를 올리지 않는다.
+    """
+    if not content:
+        return None, None, "제출 이미지가 비어 있습니다."
+    if not storage_service.enabled:
+        return None, None, "Object Storage가 설정되지 않아 제출 이미지를 저장하지 못했습니다."
+    dest = (settings.nas_review_path or REVIEW_DIR).strip() or REVIEW_DIR
+    upload_name = f"{uuid.uuid4().hex[:10]}_{study_idx or 'x'}.png"
+    try:
+        uploaded = await storage_service.upload_bytes(content, upload_name, remote_dir=dest)
+        remote_path = uploaded.get("remote_path") or f"{dest}/{upload_name}"
+        return storage_service.to_public_path(remote_path), remote_path, None
+    except Exception as exc:
+        logger.warning(
+            "리뷰 이미지 업로드 실패 (study=%s): %s",
+            study_idx,
+            exc.__class__.__name__,
+        )
+        return None, None, "이미지 업로드에 실패해 제출 이미지를 저장하지 못했습니다."
+
+
+def review_png_with_user_roi(
+    image_bytes: bytes,
+    *,
+    roi_type: str = "box",
+    x: float,
+    y: float,
+    width: float,
+    height: float,
+) -> bytes | None:
+    """원본 위에 학습자 ROI 를 그린 PNG 바이트. 실패하면 None."""
+    if not image_bytes:
+        return None
+    try:
+        from io import BytesIO
+
+        import numpy as np
+        from PIL import Image
+
+        from services.roiGradeServices import _to_png_bytes, draw_user_roi, roi_mask
+
+        img = np.array(Image.open(BytesIO(image_bytes)).convert("RGB"))
+        h, w = img.shape[:2]
+        mask = roi_mask(
+            h,
+            w,
+            roi_type=roi_type,
+            normalized=True,
+            x=x,
+            y=y,
+            box_w=width,
+            box_h=height,
+        )
+        return _to_png_bytes(draw_user_roi(img, mask, roi_type))
+    except Exception:
+        return None
 
 
 def highest_percent_disease(grade: dict[str, Any]) -> str | None:
@@ -215,7 +372,11 @@ async def save_submission(
     rn_image = None
     remote_path = None
     image_error = None
-    if not storage_service.enabled:
+    if ext == "png" and isinstance(review_png, (bytes, bytearray)) and review_png:
+        rn_image, remote_path, image_error = await upload_review_png(
+            content, study_idx=study_idx
+        )
+    elif not storage_service.enabled:
         image_error = "Object Storage가 설정되지 않아 제출 이미지를 저장하지 못했습니다."
     else:
         dest = (settings.nas_review_path or REVIEW_DIR).strip() or REVIEW_DIR
@@ -288,12 +449,36 @@ def _note_disease(review_disease: str | None, study_disease: str | None) -> str 
     return fallback or None
 
 
-def _learner_item(review, study) -> dict[str, Any]:
-    from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
-    from services.learningServices import problem_image_url
+def _learner_image_fields(review, study) -> dict[str, Any]:
+    """학습자 응답용 image / slice_index. 내부 /knee_series 경로는 넣지 않는다."""
+    from services.learningServices import learner_review_image, resolve_review_slice_index
 
     part = study.st_part if study else None
     modal = study.st_modal if study else None
+    st_image = study.st_image if study else None
+    slice_no = resolve_review_slice_index(
+        rn_slice_index=review.rn_slice_index,
+        rn_image=review.rn_image,
+        st_image=st_image,
+    )
+    href = learner_review_image(
+        study_idx=review.rn_s_idx,
+        rn_image=review.rn_image,
+        rn_slice_index=slice_no,
+        st_part=part,
+        st_modal=modal,
+        st_image=st_image,
+    )
+    return {"image": href, "image_url": href or None, "slice_index": slice_no}
+
+
+def _learner_item(review, study) -> dict[str, Any]:
+    from schemas.studySchemas import ST_MODAL_LABELS, ST_PART_LABELS
+
+    part = study.st_part if study else None
+    modal = study.st_modal if study else None
+    images = _learner_image_fields(review, study)
+    rois = learner_roi_fields(review.rn_findings)
     return {
         "review_idx": review.idx,
         "study_idx": review.rn_s_idx,
@@ -304,7 +489,12 @@ def _learner_item(review, study) -> dict[str, Any]:
         "disease": _note_disease(review.rn_disease, study.st_disease if study else None),
         "solution": review.rn_solution,
         "solution_label": solution_label(review.rn_solution),
-        "image_url": problem_image_url(review.rn_image) if review.rn_image else None,
+        "image_url": images["image_url"],
+        "image": images["image"],
+        "slice_index": images["slice_index"],
+        "user_roi": rois["user_roi"],
+        "user_rois": rois["user_rois"],
+        "abnormality_bbox": rois["abnormality_bbox"],
         "created_at": review.created_at.isoformat() if review.created_at else None,
     }
 
@@ -329,10 +519,20 @@ def get_for_learner(db: Session, review_idx: int, user_idx: int) -> dict[str, An
     review, study = found
     item = _learner_item(review, study)
     active = study is not None and study.del_yn == "N" and study.state == "N"
-    item["problem"] = (
-        {"idx": study.idx, "st_part": study.st_part, "st_modal": study.st_modal, "st_image": study.st_image}
-        if active else None
-    )
+    if active:
+        from services.learningServices import _is_knee_asset_path, problem_image_paths
+
+        paths = problem_image_paths(study)
+        # 무릎 채점 자산 경로는 학습자 응답에 넣지 않는다(다시 풀기는 idx 로 연다).
+        hide_paths = str(study.st_part) == "4" or any(_is_knee_asset_path(p) for p in paths)
+        item["problem"] = {
+            "idx": study.idx,
+            "st_part": study.st_part,
+            "st_modal": study.st_modal,
+            "st_image": "" if hide_paths else study.st_image,
+        }
+    else:
+        item["problem"] = None
     return item
 PART_REGION = {
     "1": "brain",
@@ -370,6 +570,22 @@ def list_wrong_notes(db: Session, user_idx: int) -> list[dict[str, Any]]:
         created = row.get("created_at")
         if created is not None and hasattr(created, "isoformat"):
             created = created.isoformat(sep=" ", timespec="seconds")
+        from services.learningServices import learner_review_image, resolve_review_slice_index
+
+        slice_no = resolve_review_slice_index(
+            rn_slice_index=row.get("rn_slice_index"),
+            rn_image=row.get("rn_image"),
+            st_image=row.get("st_image"),
+        )
+        href = learner_review_image(
+            study_idx=study_idx,
+            rn_image=row.get("rn_image"),
+            rn_slice_index=slice_no,
+            st_part=part,
+            st_modal=modal,
+            st_image=row.get("st_image"),
+        )
+        rois = learner_roi_fields(row.get("rn_findings"))
         notes.append(
             {
                 "idx": row.get("idx"),
@@ -381,7 +597,11 @@ def list_wrong_notes(db: Session, user_idx: int) -> list[dict[str, Any]]:
                 "modal_label": row.get("st_modal_label") or "",
                 "region": PART_REGION.get(part, ""),
                 "type": MODAL_TYPE.get(modal, ""),
-                "image": row.get("rn_image") or "",
+                "image": href,
+                "slice_index": slice_no,
+                "user_roi": rois["user_roi"],
+                "user_rois": rois["user_rois"],
+                "abnormality_bbox": rois["abnormality_bbox"],
                 "created_at": created,
             }
         )
@@ -401,6 +621,8 @@ def get_saved_review(db: Session, review_idx: int, user_idx: int) -> dict[str, A
     part = str(study.st_part if study else "")
     modal = str(study.st_modal if study else "")
     code = str(review.rn_solution or "").strip().upper()
+    images = _learner_image_fields(review, study)
+    rois = learner_roi_fields(review.rn_findings)
     return {
         "idx": review.idx,
         "study_idx": review.rn_s_idx,
@@ -411,13 +633,17 @@ def get_saved_review(db: Session, review_idx: int, user_idx: int) -> dict[str, A
         "modal_label": ST_MODAL_LABELS.get(modal, ""),
         "region": PART_REGION.get(part, ""),
         "type": MODAL_TYPE.get(modal, ""),
-        "image": review.rn_image or "",
-        "study_image": (study.st_image if study else None) or "",
+        "image": images["image"],
+        # 내부 자산 경로(/knee_series/...)는 학습자 응답에 넣지 않는다.
+        "study_image": "",
         "recall": _ratio(review.rn_recall),
         "iou": _ratio(review.rn_iou),
         "overlay_summary": review.rn_overlay_summary or "",
         "findings": load_findings_json(review.rn_findings),
-        "slice_index": review.rn_slice_index,
+        "user_roi": rois["user_roi"],
+        "user_rois": rois["user_rois"],
+        "abnormality_bbox": rois["abnormality_bbox"],
+        "slice_index": images["slice_index"],
     }
 
 
@@ -426,6 +652,7 @@ def list_learning_history(db: Session, user_idx: int) -> dict[str, Any]:
     if user_idx < 1:
         raise ValueError("user_idx는 1 이상이어야 합니다.")
     from repositories import studyRepositories as study_repositories
+    from services.learningServices import learner_review_image, resolve_review_slice_index
 
     items: list[dict[str, Any]] = []
     for row in list_for_admin(db, user_idx=user_idx):
@@ -436,6 +663,20 @@ def list_learning_history(db: Session, user_idx: int) -> dict[str, Any]:
         created = row.get("created_at")
         if created is not None and hasattr(created, "isoformat"):
             created = created.isoformat(sep=" ", timespec="seconds")
+        slice_no = resolve_review_slice_index(
+            rn_slice_index=row.get("rn_slice_index"),
+            rn_image=row.get("rn_image"),
+            st_image=row.get("st_image"),
+        )
+        href = learner_review_image(
+            study_idx=study_idx,
+            rn_image=row.get("rn_image"),
+            rn_slice_index=slice_no,
+            st_part=part,
+            st_modal=modal,
+            st_image=row.get("st_image"),
+        )
+        rois = learner_roi_fields(row.get("rn_findings"))
         items.append(
             {
                 "idx": row.get("idx"),
@@ -447,7 +688,11 @@ def list_learning_history(db: Session, user_idx: int) -> dict[str, Any]:
                 "modal_label": row.get("st_modal_label") or "",
                 "region": PART_REGION.get(part, ""),
                 "type": MODAL_TYPE.get(modal, ""),
-                "image": row.get("rn_image") or "",
+                "image": href,
+                "slice_index": slice_no,
+                "user_roi": rois["user_roi"],
+                "user_rois": rois["user_rois"],
+                "abnormality_bbox": rois["abnormality_bbox"],
                 "created_at": created,
             }
         )
@@ -483,10 +728,13 @@ def list_for_admin(
                 "st_modal": modal,
                 "st_modal_label": ST_MODAL_LABELS.get(modal or "", modal),
                 "st_disease": (study.st_disease if study else None) or review.rn_disease,
+                "st_image": study.st_image if study else None,
                 "rn_disease": review.rn_disease,
                 "rn_solution": review.rn_solution,
                 "rn_solution_label": solution_label(review.rn_solution),
                 "rn_image": review.rn_image,
+                "rn_findings": review.rn_findings,
+                "rn_slice_index": review.rn_slice_index,
                 "created_at": review.created_at,
             }
         )

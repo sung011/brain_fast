@@ -22,6 +22,8 @@ from schemas.studySchemas import (
 KST = timezone(timedelta(hours=9))
 
 THORAX_PART = "2"  # study.st_part 흉부
+KNEE_PART = "4"    # study.st_part 무릎
+MRI_MODAL = "3"    # study.st_modal MRI
 
 ALLOWED_BODY_PARTS = {"brain", "chest", "abdomen", "knee", "other"}
 
@@ -122,6 +124,23 @@ def get_random_problem(
     )
 
 
+def _knee_mri_grading_ready(row: StudyModel) -> bool:
+    """무릎 MRI(st_part=4, st_modal=3)가 대표 슬라이스 채점 가능한지.
+
+    build_manifest 가 통과하고 승인표(slide_references)에 이 study 의 대표 기준이 하나만 있을 때만 True.
+    다른 부위·영상은 이 함수로 걸러 내지 않는다(호출하는 쪽에서 무릎 MRI 행에만 쓴다).
+    정답 박스·경로·해시는 돌려주지 않는다.
+    """
+    try:
+        config = import_module("class.knee.config")
+        manifest_mod = import_module("class.knee.slice_manifest")
+        refs = import_module("class.knee.slide_references")
+        manifest = manifest_mod.build_manifest(row.st_image, config.asset_roots())
+    except Exception:
+        return False
+    return refs.resolve(int(row.idx), manifest).status == "ok"
+
+
 def list_problems(
     db: Session,
     *,
@@ -130,7 +149,11 @@ def list_problems(
     user_idx: int | None = None,
     limit: int = 200,
 ) -> dict:
-    """케이스 목록(화면 흐름도 13). 정답 병명은 넣지 않는다. user_idx 가 있으면 내 최근 결과를 붙인다."""
+    """케이스 목록(화면 흐름도 13). 정답 병명은 넣지 않는다. user_idx 가 있으면 내 최근 결과를 붙인다.
+
+    무릎 MRI(st_part=4, st_modal=3)는 채점 가능한 문제만 남긴다(목록 경로·승인 기준이 맞는 것).
+    stylesheet 전용 경로처럼 채점 자산과 어긋난 문제는 화면에 올리지 않아, graded:false 만 나오는 제출을 막는다.
+    """
     from services.reviewNodeServices import solution_label
 
     rows = study_repositories.list_active(
@@ -139,6 +162,11 @@ def list_problems(
         st_modal=resolve_st_modal(st_modal),
         limit=limit,
     )
+    rows = [
+        row for row in rows
+        if not (str(row.st_part) == KNEE_PART and str(row.st_modal) == MRI_MODAL)
+        or _knee_mri_grading_ready(row)
+    ]
     latest = (
         review_node_repositories.latest_solutions(db, int(user_idx), [r.idx for r in rows])
         if user_idx is not None
@@ -331,13 +359,141 @@ def problem_image_url(path: str) -> str:
     return f"{base}{web_path}" if base else web_path
 
 
+def problem_slice_href(study_idx: int, slice_index: int | None = 0) -> str:
+    """학습자가 fetch/img 로 바로 열 수 있는 문제 영상 상대 주소(공개 버킷·내부 NAS 경로 아님)."""
+    idx = max(0, int(slice_index or 0))
+    return f"/learning/problem/{int(study_idx)}/image?slice_index={idx}"
+
+
+def _is_knee_asset_path(path: str | None) -> bool:
+    """무릎 채점 자산 루트(KNEE_ASSET_ROOTS, 예: /knee_series/) 아래 경로인지."""
+    value = (path or "").strip().replace("\\", "/")
+    if not value:
+        return False
+    try:
+        roots = import_module("class.knee.config").asset_roots()
+    except Exception:
+        roots = ()
+    if not roots:
+        return value.startswith("/knee_series/")
+    return any(value.startswith(root) and len(value) > len(root) for root in roots)
+
+
+def resolve_review_slice_index(
+    *,
+    rn_slice_index: int | None,
+    rn_image: str | None,
+    st_image: str | None = None,
+) -> int | None:
+    """리뷰에 쓸 장 번호. 저장값 → 목록 경로 대조 → 파일명 slice_NNN 순. 없으면 None."""
+    import re
+
+    if isinstance(rn_slice_index, int) and not isinstance(rn_slice_index, bool) and rn_slice_index >= 0:
+        return rn_slice_index
+    path = (rn_image or "").strip()
+    if not path:
+        return None
+    if st_image:
+        paths = parse_study_image_paths(st_image)
+        if not paths:
+            single = (st_image or "").strip()
+            paths = [single] if single and not single.lstrip().startswith("[") else []
+        try:
+            return _find_slice_index_by_path(paths, path)
+        except ValueError:
+            pass
+    name = path.replace("\\", "/").rsplit("/", 1)[-1]
+    match = re.search(r"slice[_-]?(\d+)", name, flags=re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def learner_review_image(
+    *,
+    study_idx: int | None,
+    rn_image: str | None,
+    rn_slice_index: int | None = None,
+    st_part: str | None = None,
+    st_modal: str | None = None,
+    st_image: str | None = None,
+) -> str:
+    """학습자 리뷰·기록용 영상 주소. 내부 /knee_series 등은 노출하지 않는다.
+
+    - 무릎 채점 자산 경로이거나 무릎 MRI(st_part=4, st_modal=3)이면
+      /learning/problem/{study_idx}/image?slice_index=N
+    - 그 외(제출 ROI 오버레이 등 /stylesheets/...)는 Object Storage 공개 URL
+    - 열 수 없으면 빈 문자열
+    """
+    path = (rn_image or "").strip()
+    # ROI 를 그린 review 오버레이(/stylesheets/...)는 공개 URL 그대로 둔다.
+    # 무릎 원본(/knee_series/...)만 문제 영상 API 로 바꾼다.
+    if path and not _is_knee_asset_path(path):
+        return problem_image_url(path)
+    knee_mri = str(st_part or "") == KNEE_PART and str(st_modal or "") == MRI_MODAL
+    use_problem_api = (
+        study_idx is not None
+        and int(study_idx) >= 1
+        and (_is_knee_asset_path(path) or (knee_mri and not path))
+    )
+    if use_problem_api:
+        slice_no = resolve_review_slice_index(
+            rn_slice_index=rn_slice_index, rn_image=path or None, st_image=st_image,
+        )
+        return problem_slice_href(int(study_idx), slice_no if slice_no is not None else 0)
+    return ""
+
+
+def _knee_local_problem_image(
+    *,
+    study_idx: int,
+    st_image,
+    path: str,
+    slice_index: int,
+) -> bytes | None:
+    """무릎 채점 자산(`KNEE_ASSET_ROOTS` + `KNEE_IMAGE_DIR`)에 있는 장이면 로컬 바이트.
+
+    Object Storage 에 없는 `/knee_series/...` 경로를 학습 화면이 받을 수 있게 한다.
+    열람 등록부 해시와 대조한 뒤에만 돌려준다. 조건이 안 맞으면 None(호출 쪽이 공개 저장소로 이어간다).
+    """
+    try:
+        config = import_module("class.knee.config")
+        roots = config.asset_roots()
+        if not roots or not any(
+            isinstance(path, str) and path.startswith(root) and len(path) > len(root)
+            for root in roots
+        ):
+            return None
+        local_mod = import_module("class.knee.local_assets")
+        source = local_mod.source_from_settings()
+        if source is None:
+            return None
+        manifest_mod = import_module("class.knee.slice_manifest")
+        series_mod = import_module("class.knee.series_assets")
+        manifest = manifest_mod.build_manifest(st_image, roots)
+        resolution = series_mod.resolve(int(study_idx), manifest)
+        if resolution.status != "ok":
+            return None
+        assets = resolution.assets
+        if slice_index < 0 or slice_index >= len(assets.slice_sha256):
+            return None
+        if manifest.paths[slice_index] != path:
+            return None
+        return source.get(path, assets.slice_sha256[slice_index]).data
+    except Exception:
+        return None
+
+
 async def fetch_problem_image(
     db: Session,
     study_idx: int,
     slice_index: int = 0,
 ) -> tuple[bytes, str, str]:
     """
-    문제 영상 한 장을 Object Storage 공개 주소에서 받아 돌려준다. → (바이트, MIME, 파일 이름)
+    문제 영상 한 장을 돌려준다. → (바이트, MIME, 파일 이름)
+
+    1) 무릎 `/knee_series/...` 처럼 `KNEE_IMAGE_DIR` 로컬 채점 자산이면 디스크에서 읽는다.
+    2) 그 외는 Object Storage 공개 주소에서 받아 온다.
 
     브라우저가 저장소에서 직접 받으면 다른 출처(CORS) 때문에 채점 API 로 다시 보내지 못할 수 있어
     같은 서버가 대신 받는다. 주소는 study 행에서만 만들고, 요청 값으로 임의 URL 을 받지 않는다.
@@ -357,6 +513,14 @@ async def fetch_problem_image(
     media_type = PROBLEM_IMAGE_TYPES.get(ext)
     if media_type is None:
         raise ValueError(f"지원하지 않는 영상 형식입니다: {ext or '확장자 없음'}")
+
+    local = _knee_local_problem_image(
+        study_idx=int(study_idx), st_image=row.st_image, path=path, slice_index=slice_index,
+    )
+    if local is not None:
+        if len(local) > MAX_PROBLEM_IMAGE_BYTES:
+            raise ProblemImageError("영상이 너무 큽니다.")
+        return local, media_type, name
 
     url = problem_image_url(path)
     if not url.startswith(("http://", "https://")):

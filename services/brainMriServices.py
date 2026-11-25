@@ -91,6 +91,13 @@ def grade_box(
         "confidence": None if top is None else top.get("confidence"),
         "findings": findings,
     }
+    user_roi = {
+        "type": "box",
+        "x": round(float(x), 6),
+        "y": round(float(y), 6),
+        "width": round(float(box_w), 6),
+        "height": round(float(box_h), 6),
+    }
     if not targets:
         overlap = grade_overlap(user, np.zeros((height, width), dtype=bool))
         return {
@@ -98,16 +105,25 @@ def grade_box(
             "iou": overlap["iou"],
             "recall": overlap["recall"],
             "reference_bbox": None,
+            "abnormality_bbox": None,
+            "user_roi_bbox": user_roi,
+            "user_rois": [user_roi],
+            "roi_type": "box",
             "overlay_summary": "검출된 이상 부위 없음",
             "classification": classification,
         }
     graded = grade_regions([user], targets, height, width)
     best = max(graded["targets"], key=lambda item: item["iou"])
+    answer = None if top is None else _reference_box(top, height, width)
     return {
         "result": graded["result"],
         "iou": best["iou"],
         "recall": best["recall"],
-        "reference_bbox": None if top is None else _reference_box(top, height, width),
+        "reference_bbox": answer,
+        "abnormality_bbox": answer,
+        "user_roi_bbox": user_roi,
+        "user_rois": [user_roi],
+        "roi_type": "box",
         "overlay_summary": f"검출 {len(targets)}곳 중 {graded['found_count']}곳을 표시",
         "classification": classification,
     }
@@ -122,14 +138,27 @@ async def save_grade(
     user_idx: int | None,
     slice_index: int | None,
 ) -> dict | None:
-    """채점 결과를 review_node 에 남긴다. 저장이 실패하면 None."""
+    """채점 결과를 review_node 에 남긴다. 학습자 ROI 를 그린 PNG 를 같이 저장한다."""
+    payload = dict(grade)
+    box = payload.get("user_roi_bbox") if isinstance(payload.get("user_roi_bbox"), dict) else None
+    if box is not None and payload.get("_review_png") is None:
+        png = review_node_service.review_png_with_user_roi(
+            image_bytes,
+            roi_type="box",
+            x=float(box["x"]),
+            y=float(box["y"]),
+            width=float(box["width"]),
+            height=float(box["height"]),
+        )
+        if png:
+            payload["_review_png"] = png
     db = SessionLocal()
     try:
         return await review_node_service.save_submission(
             db,
             image_bytes=image_bytes,
             image_filename=image_filename,
-            grade=grade,
+            grade=payload,
             study_idx=study_idx,
             user_idx=user_idx,
             slice_index=slice_index,

@@ -379,31 +379,29 @@ class SeriesApiTests(unittest.TestCase):
         self.assertEqual(task["series_id"], self.series().json()["series_id"])
         self.assertTrue(self.grade(self.h.rep, task["problem_token"]).json()["graded"])
 
-    def test_only_the_representative_slice_is_graded_and_other_slices_are_not_graded_and_not_stored(self):
+    def test_any_in_range_slice_is_graded_and_stored(self):
         self.login()
         task = self.task()
         before = len(self.h.reviews())
-        other = self.grade(3, task["problem_token"])      # 대표가 아닌 유효한 장
+        other = self.grade(3, task["problem_token"])      # 대표가 아닌 유효한 장도 채점
         self.assertEqual(other.status_code, 200)
         data = other.json()
-        self.assertFalse(data["graded"])
-        self.assertEqual(data["not_graded_reason"], "no_reference_for_slice")
-        self.assertIsNone(data["result"])
-        self.assertIsNone(data["reference_bbox"])
-        self.assertIsNone(data["review_idx"])
-        self.assertEqual(len(self.h.reviews()), before)    # 저장 0건
+        self.assertTrue(data["graded"])
+        self.assertEqual(data["slice_index"], 3)
+        self.assertIsNotNone(data["review_idx"])
+        self.assertEqual(len(self.h.reviews()), before + 1)
         graded = self.grade(self.h.rep, task["problem_token"]).json()
         self.assertTrue(graded["graded"])
         self.assertEqual(graded["result"], "정답")
-        self.assertEqual(len(self.h.reviews()), before + 1)
+        self.assertEqual(len(self.h.reviews()), before + 2)
 
-    def test_representative_box_is_never_copied_to_other_slices(self):
+    def test_approved_reference_box_grades_other_slices_too(self):
         self.login()
         task = self.task()
         for index in (0, self.h.rep - 1, self.h.rep + 1, 23):
-            data = self.grade(index, task["problem_token"], box=(0.3, 0.3, 0.4, 0.4)).json()    # 기준 박스와 똑같이 그려도 다른 장은 채점하지 않는다
-            self.assertFalse(data["graded"], index)
-            self.assertNotIn("reference_bbox", {k for k, v in data.items() if v})
+            data = self.grade(index, task["problem_token"], box=(0.3, 0.3, 0.4, 0.4)).json()
+            self.assertTrue(data["graded"], index)
+            self.assertEqual(data["slice_index"], index)
 
     def test_index_out_of_range_is_a_client_error_not_a_grade(self):
         self.login()

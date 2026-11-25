@@ -82,6 +82,7 @@
     <article>
       <h3><span class="method">GET</span><code>/learning/problems?st_part=2&amp;st_modal=1&amp;user_idx=3</code></h3>
       <p>케이스 목록(화면 흐름도 13). 그 부위·영상 종류의 문제를 등록 순서대로 줍니다. 정답 병명과 영상 경로는 넣지 않습니다.</p>
+      <p>무릎 MRI(<code>st_part=4</code>, <code>st_modal=3</code>)만 예외로, <code>study.st_image</code>가 허용 자산 루트(<code>KNEE_ASSET_ROOTS</code>, 예: <code>/knee_series/</code>) 아래이고 승인된 대표 슬라이스 기준이 있는 문제만 남깁니다. 채점 불가 케이스가 목록에 올라와 <code>graded:false</code>만 나오는 일을 막기 위해서입니다.</p>
       <p>성공: <code>{"ok": true, "count": 24, "solved_count": 3, "unsolved_count": 21, "items": [...]}</code></p>
       <p>항목: <code>idx</code>(문제 번호), <code>number</code>(화면용 CASE 번호, 1부터), <code>st_part</code>, <code>st_modal</code>, <code>solved</code>, <code>last_solution</code>(C/H/W), <code>last_solution_label</code>, <code>last_solved_at</code>. <code>user_idx</code>가 없으면 모두 안 푼 문제로 옵니다. <code>limit</code> 기본 200(최대 500).</p>
       <p>오류: 400 부위·영상 값이 잘못됨.</p>
@@ -92,8 +93,9 @@
     </article>
     <article>
       <h3><span class="method">GET</span><code>/learning/problem/{study_idx}/image</code></h3>
-      <p>문제 영상 파일 자체를 돌려줍니다(PNG 등). 서버가 NAS에서 대신 받아 주므로 CORS 걱정 없이 <code>&lt;img src&gt;</code>에 바로 쓰거나, 받아서 그대로 채점에 올리면 됩니다. MRI는 <code>?slice_index=0</code>처럼 장 번호를 붙입니다.</p>
-      <p>오류: 404 문제 없음, 502 NAS에서 못 받음.</p>
+      <p>문제 영상 파일 자체를 돌려줍니다(PNG 등). 서버가 대신 받아 주므로 CORS 걱정 없이 <code>&lt;img src&gt;</code>에 바로 쓰거나, 받아서 그대로 채점에 올리면 됩니다. MRI는 <code>?slice_index=0</code>처럼 장 번호를 붙입니다.</p>
+      <p>경로는 study 행에서만 만듭니다. 보통은 Object Storage 공개 주소에서 받고, 무릎 <code>/knee_series/...</code>처럼 <code>KNEE_IMAGE_DIR</code> 로컬 채점 자산(열람 등록 해시 대조)이면 디스크에서 읽습니다.</p>
+      <p>오류: 404 문제 없음, 502 저장소·로컬에서 못 받음.</p>
     </article>
 
     <h2>4. ROI 채점 (가장 중요)</h2>
@@ -149,11 +151,12 @@
     <article>
       <h3><span class="method">GET</span><code>/learning/reviews?user_idx=3&amp;solution=W,H</code></h3>
       <p>내 풀이 목록(최신순). <code>solution</code>: <code>C</code>정답·<code>H</code>부분정답·<code>W</code>오답을 쉼표로, <code>all</code>이면 전부. 기본 <code>W,H</code>. <code>limit</code> 기본 50(최대 200).</p>
-      <p>항목: <code>review_idx</code>, <code>study_idx</code>, <code>st_part</code>/<code>st_part_label</code>, <code>st_modal</code>/<code>st_modal_label</code>, <code>disease</code>(<code>review_node.rn_disease</code>. 비어 있을 때만 문제 병명), <code>solution</code>/<code>solution_label</code>, <code>image_url</code>(내 ROI가 그려진 제출 이미지), <code>created_at</code></p>
+      <p>항목: <code>review_idx</code>, <code>study_idx</code>, <code>st_part</code>/<code>st_part_label</code>, <code>st_modal</code>/<code>st_modal_label</code>, <code>disease</code>(<code>review_node.rn_disease</code>. 비어 있을 때만 문제 병명), <code>solution</code>/<code>solution_label</code>, <code>image_url</code>(학습자가 바로 열 수 있는 주소), <code>slice_index</code>, <code>created_at</code>.</p>
+      <p>무릎 MRI의 내부 경로(<code>/knee_series/...</code>)는 공개하지 않고 <code>/learning/problem/{study_idx}/image?slice_index=N</code> 으로 바꿉니다. <code>GET /learning/review</code>·<code>/learning/history</code>의 <code>image</code>도 같습니다.</p>
     </article>
     <article>
       <h3><span class="method">GET</span><code>/learning/reviews/{review_idx}?user_idx=3</code></h3>
-      <p>위 항목 + <code>problem</code>(다시 풀 수 있으면 문제 정보, 삭제된 문제면 <code>null</code> → "다시 풀기" 비활성). 다른 사람 기록이면 404.</p>
+      <p>위 항목 + <code>problem</code>(다시 풀 수 있으면 문제 정보, 삭제된 문제면 <code>null</code> → "다시 풀기" 비활성). 다른 사람 것이면 404. 무릎 문제의 <code>st_image</code> 내부 경로는 비웁니다.</p>
     </article>
 
     <h2>7. 화면 공유 분석 (흉부)</h2>

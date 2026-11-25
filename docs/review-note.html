@@ -83,9 +83,16 @@
       <li>관리자 리뷰 목록은 그림이 없는 기록을 "-"로 보여 줍니다.</li>
     </ul>
 
+    <h2>학습자 ROI</h2>
+    <ul>
+      <li>채점 시 내가 그린 박스/원 좌표(0~1)를 <code>rn_findings</code>의 <code>user_roi</code>·<code>user_rois</code>에 남깁니다.</li>
+      <li>제출 그림(<code>rn_image</code>)에도 ROI를 그려 올립니다. 무릎은 원본 장 위에 ROI를 그린 뒤 review 경로에 올립니다.</li>
+      <li><code>GET /learning/review</code>·<code>/learning/history</code>·<code>/learning/reviews</code> 응답에 <code>user_roi</code>/<code>user_rois</code>가 들어가, 학습 기록·리뷰노트·상세에서 다시 그립니다.</li>
+      <li>예전에 좌표 없이 저장된 기록은 이미지에 그린 ROI만 보일 수 있습니다. 다시 제출하면 좌표도 함께 남습니다.</li>
+    </ul>
+
     <h2>아직 없는 것</h2>
     <ul>
-      <li>겹침 점수(IoU)·내가 그린 좌표·슬라이스 번호는 DB에 칸이 없어 저장하지 않습니다. 제출 그림 안에만 남습니다. 칸 추가는 팀 결정이 필요합니다.</li>
       <li>학습자가 오답노트에서 기록을 지우는 기능은 없습니다.</li>
     </ul>
 

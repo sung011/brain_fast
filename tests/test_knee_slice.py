@@ -584,12 +584,16 @@ class GradeSlideTests(SyntheticBase):
         self.approve(make_ref(self.manifest, 5, reference_id=8))
         self.assertNotGraded(self.run_slide(), "reference_ambiguous")
 
-    def test_valid_non_representative_slice_is_not_graded_even_with_a_valid_token(self):
+    def test_any_in_range_slice_is_graded_with_the_approved_reference(self):
+        # 학습 화면: 0부터 어느 장이든 승인 기준 ROI(정규화)로 채점한다.
         for index in ("0", "11", "13", "23"):
             with self.subTest(index=index):
-                self.assertNotGraded(self.run_slide(index=index), "no_reference_for_slice")
+                out = self.run_slide(index=index)
+                self.assertTrue(out.result["graded"], index)
+                self.assertEqual(out.result["slice_index"], int(index))
+                self.assertEqual(out.image_path, make_paths()[int(index)])
 
-    def test_token_is_checked_before_the_non_representative_branch(self):
+    def test_token_is_checked_even_when_slice_is_not_the_representative(self):
         self.assertNotGraded(self.run_slide(index="3", token=None), "token_invalid")
         self.assertNotGraded(self.run_slide(index="3", token="garbage"), "token_invalid")
 
@@ -621,7 +625,7 @@ class GradeSlideTests(SyntheticBase):
 
     def test_list_binding_alone_detects_a_changed_presentation(self):
         """기준 번호·버전·내용 해시·대표 번호는 모두 같고 목록 버전(또는 목록 해시)만 다른 토큰도 거절한다.
-        대표가 아닌 장을 요청해도 이 검사가 먼저이므로 presentation_changed 이다(비대표 분기보다 앞)."""
+        제출 장과 무관하게 목록 결속 검사가 먼저이므로 presentation_changed 이다."""
         other_version = "ordered-paths-json-v1:" + "0" * 64
         for name, over in {"manifest_version": dict(manifest_version=other_version), "slice_set_sha256": dict(slice_set_sha256="0" * 64)}.items():
             token = issue(self.manifest, self.ref, **over)
@@ -677,8 +681,12 @@ class GradeSlideTests(SyntheticBase):
         self.verdict = "something unexpected"
         self.assertNotGraded(self.run_slide(asset_verifier=verifier), "asset_changed")      # 알 수 없는 사유도 안전하게 미채점
         calls.clear()
-        self.run_slide(index="3", asset_verifier=verifier)                                  # 비대표 장에서는 호출하지 않는다
-        self.run_slide(token=None, asset_verifier=verifier)
+        self.verdict = None
+        # 범위 안이면 대표가 아닌 장도 승인 기준으로 채점하므로 verifier 를 부른다.
+        self.assertTrue(self.run_slide(index="3", asset_verifier=verifier).result["graded"])
+        self.assertEqual(calls, [(7, 24)])
+        calls.clear()
+        self.run_slide(token=None, asset_verifier=verifier)                                 # 토큰 없으면 자산 확인 전에 미채점
         self.assertEqual(calls, [])
 
     def test_reference_that_rasterizes_to_nothing_is_not_graded(self):
@@ -804,7 +812,12 @@ class RouterSlideTests(SyntheticBase):
 
         def fake_create(db, **kw):
             self.created.append(kw)
-            return SimpleNamespace(idx=11, rn_image=kw["rn_image"], rn_solution=kw["rn_solution"])
+            return SimpleNamespace(
+                idx=11,
+                rn_image=kw["rn_image"],
+                rn_solution=kw["rn_solution"],
+                rn_slice_index=kw.get("rn_slice_index"),
+            )
 
         async def fake_publish(name, payload):
             self.published.append((name, payload))
@@ -885,14 +898,17 @@ class RouterSlideTests(SyntheticBase):
         self.assertEqual((body["graded"], body["not_graded_reason"], body["review_idx"]), (False, "presentation_changed", None))
         self.assertEqual((self.created, self.published), ([], []))
 
-    def test_non_representative_slice_is_not_graded_saved_or_published(self):
+    def test_non_representative_slice_is_graded_saved_and_published(self):
         token = self.ready()
         for index in ("0", "11", "13", "23"):
             res = self.post({"slice_index": index, "problem_token": token})
             self.assertEqual(res.status_code, 200, res.text)
-            self.assertFalse(res.json()["graded"])
-            self.assertEqual(res.json()["not_graded_reason"], "no_reference_for_slice")
-        self.assertNothingSaved()
+            body = res.json()
+            self.assertTrue(body["graded"], index)
+            self.assertEqual(body["slice_index"], int(index))
+            self.assertIsNotNone(body["review_idx"])
+        self.assertEqual(len(self.created), 4)
+        self.assertEqual(len(self.published), 4)
 
     def test_request_cannot_choose_the_path_reference_plane_or_user(self):
         token = self.ready()
@@ -944,7 +960,6 @@ class RouterSlideTests(SyntheticBase):
         real_now = int(time.time())
         two_rows = [self.ref, make_ref(self.manifest, 5, reference_id=8)]
         scenarios = {
-            "non-representative slice": (None, dict(slice_index="3", problem_token=token)),
             "missing token": (None, dict(slice_index="12")),
             "garbage token": (None, dict(slice_index="12", problem_token="garbage")),
             "presentation changed": (None, dict(slice_index="12", problem_token=issue(self.manifest, self.ref, slice_no=3, now=real_now))),

@@ -12,7 +12,7 @@ prefix 없음. 주소: POST /learning/roi-grade/knee
 - GET /learning/knee/random?exclude=N                        : 등록된 케이스(MRI 한 묶음) 중 하나를 무작위로 고른다(번호와 후보 수만)
 게스트 실제 영상 열람(MSN-20261016-002, 로그인 없이 탐색·박스 연습만, 채점·저장 없음, 기본 꺼짐 KNEE_GUEST_VIEW_ENABLED):
 - POST /learning/knee/guest/session · /session/end, GET /learning/knee/guest/random · /series · /series/{study_idx}/{series_id}/image/{n}
-채점은 그대로 대표 1장 기준이다(다른 장은 미채점·저장 0). 대표 기준을 다른 장에 복사하지 않는다.
+채점은 문제에 승인된 기준 ROI(정규화 좌표)로 하며, 범위 안의 어느 장(0부터)에서 제출해도 채점한다.
 하는 일: 학습자가 그린 박스(ROI, 이미지 전체를 0~1 로 본 좌표)를 그 문제의 "승인된 기준 ROI"와 IoU 로 비교해
 정답/부분정답/오답을 낸다(D-069: IoU≥0.5 / 0.2≤IoU<0.5 / 그 미만). 판정은 정수 픽셀 수로만 한다.
 
@@ -26,9 +26,9 @@ prefix 없음. 주소: POST /learning/roi-grade/knee
   DB 인증 칸·auth_version 재확인·로그아웃은 없다(발표 후 서비스를 이어가면 원래 D-033 로 되돌린다).
 - study_idx 는 필수이고, 활성화된 무릎 MRI 문제여야 한다. 촬영면은 요청이 아니라 기준 ROI(서버 기록)에서 얻는다.
 - 도형은 박스만 받는다(사용자 결정 2026-10-06). 원은 400 으로 거절하고, 박스는 이미지 안에 있어야 한다.
-- 문제 이미지가 한 장이면 단일 이미지 흐름이다. 여러 장(슬라이드, st_image 가 JSON 배열)이면 **대표 슬라이스 흐름**이다:
-  서버가 정한 대표 1장만 채점하고(요청의 slice_index·problem_token 으로 제시 버전과 결속), 나머지 장은 graded=false
-  (no_reference_for_slice)이다. 판단은 services/kneeSliceGradeServices.py 에 있다(설계 REPRESENTATIVE_SLICE_CONTRACT.md).
+- 문제 이미지가 한 장이면 단일 이미지 흐름이다. 여러 장(슬라이드, st_image 가 JSON 배열)이면 슬라이드 흐름이다:
+  problem_token 으로 제시 버전과 결속하고, 범위 안의 어느 slice_index(0부터)에서 제출해도 승인된 기준 ROI(정규화 좌표)로
+  채점한다. 승인 기준이 아예 없으면 no_reference_for_slice 다. 판단은 services/kneeSliceGradeServices.py 에 있다.
 - 이미지는 받지 않는다(업로드 이미지를 저장하지 않는다, D-068). AI 모델도 쓰지 않는다.
 - 채점하지 않는 경우(승인된 기준 ROI 없음·대표 아님·토큰 문제·이미지 확인 불가)는 graded=false 로 답하고 저장·이벤트를 만들지 않는다.
 - 채점되면 review_node 에 그 문제의 단일 이미지 경로(서버가 가진 값, 슬라이드면 대표 장의 경로)를 넣어 저장한다. NAS 에 새로 올리지 않는다.
@@ -861,23 +861,104 @@ async def learning_roi_grade_knee(
 
     if result["graded"]:
         try:
+            graded_slice = result.get("slice_index")
+            slice_for_row = (
+                int(graded_slice)
+                if isinstance(graded_slice, (int, float)) and not isinstance(graded_slice, bool) and int(graded_slice) >= 0
+                else None
+            )
+            # 슬라이드 채점은 장 번호를 반드시 남긴다(응답·리뷰 조회가 같은 장을 가리키게).
+            if slice_for_row is None and image_path:
+                try:
+                    slice_for_row = learning_service._find_slice_index_by_path(
+                        learning_service.problem_image_paths(study), image_path,
+                    )
+                except ValueError:
+                    slice_for_row = None
+
+            # 학습 기록·리뷰노트에 내가 그린 ROI 가 보이게: 좌표 저장 + (가능하면) ROI 그린 PNG 업로드
+            user_box = result.get("user_roi_bbox") if isinstance(result.get("user_roi_bbox"), dict) else None
+            grade_for_findings = {
+                "user_roi_bbox": user_box,
+                "user_rois": [user_box] if user_box else [],
+                "roi_type": "box",
+                "abnormality_bbox": result.get("reference_bbox"),
+                "reference_bbox": result.get("reference_bbox"),
+                "classification": {
+                    "task": "knee-mri",
+                    "top_label": "acl",
+                    "top_label_ko": (study.st_disease or "").strip() or "ACL",
+                    "confidence": result.get("iou"),
+                    "findings": [],
+                },
+            }
+            rn_findings = review_node_service.grade_findings_json(grade_for_findings)
+            rn_image = image_path  # 업로드 실패 시 내부 경로 유지. 학습자 응답은 learner_review_image 로만 노출.
+            if user_box is not None:
+                try:
+                    overlay_slice = slice_for_row if slice_for_row is not None else 0
+                    slice_bytes, _, _ = await learning_service.fetch_problem_image(
+                        db, study.idx, overlay_slice,
+                    )
+                    review_png = review_node_service.review_png_with_user_roi(
+                        slice_bytes,
+                        roi_type="box",
+                        x=float(user_box["x"]),
+                        y=float(user_box["y"]),
+                        width=float(user_box["width"]),
+                        height=float(user_box["height"]),
+                    )
+                    if review_png:
+                        uploaded, _, _ = await review_node_service.upload_review_png(
+                            review_png, study_idx=study.idx,
+                        )
+                        if uploaded:
+                            rn_image = uploaded
+                except Exception:
+                    _log.warning("knee roi-grade review overlay skipped study=%s", study.idx)
+
             row = review_node_repositories.create(
                 db,
                 rn_u_idx=user_idx,
                 rn_s_idx=study.idx,
                 rn_disease=(study.st_disease or "").strip()[:30] or None,
-                rn_image=image_path,  # 서버가 가진 문제의 단일 이미지 경로. 사용자가 올린 이미지·배열 문자열은 없다.
+                rn_image=rn_image,
                 rn_solution=review_node_service.solution_code(result["result"]),
+                rn_recall=review_node_service._ratio(result.get("iou")),
+                rn_iou=review_node_service._ratio(result.get("iou")),
+                rn_findings=rn_findings,
+                rn_slice_index=slice_for_row,
                 state="N",
             )
         except Exception as exc:
             _log.error("knee roi-grade save failed error_type=%s", type(exc).__name__)
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="리뷰 저장 실패") from None
-        result.update(review_idx=row.idx, rn_image=row.rn_image, rn_solution=row.rn_solution)
+        # 학습자 응답: 내부 /knee_series 경로 대신 문제 영상 API·공개 review URL
+        saved_image = getattr(row, "rn_image", image_path)
+        saved_slice = getattr(row, "rn_slice_index", slice_for_row)
+        learner_image = learning_service.learner_review_image(
+            study_idx=study.idx,
+            rn_image=saved_image,
+            rn_slice_index=saved_slice,
+            st_part=study.st_part,
+            st_modal=study.st_modal,
+            st_image=study.st_image,
+        )
+        disease = (study.st_disease or "").strip() or None
+        result.update(
+            review_idx=row.idx,
+            rn_image=learner_image,
+            rn_solution=row.rn_solution,
+            slice_index=saved_slice if saved_slice is not None else result.get("slice_index"),
+            # 채점 후에만 병명(학습용). 문제 제시·미채점 응답에는 넣지 않는다.
+            expected_disease=disease,
+            disease=disease,
+        )
         await review_events.publish(
             "review_created",
             {"review_idx": row.idx, "user_idx": user_idx, "study_idx": study.idx,
-             "rn_image": row.rn_image, "rn_solution": row.rn_solution},
+             "rn_image": saved_image, "rn_solution": row.rn_solution,
+             "rn_slice_index": saved_slice},
         )
 
     try:

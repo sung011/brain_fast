@@ -102,6 +102,40 @@ def test_nas_failure_is_502(app_client):
     assert client.get("/learning/problem/2/image?slice_index=1").status_code == 502
 
 
+def test_knee_series_image_served_from_local_dir(app_client, monkeypatch, tmp_path):
+    """무릎 /knee_series 경로는 Object Storage 가 아니라 KNEE_IMAGE_DIR 에서 읽는다."""
+    import hashlib
+    from importlib import import_module
+    from unittest import mock
+
+    _, requested = app_client
+    png = png_bytes()
+    digest = hashlib.sha256(png).hexdigest()
+    case_dir = tmp_path / "knee_series" / "case-x"
+    case_dir.mkdir(parents=True)
+    (case_dir / "slice_000.png").write_bytes(png)
+
+    paths = ["/knee_series/case-x/slice_000.png"]
+    st_image = json.dumps(paths)
+    manifest_mod = import_module("class.knee.slice_manifest")
+    series_mod = import_module("class.knee.series_assets")
+    man = manifest_mod.build_manifest(st_image, ("/knee_series/",))
+    assets = series_mod.SeriesAssets(
+        study_idx=50, manifest_version=man.version, slice_set_sha256=man.list_sha256,
+        slice_sha256=(digest,), slice_sizes=((32, 32),), kind="synthetic",
+        notice="test", version="v1", registered_by="t", registered_at="2026-01-01T00:00:00",
+    )
+    monkeypatch.setenv("KNEE_IMAGE_DIR", str(tmp_path))
+    monkeypatch.setenv("KNEE_NAS_IMAGE_BASE_URL", "")
+    monkeypatch.setenv("KNEE_ASSET_ROOTS", "/knee_series/")
+    with mock.patch.dict(series_mod.APPROVED_SERIES_ASSETS, {50: [assets]}, clear=False):
+        data = learningServices._knee_local_problem_image(
+            study_idx=50, st_image=st_image, path=paths[0], slice_index=0,
+        )
+    assert data == png
+    assert requested == []  # Object Storage 를 치지 않음
+
+
 def test_roi_grade_reveals_expected_disease_after_submit(app_client, monkeypatch):
     client, _ = app_client
     monkeypatch.setattr(roiGradeServices, "grade_image_roi",

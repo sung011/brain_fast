@@ -78,7 +78,7 @@ REFERENCE_ROWS: list[dict] = [
     },
     {
         "reference_id": 1004,
-        "study_idx": 584,
+        "study_idx": 132,
         "manifest_version": "ordered-paths-json-v1:5a1a682e0552cf31f38e21005814e6a50525ac2fc281a1ccecb5e2ed2368bb5f",
         "slice_set_sha256": "5a1a682e0552cf31f38e21005814e6a50525ac2fc281a1ccecb5e2ed2368bb5f",
         "slice_no": 15,
