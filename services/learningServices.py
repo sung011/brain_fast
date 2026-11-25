@@ -319,6 +319,17 @@ def get_answer_boxes(db: Session, study_idx: int | None) -> list[dict] | None:
     return answer["boxes"] if answer else None
 
 
+def get_answer_also(db: Session, study_idx: int | None) -> dict | None:
+    """
+    흉부 문제 사진에 대표 소견 말고 같이 있는 소견. {"findings": [이름], "boxes": [0~1 비율 박스]} 또는 None.
+    채점에서 틀린 것으로 보지 않고 안내만 한다. NIH 문제는 원래 라벨(자동 추출)이라 박스가 없다.
+    """
+    answer = _thorax_answer(db, study_idx)
+    if not answer or not answer.get("also"):
+        return None
+    return {"findings": list(answer["also"]), "boxes": list(answer.get("also_boxes") or [])}
+
+
 def get_view_position(db: Session, study_idx: int | None) -> str | None:
     """흉부 문제 사진의 촬영 방향 "AP"/"PA". 모르면 None. (해설 문장 고르기에 쓴다)"""
     answer = _thorax_answer(db, study_idx)
@@ -563,6 +574,9 @@ def submit_problem(
     expected = (row.st_disease or "").strip()
     given = (answer or "").strip()
     correct = bool(expected) and expected.casefold() == given.casefold()
+    # 흉부: 사진에 같이 있는 다른 소견을 냈으면 오답은 그대로 두고 "있는 소견"이라고 알려 준다
+    also = (_thorax_answer(db, study_idx) or {}).get("also") or []
+    also_match = (not correct) and any(a.casefold() == given.casefold() for a in also)
 
     done = list(
         _merge_exclude_idxs(db, exclude_idxs=exclude_idxs, user_idx=user_idx) or []
@@ -582,6 +596,9 @@ def submit_problem(
         "correct": correct,
         "study_idx": study_idx,
         "expected": expected,
+        # 같이 있는 소견(제출 뒤라 공개). also_match = 낸 병명이 그중 하나
+        "also_findings": list(also),
+        "also_match": also_match,
         "next": next_row,
         "exclude_idxs": done,
     }
